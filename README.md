@@ -32,7 +32,7 @@ The hosted files hold no patient data. Patients only ever appear as LASFIR codes
 4. **Check out.** Say whether the next visit is booked, book later, or not needed. Ticking "The provider confirmed the protocol"
    writes Protocol Updated (today) and, if it changed, Frequency on the Master Patient Tracker.
 
-A patient needs booking when they're active (Ongoing or Induction), not PRN, and booked less than 3 weeks ahead. The protocol needs
+A patient needs booking when they're active (Ongoing or Induction), not PRN, and booked less than 6 weeks ahead. The protocol needs
 confirming when Protocol Updated is blank or older than 90 days. Both are in Settings.
 
 ## Where things are kept

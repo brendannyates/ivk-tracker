@@ -321,7 +321,7 @@
       tl = `<div class="tl" aria-hidden="true"><div class="bar"></div><div class="fill" style="width:${at(F.now)}%"></div>
         <div class="mark done" style="left:0"></div><div class="mark${F.now >= vs.cs.check ? " done" : ""}" style="left:${at(vs.cs.check)}%"></div><div class="mark${F.now >= e0 ? " done" : ""}" style="left:100%"></div>
         <div class="now" style="left:${at(F.now)}%"></div>
-        <span class="lbl start" style="left:0">${C.fmtT(s0)}</span><span class="lbl" style="left:${at(vs.cs.check)}%">Provider check ${C.fmtT(vs.cs.check)}</span><span class="lbl end" style="left:100%">Out ${C.fmtT(e0)}</span></div>`;
+        <span class="lbl" style="left:${at(vs.cs.check)}%">Provider check ${C.fmtT(vs.cs.check)}</span><span class="lbl end" style="left:100%">Out ${C.fmtT(e0)}</span></div>`;
     }
     const st = (cls, t, m, w) => `<li class="step ${cls}"><span class="k">${cls === "done" ? "✓" : ""}</span><span><span class="t">${t}</span>${m ? `<span class="m">${m}</span>` : ""}</span><span class="w">${w || ""}</span></li>`;
     const steps = [

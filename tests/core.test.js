@@ -16,13 +16,13 @@ const cfg = Object.assign({}, C.DEFAULTS);
 function world(extra = {}) {
   const P = C.patients([MPT_H,
     pt({ mrn: "990001", code: "TESANN" }),                                         // today, nothing after -> book + proto
-    pt({ mrn: "990002", code: "DOEJON", proto: T - 10 }),                           // today, booked 4 weeks out, proto fresh
+    pt({ mrn: "990002", code: "DOEJON", proto: T - 10 }),                           // today, booked 6 weeks out, proto fresh
     pt({ mrn: "990003", code: "ROEMAR", freq: "PRN" }),                             // PRN: never asked to book
     pt({ mrn: "990004", code: "LEEKIM", authExp: T - 1, left: 0, auth: 16, authStart: T - 90 }), // expired auth, none left
     pt({ mrn: "990005", code: "PARSAM", status: "Discontinued" }),
     pt({ mrn: "990006", code: "OAKAVA", loc: "Oakland", status: "Paused" })]);
   const A = C.appts([AP_H,
-    ap("990001", "TESANN", T, 13 * 60 + 30), ap("990002", "DOEJON", T, 12 * 60 + 30), ap("990002", "DOEJON", T + 28, 12 * 60 + 30),
+    ap("990001", "TESANN", T, 13 * 60 + 30), ap("990002", "DOEJON", T, 12 * 60 + 30), ap("990002", "DOEJON", T + 42, 12 * 60 + 30),
     ap("990003", "ROEMAR", T, 9 * 60), ap("990004", "LEEKIM", T + 7, 9 * 60), ap("990001", "TESANN", T - 14, 13 * 60 + 30, "Kept"),
     ap("990006", "OAKAVA", T, 15 * 60, "Cancelled")]);
   return Object.assign({ today: T, cfg, appts: A, patients: P, visits: new Map(), clinic: "Castro" }, extra);
@@ -63,9 +63,9 @@ test("the team's ask reads the way they send it", () => {
 
 test("asks: booking window, PRN, protocol age, and what the desk already did", () => {
   const x = world(), P = n => x.patients.find(p => p.code === n);
-  assert.equal(C.asks(P("DOEJON"), x, null).book, false, "booked 4 weeks out is enough");
+  assert.equal(C.asks(P("DOEJON"), x, null).book, false, "booked 6 weeks out is enough");
   assert.equal(C.asks(P("DOEJON"), x, null).proto, false, "confirmed 10 days ago");
-  assert.equal(C.asks(P("DOEJON"), Object.assign({}, x, { cfg: Object.assign({}, cfg, { AheadWeeks: 5 }) }), null).book, true);
+  assert.equal(C.asks(P("DOEJON"), Object.assign({}, x, { cfg: Object.assign({}, cfg, { AheadWeeks: 7 }) }), null).book, true);
   assert.equal(C.asks(P("ROEMAR"), x, null).book, false, "PRN is never asked to book");
   assert.equal(C.asks(P("PARSAM"), x, null).any, false, "discontinued");
   assert.equal(C.asks(P("TESANN"), x, { booked: "yes", proto: "" }).book, false);
@@ -96,14 +96,14 @@ test("chair states: open, track, soon, ready; waiting is late after LateMin", ()
   V.set(k, { key: k, arr: 740, chair: "2", seat: 745, out: null, booked: "", asked: null, proto: "", status: "" });
   const L = C.today(world({ visits: V }));
   assert.equal(C.chairState("1", L, 800, cfg).state, "open");
-  const tr = C.chairState("2", L, 800, cfg); assert.equal(tr.state, "track"); assert.equal(tr.end, 835); assert.equal(C.chairStatus(tr), "Out around 13:55"); assert.equal(tr.check, 775);
-  const so = C.chairState("2", L, 828, cfg); assert.equal(so.state, "soon"); assert.equal(C.chairStatus(so), "Out in 7 min");
-  const re = C.chairState("2", L, 836, cfg); assert.equal(re.state, "ready"); assert.equal(C.chairStatus(re), "Ready to check out");
-  assert.equal(C.chairStatus(C.chairState("2", L, 845, cfg)), "Due out 10 min ago");
+  const tr = C.chairState("2", L, 800, cfg); assert.equal(tr.state, "track"); assert.equal(tr.end, 865); assert.equal(C.chairStatus(tr), "Out around 14:25"); assert.equal(tr.check, 775);
+  const so = C.chairState("2", L, 858, cfg); assert.equal(so.state, "soon"); assert.equal(C.chairStatus(so), "Out in 7 min");
+  const re = C.chairState("2", L, 866, cfg); assert.equal(re.state, "ready"); assert.equal(C.chairStatus(re), "Ready to check out");
+  assert.equal(C.chairStatus(C.chairState("2", L, 875, cfg)), "Due out 10 min ago");
   const kw = C.visitKey(T, "990001", 810); V.set(kw, { key: kw, arr: 800, chair: "", seat: null, out: null, booked: "", asked: null, proto: "", status: "" });
   const w = C.today(world({ visits: V })).find(v => v.key === kw);
   assert.equal(C.isLate(w, 809, cfg), false); assert.equal(C.isLate(w, 810, cfg), true);
-  assert.deepEqual(C.chairList(cfg, null), ["1", "2", "3"]);
+  assert.deepEqual(C.chairList(cfg, null), ["1", "2", "3", "4"]);
   assert.deepEqual(C.chairList(cfg, { bays: [{ id: "A" }, { id: "B" }] }), ["A", "B"]);
 });
 

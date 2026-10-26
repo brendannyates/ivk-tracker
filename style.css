@@ -75,7 +75,7 @@ h3{margin:0 0 4px;font-size:15px;font-weight:600}
 .bplan .bay{cursor:pointer}
 .boff{margin:10px 0 0;font-size:13px;color:var(--muted)}
 /* chairs without a map file: a strip of chair tiles with the same states */
-.strip{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px;margin-top:6px}
+.strip{display:grid;grid-template-columns:repeat(auto-fill,minmax(128px,1fr));gap:12px;margin-top:6px}
 .ctile{min-height:84px;padding:12px 14px;border-radius:14px;background:var(--surface-3);box-shadow:inset 0 0 0 2px var(--surface-2);transition:box-shadow .2s,background .2s,filter .2s;display:flex;flex-direction:column;justify-content:space-between}
 .ctile:hover{filter:brightness(.97)}
 .ctile[data-state="open"]{background:transparent;box-shadow:none;border:2px dashed var(--faint)}

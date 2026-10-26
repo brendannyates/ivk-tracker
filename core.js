@@ -8,10 +8,10 @@
 })(typeof self !== "undefined" ? self : this, function () {
   "use strict";
 
-  /* Defaults for tblIvkConfig. Visit length: Castro books IVK every 30 min and runs about 3 visits at once, so a visit
-     holds a chair about 90 min. The SOP has the clinician check in within the first 30 min and again in the last 5-10 min. */
-  const DEFAULTS = { Enabled: "TRUE", Clinic: "Castro", Chairs: "1, 2, 3", VisitMin: 90, ProviderCheckMin: 30, LateMin: 10, SoonMin: 10,
-    AheadWeeks: 3, ProtocolDays: 90, AuthWarnDays: 14, EncountersWarn: 3 };
+  /* Defaults for tblIvkConfig. Castro: 4 chairs, each IVK visit holds a chair 2 hours. The SOP has the clinician check in within
+     the first 30 min and again in the last 5-10 min. */
+  const DEFAULTS = { Enabled: "TRUE", Clinic: "Castro", Chairs: "1, 2, 3, 4", VisitMin: 120, ProviderCheckMin: 30, LateMin: 10, SoonMin: 10,
+    AheadWeeks: 6, ProtocolDays: 90, AuthWarnDays: 14, EncountersWarn: 3 };
   const ACTIVE = ["ongoing", "induction"];
   const DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
   const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
