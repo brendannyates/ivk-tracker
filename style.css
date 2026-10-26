@@ -298,18 +298,60 @@ ol.how li+li{margin-top:3px}
 .alts button{min-height:44px;padding:5px 10px;border-radius:10px;box-shadow:inset 0 0 0 1.5px var(--surface-2);font-size:13px;font-weight:500}
 .alts button small{display:block;font-size:11.5px;color:var(--muted);font-weight:400}
 .alts button:hover{background:var(--surface-3)}
-.tcard{padding:18px 20px}
-.tcard .lh{display:flex;justify-content:space-between;align-items:baseline;gap:12px;margin-bottom:6px}
-.tcard .lh span{font-size:13px;color:var(--muted)}
-.tgrid{display:grid;grid-template-columns:repeat(5,minmax(0,1fr));gap:10px;margin-top:6px}
-.tgrid b{display:block;font-size:12.5px;font-weight:600;color:var(--muted);margin-bottom:2px}
-.slot{display:flex;justify-content:space-between;align-items:center;gap:4px;margin-top:6px;padding:5px 4px 5px 8px;border-radius:8px;box-shadow:inset 0 0 0 1.5px var(--accent);background:var(--accent-soft);font-size:13px;font-weight:500}
-.slot small{display:block;font-size:11px;color:var(--muted);font-weight:400}
-.slot.flex{background:transparent;box-shadow:inset 0 0 0 1.5px var(--accent);border:1px dashed var(--accent)}
-.slot.followup{background:var(--surface-3);box-shadow:inset 0 0 0 1px var(--surface-2)}
-.slot .x{min-width:32px;min-height:32px;border-radius:8px;text-align:center;color:var(--muted);font-size:16px}
-.slot .x:hover{background:var(--surface-2);color:var(--ink)}
 .blk.open{background:transparent;box-shadow:none;border:1.5px dashed var(--surface-2);color:var(--muted)}
 .blk.hold{background:var(--warn-soft);box-shadow:inset 0 0 0 1.5px var(--warn)}
 .blk.hold.late{background:var(--danger-soft);box-shadow:inset 0 0 0 2px var(--danger)}
-@media (max-width:760px){.tgrid{grid-template-columns:1fr 1fr}}
+
+
+/* access week: faint floating tiles over the provider templates; IVK slots tinted by their slot type, the rest plain */
+.access{padding:18px 20px}
+.access .lh{display:flex;justify-content:space-between;align-items:baseline;gap:12px;margin-bottom:4px}.access .lh span{font-size:13px;color:var(--muted)}
+.access .wkbar{margin:6px 0 10px}
+.agrid{display:grid;grid-template-columns:62px repeat(5,minmax(0,1fr));column-gap:6px}
+.agrid .ch{font-size:12.5px;font-weight:600;padding:0 0 6px}.agrid .ch small{display:block;font-weight:400;color:var(--muted)}.agrid .ch.today{color:var(--accent)}
+.agrid .tm{font-size:11.5px;color:var(--muted);text-align:right;padding:5px 6px 0 0}
+.ac{display:flex;flex-direction:column;gap:3px;padding:2px 0;min-height:30px;box-shadow:0 -1px 0 var(--surface-2)}
+.ac.past{opacity:.5}
+.tile{display:flex;align-items:center;gap:5px;flex-wrap:wrap;min-height:26px;padding:3px 7px;border-radius:7px;font-size:11.5px;line-height:1.2;text-align:left;width:100%;
+  background:color-mix(in srgb,var(--c) 13%,var(--surface));box-shadow:inset 3px 0 0 color-mix(in srgb,var(--c) 70%,transparent);color:var(--ink)}
+.tile small{flex-basis:100%;font-size:10.5px;color:var(--muted)}
+.tile.gen{min-height:18px;padding:1px 7px;font-size:10.5px;background:transparent;box-shadow:inset 0 0 0 1px var(--surface-2);color:var(--faint)}
+.tile.booked{background:var(--surface-3);box-shadow:inset 3px 0 0 var(--surface-2);color:var(--muted)}
+.tile.held{background:var(--warn-soft);box-shadow:inset 3px 0 0 var(--warn);color:var(--warn)}
+.tile.pick{cursor:pointer;font-weight:500}
+.tile.pick:hover{background:color-mix(in srgb,var(--c) 24%,var(--surface))}
+.tile.mine{box-shadow:inset 0 0 0 2px var(--accent);font-weight:600}
+.tile .nb{display:inline-grid;place-items:center;min-width:18px;height:18px;border-radius:9px;background:var(--accent);color:var(--accent-ink);font-size:11px}
+.tsw{display:inline-block;width:12px;height:12px;border-radius:3px;background:var(--c);margin-right:6px;vertical-align:-1px;flex:none}
+.tsw.gen{background:transparent;box-shadow:inset 0 0 0 1px var(--faint)}
+
+/* template configurator: the grid in the template's own colours */
+.tedit{padding:18px 20px}
+.tedit .lh,.ttally .lh,.ttypes .lh{display:flex;justify-content:space-between;align-items:baseline;gap:12px;margin-bottom:6px}
+.tedit .lh span,.ttally .lh span,.ttypes .lh span{font-size:13px;color:var(--muted)}
+.tg{display:grid;gap:2px;margin-top:10px;user-select:none;touch-action:none}
+.tgh{font-size:12px;font-weight:600;color:var(--muted);padding:0 0 4px;text-align:center}
+.tgt{font-size:11.5px;color:var(--muted);text-align:right;padding:0 6px 0 0;align-self:center}
+.tc{min-height:30px;padding:2px 4px;border-radius:5px;font-size:11px;line-height:1.15;text-align:center;background:var(--surface-3);box-shadow:inset 0 0 0 1px var(--surface-2);overflow:hidden;cursor:cell}
+.tc.sel{box-shadow:inset 0 0 0 2px var(--surface),inset 0 0 0 4px var(--ink)}
+.tbar{position:sticky;top:0;z-index:2;display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:8px 0 0;padding:10px;border-radius:12px;background:var(--surface);box-shadow:var(--shadow)}
+.tchip{min-height:36px;padding:4px 10px;border-radius:8px;font-size:12px;font-weight:500}
+.ttally,.ttypes{padding:18px 20px}
+.tt{width:100%;border-collapse:collapse;font-size:12.5px;margin-top:4px}
+.tt th{font-weight:600;color:var(--muted);text-align:right;padding:4px 4px}.tt th:first-child,.tt td:first-child{text-align:left}
+.tt td{text-align:right;padding:4px;box-shadow:0 -1px 0 var(--surface-2)}
+.tt tr.sum td{font-weight:600;background:var(--surface-3)}
+.tline{margin-top:10px;padding-top:10px;box-shadow:0 -1px 0 var(--surface-2)}
+.tl1{display:grid;grid-template-columns:34px minmax(0,1fr) 30px;gap:6px;align-items:center}
+.tl2{display:grid;grid-template-columns:minmax(0,1.1fr) 92px minmax(0,1fr);gap:6px;align-items:center;margin-top:6px}
+.tline input,.tline select{min-height:36px;padding:4px 8px;border-radius:8px;border:1.5px solid var(--surface-2);background:var(--surface);color:var(--ink);font:inherit;font-size:12.5px;min-width:0}
+.tline .tcol{padding:2px;width:34px}
+.tline .tname[readonly]{background:var(--surface-3)}
+.tline .x{min-width:30px;min-height:30px;border-radius:8px;color:var(--muted);font-size:16px;text-align:center}.tline .x:hover{background:var(--surface-2)}
+.ms{position:relative}
+.ms summary{list-style:none;min-height:36px;padding:8px;border-radius:8px;border:1.5px solid var(--surface-2);font-size:12.5px;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.ms summary::-webkit-details-marker{display:none}
+.ms[open] summary{border-color:var(--accent)}
+.msl{position:absolute;right:0;z-index:5;width:260px;max-height:280px;overflow:auto;margin-top:4px;padding:6px 12px 10px;border-radius:12px;background:var(--surface);box-shadow:var(--shadow)}
+.msl .opt{margin-top:8px;font-size:13px;align-items:center}
+@media (max-width:760px){.agrid{grid-template-columns:48px repeat(5,minmax(64px,1fr))}.access{overflow-x:auto}.tl2{grid-template-columns:1fr 1fr}}

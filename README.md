@@ -38,23 +38,46 @@ confirming when Protocol Updated is blank or older than 90 days. Both are in Set
 
 ## Index planning
 
-- **Template**: per provider, the weekday start times they offer, each marked Index, Flex or Follow-up. The post check is 90 min
-  after the start, the last 30 minutes of the 2-hour visit. Where two providers work the same hours, both sets of slots show.
+- **Template**: each provider's week on the **IVK Template** tab, laid out like the clinic's provider templates (Location,
+  Provider, Last Modified, Effective From, half hours from 8:00 AM, an Event Types tally of live COUNTIF formulas beside it), so
+  the Clinic Template Tool can read it too. Cells are coloured by slot type with conditional formatting and have a slot-type
+  dropdown, so the tab can be edited in Excel as well. In the add-in: Index planner › Template, drag across half hours, pick a type.
+  Add a provider from the NextGen report's providers, for the days they're in clinic, empty or copied from another grid; a later
+  Effective From records a revision.
+- **Slot types** (the **Slot Types** tab, the Clinic Template Tool's columns plus IVK use and colours): what each type is for in
+  IVK, and the NextGen events it takes (chosen from the events on the report).
+  - *IV Ketamine Start/Index*: an infusion start. It's an **index start** only when an IVK Post Check or Flex Post Check sits
+    90 minutes later: the provider spends the first 30 and the last 30 minutes with the patient, for every index visit,
+    including starts. Follow-ups can book these times second; they don't need the post check.
+  - *IVK Post Check*: kept for the last 30 minutes of an index visit. *Flex Post Check*: the same, or a TMS follow-up, tele or
+    other 30-minute visit outside IVK when no index patient needs it.
+  - *IV Ketamine Follow Up*: an infusion start without a post check. Every other type shows plainly on the planner.
+- **Requires post-check**: when a provider asks for a post check on a patient's visits (acuity), tick it on the patient's card.
+  Their visits then use the post check at their end, and the card lists the next open starts that end on a free post check.
+- **What's open**: a start is open when no IVK visit or hold has it and a chair is free for the 2 hours; it's an open index
+  start when its post check is free too. Index visits (treatment starts, Induction patients), holds and patients who require a
+  post check use the post check. The wider NextGen report's other visits (telehealth, TMS, consults) take the half hour they
+  start in, so a flex post check already booked for tele isn't offered for index. NextGen post check holds don't count.
 - **Protocol**: 2 visits in each 7 days for 3 weeks unless the patient's own protocol is set. Week 1 starts on treatment 1's day
   (a Wednesday start makes week 1 Wednesday to Tuesday). Visits are never back to back, no more than 5 days apart when the open
-  slots allow it, and as evenly spaced as they can be. After index: 1x per week. All of it is in Settings › Index protocol.
-- **Proposal**: from the open Index and Flex slots on the Appt List, the patient's AM/PM days (from the tracker, or set in the
-  planner) and their preferred start date. Any visit can be moved to another open slot; the ones after it are re-planned.
-- **Holds**: Hold saves the times straight to the workbook, so everyone sees them on the Schedule and the Index Planner tab.
-  Book them in NextGen and press Booked in NextGen within 10 minutes; after that the hold turns red. Releasing frees the times.
-- **Index Planner tab**: each upload (and each hold) rewrites its grid as plain values, every IVK visit and hold in its half
-  hour. The lookups into the other workbook are gone; the dates, colours and the planning block stay.
+  slots allow it, and as evenly spaced as they can be; treatment 1 moves a day or two later if starting on the first open day
+  would force a longer gap. Starts ending on an IVK post check are used before ones ending on a flex post check. After index:
+  1x per week. All of it is in Settings › Index protocol.
+- **Plan**: the Access week shows every template slot as a faint tile: open index starts, follow-ups, post checks, what's booked
+  and held. Pressing an open index start makes it treatment 1 (or the treatment being changed); any visit can also be moved
+  from its Change list. The page says how many more patients could start index in the next 4 weeks on what's left.
+- **Holds**: Hold saves the times straight to the workbook, so everyone sees them on the Schedule, the Access week and the Index
+  Planner tab. Book them in NextGen and press Booked in NextGen within 10 minutes; after that the hold turns red. Releasing frees
+  the times.
+- **Upload**: run the NextGen report for the IVK providers' whole schedule. IV ketamine visits go to the Appt List tab; the rest
+  are kept on the hidden tab with no patient on them (date, time, provider, event, status). The Index Planner tab's grid is then
+  rewritten as plain values; the lookups into the other workbook are gone.
 
 ## Where things are kept
 
 The clinic's tabs are found by sheet name: Master Patient Tracker, Appt List, Consults (and Access R5:R14 for the frequency list).
 The add-in adds one hidden tab, **IVK Tracker Data**, when someone presses Set up this workbook (a workbook set up before the
-Index planner gets the last three tables from Update the workbook):
+Index planner gets the newer tables from Update the workbook):
 
 | Table | What |
 |---|---|
@@ -63,9 +86,12 @@ Index planner gets the last three tables from Update the workbook):
 | tblIvkRoutes | arrival → the RN's chat, protocol → the Castro IVK group chat, each with its Teams workflow URL |
 | tblIvkTemplates | The message wording |
 | tblIvkLog | Every Teams post and its result |
-| tblIvkSlots | The index template: provider, weekday, start, type |
 | tblIvkPlans | One row per patient being planned: preferred start, protocol, availability |
 | tblIvkHolds | Every hold: patient, date, time, provider, treatment, held / booked / released, who and when |
+| tblIvkOther | The providers' other NextGen visits from the wider report: date, time, provider, event, status (no patient) |
+| tblIvkFlags | Patients who require a post-check |
+
+The provider templates are on two visible tabs: **IVK Template** (the grids) and **Slot Types** (tblIvkSlotTypes).
 
 The chair map is a document setting (`ivkBayPlan`), the same file format as ESK Tracker's bay map.
 
@@ -81,7 +107,7 @@ Download `manifest.xml`, then in Excel on the web: Home › Add-ins › More add
 
 ## Code
 
-`core.js` (rules, no Office.js, tested), `notify.js` (Teams), `excel.js` (workbook reads and writes, task pane only), `app.js` (screens;
+`template.js` (provider templates in the Clinic Template Tool's format: parse, lay out, tally; meant to be shared with that tool), `core.js` (rules, no Office.js, tested), `notify.js` (Teams), `excel.js` (workbook reads and writes, task pane only), `app.js` (screens;
 full screen is a floating Office dialog that asks the pane for every write), `bayplan.js` (byte-identical copy of the Bay Map Builder's
 `render.js` shared block), `map.css` (the ESK Tracker's map rules).
 

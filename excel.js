@@ -6,19 +6,26 @@
      tblIvkRoutes     T1   Event | Sends to | FlowUrl | Enabled
      tblIvkTemplates  Y1   Event | Template
      tblIvkLog        AB1  Id | Event | Patient | Chair | Message | SentBy | SentAt | Result
-     tblIvkSlots      AK1  Id | Provider | Day | Time | Type                (the index template)
      tblIvkPlans      AQ1  MRN | Patient | Start | PerWeek | Weeks | Avail | Note | By | Updated
      tblIvkHolds      BA1  Id | MRN | Patient | Date | Time | Provider | Treatment | Status | PlacedBy | PlacedAt | DoneBy | DoneAt
-   The Index Planner tab's grid is rewritten as plain values (fillPlanner), replacing the lookups into another workbook.
-   Text cells only on that sheet ("1:22 PM" stays text). The chair map is a document setting (a map file can be larger than a cell holds). */
+     tblIvkOther      BN1  Date | Time | Provider | Event | Status   (the providers' non-IVK visits from the wider report; no patient)
+     tblIvkFlags      BT1  MRN | Patient | RequiresPostCheck | By | Updated
+   (AK1 held tblIvkSlots, the first template; it is no longer read.)
+   Text cells only on that sheet ("1:22 PM" stays text). The chair map is a document setting (a map file can be larger than a cell holds).
+   Two visible tabs hold the provider templates, in the Clinic Template Tool's format so that tool can read them (template.js):
+     IVK Template     one weekly grid per provider, with its Event Types tally (COUNTIF formulas), colours by conditional
+                      formatting and a slot-type dropdown in every half hour
+     Slot Types       tblIvkSlotTypes: Slot type | Kind | Accepts | Notes | IVK use | Fill | Font
+   The Index Planner tab's grid is rewritten as plain values (fillPlanner), replacing the lookups into another workbook. */
 (function (root, factory) {
-  if (typeof module === "object" && module.exports) module.exports = factory(require("./core.js"));
-  else root.IvkExcel = factory(root.IvkCore);
-})(typeof self !== "undefined" ? self : this, function (C) {
+  if (typeof module === "object" && module.exports) module.exports = factory(require("./core.js"), require("./template.js"));
+  else root.IvkExcel = factory(root.IvkCore, root.IvkTemplate);
+})(typeof self !== "undefined" ? self : this, function (C, TM) {
   "use strict";
 
   const DATA_SHEET = "IVK Tracker Data";
   const SHEETS = { mpt: "Master Patient Tracker", appt: "Appt List", consults: "Consults", access: "Access" }, PLANNER = "Index Planner";
+  const TPL_SHEET = "IVK Template", TYPES_SHEET = "Slot Types", TYPES_TABLE = "tblIvkSlotTypes";
   const CH = 250;   // rows per write: big single syncs fail in Excel on the web
   const VISIT_READ = 400;   // the newest visit rows read on each refresh (today's are always among them)
   const SPEC = [
@@ -27,11 +34,12 @@
     { name: "tblIvkRoutes", anchor: "T", columns: ["Event", "Sends to", "FlowUrl", "Enabled"], rows: [["arrival", "the RN", "", "TRUE"], ["protocol", "Castro IVK group chat", "", "TRUE"]] },
     { name: "tblIvkTemplates", anchor: "Y", columns: ["Event", "Template"], rows: Object.entries(C.TEMPLATES) },
     { name: "tblIvkLog", anchor: "AB", columns: ["Id", "Event", "Patient", "Chair", "Message", "SentBy", "SentAt", "Result"], rows: [["", "", "", "", "", "", "", ""]] },
-    { name: "tblIvkSlots", anchor: "AK", columns: ["Id", "Provider", "Day", "Time", "Type"], rows: [["", "", "", "", ""]] },
     { name: "tblIvkPlans", anchor: "AQ", columns: C.PLAN_COLS, rows: [C.PLAN_COLS.map(() => "")] },
-    { name: "tblIvkHolds", anchor: "BA", columns: C.HOLD_COLS, rows: [C.HOLD_COLS.map(() => "")] }
+    { name: "tblIvkHolds", anchor: "BA", columns: C.HOLD_COLS, rows: [C.HOLD_COLS.map(() => "")] },
+    { name: "tblIvkOther", anchor: "BN", columns: C.OTHER_COLS, rows: [C.OTHER_COLS.map(() => "")] },
+    { name: "tblIvkFlags", anchor: "BT", columns: C.FLAG_COLS, rows: [C.FLAG_COLS.map(() => "")] }
   ];
-  const BIG = ["tblIvkVisits", "tblIvkLog", "tblIvkHolds"];
+  const BIG = ["tblIvkVisits", "tblIvkLog", "tblIvkHolds", "tblIvkOther"];
   const IP_RANGE = "A1:AZ60";   // the Index Planner tab: 9 weeks of Mon-Fri across, half hours down, the slot list below
   const colIdx = l => l.split("").reduce((n, c) => n * 26 + c.charCodeAt(0) - 64, 0) - 1;
   const colL = i => { let s = ""; for (let n = i + 1; n > 0; n = Math.floor((n - 1) / 26)) s = String.fromCharCode(65 + (n - 1) % 26) + s; return s; };
@@ -49,6 +57,12 @@
     return m;
   }
   const readTable = (ctx, name) => { const r = ctx.workbook.tables.getItem(name).getRange(); r.load("values"); return r; };
+  /* a tab's values from A1 to its last used row, so cell positions stay absolute (template grids keep their addresses) */
+  async function usedFromA1(ctx, sheet, lastCol) {
+    const ws = ctx.workbook.worksheets.getItemOrNullObject(sheet); ws.load("isNullObject"); await ctx.sync(); if (ws.isNullObject) return null;
+    const u = ws.getUsedRangeOrNullObject(true); u.load("isNullObject,rowIndex,rowCount"); await ctx.sync(); if (u.isNullObject) return [];
+    const r = ws.getRange(`A1:${lastCol}${u.rowIndex + u.rowCount}`); r.load("values"); await ctx.sync(); return r.values;
+  }
 
   /* Everything the screens need, in a few syncs. Missing pieces come back null so the app can say what's missing. */
   async function load() {
@@ -57,7 +71,7 @@
       const wb = ctx.workbook; wb.load("name");
       const small = {};
       for (const k of ["mpt", "consults"]) if (tm[k]) small[k] = readTable(ctx, tm[k]);
-      const TAIL = BIG;
+      const TAIL = ["tblIvkVisits", "tblIvkLog", "tblIvkHolds"];   // tblIvkOther is read whole: the planner needs every future visit
       for (const s of SPEC) if (tm.own[s.name] && !TAIL.includes(s.name)) small[s.name] = readTable(ctx, s.name);
       const apSheet = wb.worksheets.getItemOrNullObject(SHEETS.appt), acSheet = wb.worksheets.getItemOrNullObject(SHEETS.access), ipSheet = wb.worksheets.getItemOrNullObject(PLANNER);
       apSheet.load("isNullObject"); acSheet.load("isNullObject"); ipSheet.load("isNullObject");
@@ -67,6 +81,9 @@
       for (const [k, r] of Object.entries(small)) out[k] = r.values;
       out.apptUpdated = null; out.freqs = []; out.planner = null;
       if (!ipSheet.isNullObject) { const r = ipSheet.getRange(IP_RANGE); r.load("values"); await ctx.sync(); out.planner = r.values; }
+      /* the provider templates and their slot types (null when the tabs aren't there yet) */
+      out.template = await usedFromA1(ctx, TPL_SHEET, "P");
+      if (tm.own[TYPES_TABLE]) { const r = readTable(ctx, TYPES_TABLE); await ctx.sync(); out.slotTypes = r.values; } else out.slotTypes = await usedFromA1(ctx, TYPES_SHEET, "G");
       if (!apSheet.isNullObject || !acSheet.isNullObject) {
         const upd = apSheet.isNullObject ? null : apSheet.getRange("L1:M1"), fr = acSheet.isNullObject ? null : acSheet.getRange("R5:R14");
         if (upd) upd.load("values"); if (fr) fr.load("values"); await ctx.sync();
@@ -106,7 +123,7 @@
         t.getDataBodyRange().values = s.rows.map(r => r.map(String));
         made.push(s.name);
       }
-      if (made.length) { ws.getRange("A:BL").format.autofitColumns(); ws.visibility = Excel.SheetVisibility.hidden; }
+      if (made.length) { ws.getRange("A:BX").format.autofitColumns(); ws.visibility = Excel.SheetVisibility.hidden; }
       await ctx.sync();
       return { made, blocked };
     });
@@ -250,31 +267,146 @@
     const h = t.getHeaderRowRange(), b = t.getDataBodyRange(); h.load("values"); b.load("values"); await ctx.sync();
     return { t, b, cols: h.values[0].map(C.norm) };
   };
-  /* template slots: rows = [{ Provider, Day, Time, Type }]; a slot the provider already has on that day and time is skipped */
-  async function addSlots(rows) {
+  /* ---------- provider templates ---------- */
+  const typeRow = t => [t.type, t.kind, t.accepts, t.notes, t.use, t.fill, t.font].map(v => String(v ?? ""));
+  /* column widths of the clinic's template, in points: Time, Monday..Friday, two spacers, Event Types, Slots, Hours, M..F */
+  const WIDTHS = [70, 105, 105, 105, 105, 105, 20, 20, 115, 34, 70, 24, 24, 24, 24, 24];
+  const HEAD = "#EBEEF2", LINE = "#9AA3A0";
+  const box = r => { const b = r.format.borders; ["EdgeTop", "EdgeBottom", "EdgeLeft", "EdgeRight", "InsideVertical", "InsideHorizontal"].forEach(k => { const e = b.getItem(k); e.style = "Continuous"; e.color = LINE; }); };
+  /* Slot Types (as a table) and an empty IVK Template tab. A Slot Types tab someone already keeps is read as it is, never replaced. */
+  async function setupTemplate() {
     return Excel.run(async ctx => {
-      const { t, b, cols } = await openTable(ctx, "tblIvkSlots"), at = n => cols.indexOf(n);
-      const have = b.values.filter(r => !isBlank(r)).map(r => `${C.norm(C.provName(r[at("provider")]))}|${C.dayNum(r[at("day")])}|${C.toMin(r[at("time")])}`);
-      const add = rows.filter(r => !have.includes(`${C.norm(C.provName(r.Provider))}|${C.dayNum(r.Day)}|${C.toMin(r.Time)}`))
-        .map((r, i) => Object.assign({ Id: "s" + Date.now().toString(36) + i }, r));
-      addRows(t, cols, b, add); await ctx.sync();
-      return { added: add.length, skipped: rows.length - add.length };
-    });
-  }
-  async function removeSlots(ids) {
-    return Excel.run(async ctx => {
-      const { t, b, cols } = await openTable(ctx, "tblIvkSlots"), c = cols.indexOf("id"), idx = [];
-      b.values.forEach((r, i) => { if (ids.includes(String(r[c]))) idx.push(i); });
-      /* a table keeps one row, so the last slot is cleared rather than deleted */
-      for (const i of idx.sort((x, y) => y - x)) { if (b.values.length - idx.length === 0 && i === 0) b.getRow(0).clear(Excel.ClearApplyTo.contents); else t.rows.getItemAt(i).delete(); }
+      const wb = ctx.workbook, made = [];
+      let st = wb.worksheets.getItemOrNullObject(TYPES_SHEET), tp = wb.worksheets.getItemOrNullObject(TPL_SHEET); const tt = wb.tables.getItemOrNullObject(TYPES_TABLE);
+      st.load("isNullObject"); tp.load("isNullObject"); tt.load("isNullObject"); await ctx.sync();
+      let empty = true;
+      if (!st.isNullObject && tt.isNullObject) { const u = st.getUsedRangeOrNullObject(true); u.load("isNullObject"); await ctx.sync(); empty = u.isNullObject; }
+      if (tt.isNullObject && empty) {
+        if (st.isNullObject) st = wb.worksheets.add(TYPES_SHEET);
+        const rows = TM.DEFAULT_TYPES.map(typeRow), t = st.tables.add(`A1:G${rows.length + 1}`, true);
+        t.name = TYPES_TABLE; t.style = "TableStyleLight1"; t.getHeaderRowRange().values = [TM.TYPE_COLS]; t.getDataBodyRange().values = rows;
+        TM.DEFAULT_TYPES.forEach((x, i) => { const c = st.getRange(`A${i + 2}`); c.format.fill.color = x.fill; c.format.font.color = x.font; });
+        st.getRange("A:G").format.autofitColumns(); made.push(TYPES_SHEET);
+      }
+      if (tp.isNullObject) { tp = wb.worksheets.add(TPL_SHEET); WIDTHS.forEach((w, i) => { tp.getRange(`${colL(i)}:${colL(i)}`).format.columnWidth = w; }); made.push(TPL_SHEET); }
       await ctx.sync();
-      return idx.length;
+      return { made };
     });
   }
-  /* one plan row per patient, by MRN */
-  async function savePlan(mrn, patch) {
+  /* colours and dropdowns for slot cells: one conditional format per type (so a type typed in Excel colours itself), a list from
+     Slot Types that still allows other text, and the legend cells in each tally */
+  /* the dropdown's list: the Slot type column of the Slot Types tab (the add-in's table has it in A; a tab the clinic keeps may not) */
+  async function typesSource(ctx, n) {
+    const st = ctx.workbook.worksheets.getItemOrNullObject(TYPES_SHEET); st.load("isNullObject"); await ctx.sync(); if (st.isNullObject) return null;
+    const h = st.getRange("A1:Z1"); h.load("values"); await ctx.sync();
+    const c = h.values[0].findIndex(v => /^slot\s*type$|^type$/i.test(String(v).trim())); if (c < 0) return null;
+    return `='${TYPES_SHEET}'!$${colL(c)}$2:$${colL(c)}$${n + 1}`;
+  }
+  function paintTypes(ws, slotRanges, types, legend, source) {
+    for (const a of slotRanges) {
+      const r = ws.getRange(a); r.conditionalFormats.clearAll();
+      for (const t of types) {
+        const cf = r.conditionalFormats.add(Excel.ConditionalFormatType.cellValue);
+        cf.cellValue.format.fill.color = t.fill; cf.cellValue.format.font.color = t.font;
+        cf.cellValue.rule = { formula1: `="${t.type.replace(/"/g, '""')}"`, operator: "EqualTo" };
+      }
+      r.dataValidation.clear();
+      if (source) { r.dataValidation.rule = { list: { inCellDropDown: true, source } }; r.dataValidation.errorAlert = { showAlert: false }; }
+    }
+    for (const { type, at } of legend || []) { const t = types.find(x => x.type === type); if (!t) continue; const c = ws.getRange(at); c.format.fill.color = t.fill; c.format.font.color = t.font; }
+  }
+  /* a new provider grid at row r0 (0-based) on IVK Template. o = template.layout's options; copy as [["day|min", type]] */
+  async function addGrid(o, types) {
     return Excel.run(async ctx => {
-      const { t, b, cols } = await openTable(ctx, "tblIvkPlans"), cM = cols.indexOf("mrn");
+      const ws = ctx.workbook.worksheets.getItemOrNullObject(TPL_SHEET); ws.load("isNullObject"); await ctx.sync();
+      if (ws.isNullObject) throw new Error("Set up the template first");
+      /* the first empty band of rows from r0 down (something typed below the last grid moves the new one further down) */
+      let r0 = o.r0, lay, B, rg;
+      for (let tries = 0; ; tries++) {
+        lay = TM.layout(Object.assign({}, o, { copy: new Map(o.copy || []), types }), r0); B = TM.block(lay);
+        rg = ws.getRange(`A${B.r0 + 1}:P${B.r0 + B.rows.length + 1}`); rg.load("values"); await ctx.sync();
+        if (!rg.values.some(r => r.some(v => v !== "" && v != null))) break;
+        if (tries > 30) throw new Error(`No empty rows for a new grid on the ${TPL_SHEET} tab below row ${o.r0 + 1}`);
+        const lastUsed = rg.values.reduce((m, r, i) => r.some(v => v !== "" && v != null) ? i : m, 0); r0 = B.r0 + lastUsed + 3;
+      }
+      rg = ws.getRange(`A${B.r0 + 1}:P${B.r0 + B.rows.length}`); rg.formulas = B.rows;
+      const source = await typesSource(ctx, types.length);
+      const title = ws.getRange(lay.merges[0]); title.merge(false); title.format.font.bold = true; title.format.horizontalAlignment = "Center"; title.format.fill.color = HEAD; box(title);
+      ws.getRange(lay.merges[1]).merge(false);
+      lay.heads.forEach(a => { const r = ws.getRange(a); r.format.fill.color = HEAD; r.format.font.bold = true; });
+      ws.getRange(lay.timeFmt).numberFormat = lay.times.map(() => ["h:mm AM/PM"]);
+      lay.dateFmt.forEach(a => { ws.getRange(a).numberFormat = [["m/d/yyyy"]]; });
+      const grid = ws.getRange(`A${lay.first}:F${lay.last + 1}`); box(grid); ws.getRange(lay.slots).format.horizontalAlignment = "Center";
+      const tal = ws.getRange(lay.tally); box(tal); tal.format.horizontalAlignment = "Center";
+      paintTypes(ws, [lay.slots], types, lay.types, source);
+      await ctx.sync();
+      return { r0, slots: lay.slots };
+    });
+  }
+  /* the drag selection: one rectangle of slot cells set to a type ("" clears), and the grid's Last Modified */
+  async function setCells(addr, rows, cols, value, modifiedAt, serial) {
+    return Excel.run(async ctx => {
+      const ws = ctx.workbook.worksheets.getItem(TPL_SHEET);
+      ws.getRange(addr).values = Array.from({ length: rows }, () => Array(cols).fill(value));
+      if (modifiedAt) { const m = ws.getRange(modifiedAt); m.values = [[serial]]; m.numberFormat = [["m/d/yyyy"]]; }
+      await ctx.sync();
+      return { cells: rows * cols };
+    });
+  }
+  /* Slot Types saved from the add-in, then every grid's colours, dropdowns and tally rewritten for the new list.
+     grids = [{ r0, slots, step, start, end, tallyEnd }] (tallyEnd: the old Total row, 0-based, so it is cleared first) */
+  async function saveTypes(types, grids) {
+    return Excel.run(async ctx => {
+      const wb = ctx.workbook, tt = wb.tables.getItemOrNullObject(TYPES_TABLE); tt.load("isNullObject"); await ctx.sync();
+      if (tt.isNullObject) throw new Error(`Slot types can only be edited here when the ${TYPES_SHEET} tab is the add-in’s table. Edit that tab in Excel instead`);
+      if (!types.length) throw new Error("Keep at least one slot type");
+      const ws = wb.worksheets.getItem(TPL_SHEET), b = tt.getDataBodyRange(); b.load("rowCount");
+      /* every check first, so a refusal leaves the Slot Types tab and every grid as they were */
+      const plans = grids.map(g => {
+        const p = { g, tr0: g.r0 + 2, tally: g.tallyEnd != null, newEnd: g.r0 + 2 + types.length + 2 };
+        if (p.tally && p.newEnd > g.tallyEnd) { p.extra = ws.getRange(`I${g.tallyEnd + 2}:P${p.newEnd + 1}`); p.extra.load("values"); }
+        return p;
+      });
+      await ctx.sync();
+      for (const p of plans) if (p.extra && p.extra.values.some(r => r.some(v => v !== "" && v != null)))
+        throw new Error(`The tally beside the grid at row ${p.g.r0 + 1} needs rows ${p.g.tallyEnd + 2} to ${p.newEnd + 1}, but they hold notes. Move the notes down, then save again`);
+      const rows = types.map(typeRow), had = b.rowCount;
+      if (rows.length > had) { tt.resize(tt.getRange().getResizedRange(rows.length - had, 0)); await ctx.sync(); }
+      const body = tt.getDataBodyRange(); body.getCell(0, 0).getResizedRange(rows.length - 1, 6).values = rows;
+      if (had > rows.length) body.getCell(rows.length, 0).getResizedRange(had - rows.length - 1, 6).clear(Excel.ClearApplyTo.contents);
+      const st = tt.worksheet; types.forEach((x, i) => { const c = st.getRange(`A${i + 2}`); c.format.fill.color = x.fill; c.format.font.color = x.font; });
+      const source = `='${TYPES_SHEET}'!$A$2:$A$${types.length + 1}`;
+      for (const { g, tr0, tally, newEnd } of plans) {
+        /* grids the add-in laid out get their tally rewritten for the new list; any other grid only gets its colours and dropdown */
+        if (!tally) { paintTypes(ws, [g.slots], types, [], source); continue; }
+        const lay = TM.layout({ start: g.start, end: g.end, step: g.step, types }, g.r0);
+        ws.getRange(`I${tr0 + 1}:P${Math.max(g.tallyEnd, newEnd) + 1}`).clear(Excel.ClearApplyTo.all);
+        for (const [r, c, v] of lay.put) if (c >= 8 && r >= tr0) ws.getRange(TM.A1(r, c)).formulas = [[v]];
+        const tal = ws.getRange(lay.tally); box(tal); tal.format.horizontalAlignment = "Center";
+        lay.heads.slice(3).forEach(a => { const r = ws.getRange(a); r.format.fill.color = HEAD; r.format.font.bold = true; });
+        paintTypes(ws, [g.slots], types, lay.types, source);
+      }
+      await ctx.sync();
+      return { types: types.length, grids: grids.length };
+    });
+  }
+  /* the wider report's non-IVK visits: [Date iso, Time, Provider, Event, Status], replacing what was there */
+  async function replaceOther(rows) {
+    return Excel.run(async ctx => {
+      const { t, b } = await openTable(ctx, "tblIvkOther"), had = b.values.length, W = C.OTHER_COLS.length, n = Math.max(rows.length, 1);
+      if (n > had) { t.resize(t.getRange().getResizedRange(n - had, 0)); await ctx.sync(); }
+      const body = t.getDataBodyRange();
+      for (let s = 0; s < rows.length; s += CH) { const part = rows.slice(s, s + CH); body.getCell(s, 0).getResizedRange(part.length - 1, W - 1).values = part.map(r => r.map(v => String(v ?? ""))); await ctx.sync(); }
+      const left = Math.max(had, n) - rows.length; if (left > 0) { body.getCell(rows.length, 0).getResizedRange(left - 1, W - 1).clear(Excel.ClearApplyTo.contents); await ctx.sync(); }
+      return { n: rows.length };
+    });
+  }
+  /* one row per patient, by MRN: index plans (tblIvkPlans) and the requires post-check flag (tblIvkFlags) */
+  const savePlan = (mrn, patch) => upsertMrn("tblIvkPlans", mrn, patch);
+  const saveFlag = (mrn, patch) => upsertMrn("tblIvkFlags", mrn, patch);
+  async function upsertMrn(table, mrn, patch) {
+    return Excel.run(async ctx => {
+      const { t, b, cols } = await openTable(ctx, table), cM = cols.indexOf("mrn");
       const i = b.values.findIndex(r => C.mrnKey(r[cM]) === C.mrnKey(mrn));
       if (i < 0) { addRows(t, cols, b, [Object.assign({ MRN: mrn }, patch)]); await ctx.sync(); return true; }
       const row = b.values[i].map(v => v == null ? "" : String(v));
@@ -337,6 +469,6 @@
     });
   }
 
-  return { DATA_SHEET, SHEETS, PLANNER, SPEC, load, setup, saveVisit, confirmProtocol, replaceAppts, saveKeyed, saveRoutes, appendLog, openRow,
-    addSlots, removeSlots, savePlan, placeHolds, setHolds, fillPlanner, getDoc, setDoc, refreshDoc };
+  return { DATA_SHEET, SHEETS, PLANNER, TPL_SHEET, TYPES_SHEET, SPEC, load, setup, saveVisit, confirmProtocol, replaceAppts, saveKeyed, saveRoutes, appendLog, openRow,
+    setupTemplate, addGrid, setCells, saveTypes, replaceOther, savePlan, saveFlag, placeHolds, setHolds, fillPlanner, getDoc, setDoc, refreshDoc };
 });
