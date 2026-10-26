@@ -15,7 +15,7 @@ test("flowUrl accepts workflow trigger URLs only", () => {
 
 test("send posts the Adaptive Card the Teams template expects, and logs it", async () => {
   const f = fake(202), logged = [];
-  const r = await N.send({ event: "arrival", text: "TESANN is here for their 13:30 IVK visit with Dr. Rivera. Chair 2.", facts: [["Chair", "Chair 2"], ["Empty", ""]], patient: "TESANN", chair: "2", sentBy: "Sam" },
+  const r = await N.send({ event: "arrival", text: "TESANN is here for their 1:30 PM IVK visit with Dr. Rivera. Chair 2.", facts: [["Chair", "Chair 2"], ["Empty", ""]], patient: "TESANN", chair: "2", sentBy: "Sam" },
     routes, "TRUE", row => logged.push(row), f);
   assert.equal(r.ok, true); assert.equal(r.status, 202); assert.equal(r.to, "RN");
   assert.equal(f.calls[0].url, URL1);

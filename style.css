@@ -110,12 +110,12 @@ h3{margin:0 0 4px;font-size:15px;font-weight:600}
 .list{padding:18px 22px 10px}
 .list .lh{display:flex;justify-content:space-between;align-items:baseline;gap:12px;margin-bottom:4px}
 .list .lh span{font-size:13px;color:var(--muted)}
-.row{display:grid;grid-template-columns:78px 52px minmax(0,1fr) auto;align-items:center;gap:12px;width:100%;min-height:52px;padding:6px 8px;margin:0 -8px;border-radius:10px;transition:background .2s}
+.row{display:grid;grid-template-columns:78px 70px minmax(0,1fr) auto;align-items:center;gap:12px;width:100%;min-height:52px;padding:6px 8px;margin:0 -8px;border-radius:10px;transition:background .2s}
 .row:hover{background:var(--surface-3)}
 .row[aria-pressed="true"]{background:var(--accent-soft)}
 .row + .row{box-shadow:0 -1px 0 var(--surface-2)}
 .row .p{font-weight:600}
-.row .w{color:var(--muted)}
+.row .w{color:var(--muted);white-space:nowrap}
 .row .i{min-width:0;font-size:13.5px;color:var(--muted);overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .row .i .f{color:var(--warn);font-weight:500}
 .row .i .f.bad{color:var(--danger);font-weight:600}
@@ -210,7 +210,7 @@ details.fold>summary span{font-weight:400;font-size:13px;color:var(--muted)}
 .sched{padding:18px 20px 20px;overflow-x:auto}
 .wkbar{display:flex;align-items:center;gap:8px;margin-bottom:14px;flex-wrap:wrap}
 .wkbar .lbl{font-weight:600;margin-right:6px}
-.sgrid{display:grid;grid-template-columns:56px repeat(5,minmax(118px,1fr));min-width:700px}
+.sgrid{display:grid;grid-template-columns:70px repeat(5,minmax(118px,1fr));min-width:714px}
 .sgrid .ch{padding:0 8px 10px;font-weight:600;font-size:13.5px}
 .sgrid .ch small{display:block;font-weight:400;color:var(--muted);font-size:12px}
 .sgrid .ch.today{color:var(--accent)}
@@ -281,7 +281,7 @@ ol.how li+li{margin-top:3px}
   h1{font-size:24px}
   .crow,.chead{grid-template-columns:76px 1fr}
   .crow>:nth-child(3),.chead span:nth-child(n+3){display:none}
-  .row{grid-template-columns:70px 46px minmax(0,1fr) auto;gap:8px}
+  .row{grid-template-columns:70px 64px minmax(0,1fr) auto;gap:8px}
   .sgrid2{grid-template-columns:1fr}
   .detail,.list{padding:18px 16px}
 }

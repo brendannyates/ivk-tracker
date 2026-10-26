@@ -38,7 +38,7 @@ test("helpers: codes, providers, times, dates", () => {
   assert.equal(C.provName("Chen, Paul MD"), "Dr. Chen");
   assert.equal(C.toMin("1:30 PM"), 810); assert.equal(C.toMin(0.5625), 810); assert.equal(C.toMin("13:30"), 810); assert.equal(C.toMin("12:05 AM"), 5);
   assert.equal(C.toSerial("10/21/2026"), T); assert.equal(C.toSerial("2026-10-21"), T); assert.equal(C.toSerial(T + 0.4), T); assert.equal(C.toSerial("none scheduled"), null);
-  assert.equal(C.fmtT(545), "9:05"); assert.equal(C.fmtD(T), "Oct 21"); assert.equal(C.fmtDay(T), "Wednesday, October 21");
+  assert.equal(C.fmtT(545), "9:05 AM"); assert.equal(C.fmtT(0), "12:00 AM"); assert.equal(C.fmtT(720), "12:00 PM"); assert.equal(C.fmtT(810), "1:30 PM"); assert.equal(C.fmtD(T), "Oct 21"); assert.equal(C.fmtDay(T), "Wednesday, October 21");
   assert.equal(C.weekStart(T), T - 3);   // Sunday Oct 18
   assert.equal(C.freqDays("every 3 weeks"), 21); assert.equal(C.freqDays("PRN"), null);
   assert.equal(C.mrnKey("0099001"), "99001"); assert.equal(C.mrnKey(99001), "99001");
@@ -96,7 +96,7 @@ test("chair states: open, track, soon, ready; waiting is late after LateMin", ()
   V.set(k, { key: k, arr: 740, chair: "2", seat: 745, out: null, booked: "", asked: null, proto: "", status: "" });
   const L = C.today(world({ visits: V }));
   assert.equal(C.chairState("1", L, 800, cfg).state, "open");
-  const tr = C.chairState("2", L, 800, cfg); assert.equal(tr.state, "track"); assert.equal(tr.end, 865); assert.equal(C.chairStatus(tr), "Out around 14:25"); assert.equal(tr.check, 775);
+  const tr = C.chairState("2", L, 800, cfg); assert.equal(tr.state, "track"); assert.equal(tr.end, 865); assert.equal(C.chairStatus(tr), "Out around 2:25 PM"); assert.equal(tr.check, 775);
   const so = C.chairState("2", L, 858, cfg); assert.equal(so.state, "soon"); assert.equal(C.chairStatus(so), "Out in 7 min");
   const re = C.chairState("2", L, 866, cfg); assert.equal(re.state, "ready"); assert.equal(C.chairStatus(re), "Ready to check out");
   assert.equal(C.chairStatus(C.chairState("2", L, 875, cfg)), "Due out 10 min ago");
@@ -127,8 +127,8 @@ test("needs: red only for what blocks the next infusion, sorted red, amber, quie
 
 test("arrival message", () => {
   const L = C.today(world()), v = L.find(y => y.a.code === "TESANN");
-  assert.equal(C.arrivalText(v, "2"), "TESANN is here for their 13:30 IVK visit with Dr. Rivera. Chair 2.");
-  assert.equal(C.arrivalText(v, ""), "TESANN is here for their 13:30 IVK visit with Dr. Rivera. Waiting for a chair.");
+  assert.equal(C.arrivalText(v, "2"), "TESANN is here for their 1:30 PM IVK visit with Dr. Rivera. Chair 2.");
+  assert.equal(C.arrivalText(v, ""), "TESANN is here for their 1:30 PM IVK visit with Dr. Rivera. Waiting for a chair.");
   assert.equal(C.fill(C.TEMPLATES.seated, { patient: "TESANN", chair: "3" }), "TESANN is in Chair 3.");
 });
 

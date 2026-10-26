@@ -24,7 +24,7 @@ The hosted files hold no patient data. Patients only ever appear as LASFIR codes
 
 ## The visit, at the desk
 
-1. **Check in.** Pick a chair or leave them in the lobby. The RN's chat gets "SMIJAN is here for their 13:30 IVK visit with
+1. **Check in.** Pick a chair or leave them in the lobby. The RN's chat gets "SMIJAN is here for their 1:30 PM IVK visit with
    Dr. Rivera. Chair 2." If the patient needs booking out or a protocol confirmation, the group chat gets the ask at the same time.
 2. **Seat.** Picking a chair later tells the RN which one.
 3. **Ask.** While they're in the chair, the card's next step is to ask the group chat (if it wasn't sent at check-in). The message

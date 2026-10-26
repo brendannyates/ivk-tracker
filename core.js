@@ -42,7 +42,9 @@
     let h = +m[1]; if (m[3]) { if (/p/i.test(m[3]) && h < 12) h += 12; if (/a/i.test(m[3]) && h === 12) h = 0; }
     return h * 60 + +m[2];
   }
-  const fmtT = m => m == null ? "" : `${Math.floor(m / 60)}:${pad(m % 60)}`;
+  /* shown, saved and posted as "1:30 PM"; row keys keep "13:30" so rows saved before the switch still match */
+  const fmtT = m => m == null ? "" : `${(Math.floor(m / 60) + 11) % 12 + 1}:${pad(m % 60)} ${m < 720 ? "AM" : "PM"}`;
+  const keyT = m => m == null ? "" : `${Math.floor(m / 60)}:${pad(m % 60)}`;
   const fmtD = s => { if (s == null) return ""; const d = dateOf(s); return `${MONTHS[d.getMonth()].slice(0, 3)} ${d.getDate()}`; };
   const fmtDay = s => { const d = dateOf(s); return `${DAY_NAMES[d.getDay()]}, ${MONTHS[d.getMonth()]} ${d.getDate()}`; };
   const weekday = s => dateOf(s).getDay();
@@ -117,9 +119,9 @@
     }).filter(a => a.mrn && a.date != null);
   }
   const isCancelled = a => /cancel|resched/i.test(a.status);
-  const visitKey = (date, mrn, time) => `${isoOf(date)}|${mrn}|${fmtT(time)}`;
+  const visitKey = (date, mrn, time) => `${isoOf(date)}|${mrn}|${keyT(time)}`;
 
-  /* IVK Visits rows (the add-in's own table): what the desk did today. Times are "13:22" text. */
+  /* IVK Visits rows (the add-in's own table): what the desk did today. Times are "1:22 PM" text. */
   const VISIT_COLS = ["Key", "Date", "MRN", "Patient", "Appt", "Arrived", "Chair", "Seated", "Out", "Booked", "Asked", "Protocol", "Status", "By", "Updated"];
   function visitRows(values) {
     const { rows } = byHeader(values), m = new Map();
@@ -298,7 +300,7 @@
   }
 
   /* ---------- Schedule ---------- */
-  /* one Sunday-to-Saturday week of IVK visits by weekday and time. Rows are every 30 min from the first to the last visit (9:00-15:30 at least). */
+  /* one Sunday-to-Saturday week of IVK visits by weekday and time. Rows are every 30 min from the first to the last visit (9:00 AM to 3:30 PM at least). */
   function week(A, start, P) {
     const days = [1, 2, 3, 4, 5].map(i => start + i), inWeek = A.filter(a => a.date >= start && a.date < start + 7);
     const times = inWeek.map(a => a.time).filter(t => t != null);
