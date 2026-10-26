@@ -1,0 +1,63 @@
+/* Chair map look: copied line for line from esk-tracker src/taskpane.html (the .bplan and .bkey rules) so a map file from the Bay Map Builder draws the same here. Copy again when the tracker's map look changes. */
+.bplan{position:relative;aspect-ratio:808/392;container-type:inline-size;margin-top:4px}
+.bplan svg{position:absolute;inset:0;width:100%;height:100%;display:block;overflow:visible;pointer-events:none}
+.bplan .wall{stroke:var(--ink);stroke-width:8;fill:none;stroke-linecap:square}
+.bplan .wall.thin{stroke-width:4.5}
+.bplan .window .wf{stroke:var(--ink);stroke-width:8;fill:none}
+.bplan .window .wg{stroke:var(--surface);stroke-width:4;fill:none}
+.bplan{--lamp:#FFD38A;--lamp-edge:#C98A2B;--glow:#FFC56B;--glow-a:.75}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .bplan{--lamp-edge:#E9B150;--glow:#FFB547;--glow-a:.6}}
+:root[data-theme="dark"] .bplan{--lamp-edge:#E9B150;--glow:#FFB547;--glow-a:.6}
+.bplan .curtain path{fill:none;stroke-linejoin:round}
+.bplan .curtain .crail{stroke:var(--faint);stroke-width:1.25;stroke-dasharray:3 3}
+.bplan .curtain .fabric{stroke:var(--muted);stroke-width:5.5;stroke-linecap:round;stroke-dasharray:0 7}
+.bplan .curtain .bunch{stroke:var(--muted);stroke-width:11;stroke-linecap:butt;stroke-dasharray:1.4 1.4 1.4 1.4 1.4 1.4 1.4 1.4 1.4 1.4 0 86}
+.bplan .lantern .body{fill:var(--surface);stroke:var(--muted);stroke-width:1.5}
+.bplan .lantern .lens{fill:var(--surface2)}
+.bplan .lantern .touch{fill:var(--muted)}
+.bplan .lantern.on .body{stroke:var(--lamp-edge)}
+.bplan .lantern.on .lens{fill:var(--lamp)}
+.bplan .lantern.on .touch{fill:var(--lamp-edge)}
+.bplan .door{stroke:var(--faint);stroke-width:1.75;fill:none}
+.bplan .table{fill:var(--surface3);stroke:var(--faint);stroke-width:1.75}
+.bplan .seat{fill:var(--surface);stroke:var(--muted);stroke-width:1.75}
+.bplan .back,.bplan .arm{fill:var(--surface2);stroke:var(--muted);stroke-width:1.5}
+.bplan .room{position:absolute;transform:translate(-50%,-50%);font-size:clamp(10px,1.6cqw,12.5px);font-weight:600;color:var(--muted);white-space:nowrap}
+.bplan .room.small{font-weight:500;font-size:clamp(9px,1.3cqw,11px)}
+.bplan .bay{position:absolute;aspect-ratio:1;border-radius:50%;--rw:2px;--rc:var(--surface2);background:var(--surface3);box-shadow:inset 0 0 0 var(--rw) var(--rc);transition:box-shadow .2s,background .2s,filter .2s}
+.bplan .bay[data-state="open"]{background:transparent;box-shadow:none;border:2px dashed var(--faint)}
+.bplan .bay[data-state="track"]{background:var(--surface2);--rc:var(--faint);--rw:2.5px}
+.bplan .bay[data-state="soon"]{background:var(--warn-soft);--rc:var(--warn);--rw:3px}
+.bplan .bay[data-state="late"]{background:var(--bad-soft);--rc:var(--bad);--rw:3.5px}
+.bplan .bay[data-state="ready"]{background:var(--accent-soft);--rc:var(--accent);--rw:3px}
+.bplan .bay:hover{filter:brightness(.96)}
+.bplan .bay[aria-current="true"]{box-shadow:inset 0 0 0 var(--rw) var(--rc),0 0 0 3px var(--surface),0 0 0 5px var(--ink)}
+.bplan .bay[data-state="open"][aria-current="true"]{box-shadow:0 0 0 3px var(--surface),0 0 0 5px var(--ink)}
+/* Dark: the tags sit on the same surface as the card, so they get a lighter fill and an outline in the bay's state colour */
+.bplan{--tag-bg:var(--surface);--tag-line:transparent}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]) .bplan{--tag-bg:#2C3632;--tag-line:rgba(255,255,255,.18)}
+  :root:not([data-theme="light"]) .bplan .btag[data-state="soon"]{--tag-line:var(--warn)}:root:not([data-theme="light"]) .bplan .btag[data-state="late"]{--tag-line:var(--bad)}:root:not([data-theme="light"]) .bplan .btag[data-state="ready"]{--tag-line:var(--accent)}
+  :root:not([data-theme="light"]) .bplan .bay[data-state="track"]{--rc:var(--muted)}:root:not([data-theme="light"]) .bplan .bay[data-state="busy"]{--rc:var(--muted)}}
+:root[data-theme="dark"] .bplan{--tag-bg:#2C3632;--tag-line:rgba(255,255,255,.18)}
+:root[data-theme="dark"] .bplan .btag[data-state="soon"]{--tag-line:var(--warn)}:root[data-theme="dark"] .bplan .btag[data-state="late"]{--tag-line:var(--bad)}:root[data-theme="dark"] .bplan .btag[data-state="ready"]{--tag-line:var(--accent)}
+:root[data-theme="dark"] .bplan .bay[data-state="track"]{--rc:var(--muted)}:root[data-theme="dark"] .bplan .bay[data-state="busy"]{--rc:var(--muted)}
+.bplan .btag{position:absolute;transform:translate(-50%,-50%);pointer-events:none;background:var(--tag-bg);border-radius:clamp(6px,1.4cqw,11px);padding:clamp(2px,.8cqw,7px) clamp(5px,1.4cqw,11px);box-shadow:0 0 0 1.5px var(--tag-line),0 1px 2px rgba(16,24,20,.08),0 8px 18px -10px rgba(16,24,20,.35);white-space:nowrap;line-height:1.2;max-width:28cqw}
+.bplan .btag .n{font-weight:600;font-size:clamp(10px,2cqw,14px);overflow:hidden;text-overflow:ellipsis}
+.bplan .btag .num{color:var(--muted);margin-right:.4em}
+.bplan .btag .s{display:flex;align-items:center;gap:5px;margin-top:2px;font-size:clamp(9px,1.75cqw,12.5px);color:var(--muted);overflow:hidden}
+.bplan .btag .dot{width:7px;height:7px;border-radius:50%;background:var(--faint);flex:none}
+.bplan .btag[data-state="track"] .dot{background:var(--muted)}
+.bplan .btag[data-state="ready"] .dot{background:var(--accent)} .bplan .btag[data-state="ready"] .s{color:var(--accent);font-weight:600}
+.bplan .btag[data-state="soon"] .dot{background:var(--warn)} .bplan .btag[data-state="soon"] .s{color:var(--warn);font-weight:600}
+.bplan .btag[data-state="late"] .dot{background:var(--bad)} .bplan .btag[data-state="late"] .s{color:var(--bad);font-weight:600}
+.bplan .btag[data-state="open"] .n{color:var(--muted)}
+.bplan .btag .tx{overflow:hidden;text-overflow:ellipsis}
+@container (max-width:560px){.bplan .btag{display:flex;align-items:center;gap:4px;max-width:19cqw}.bplan .btag .n{min-width:0}.bplan .btag .s{order:-1;flex:none;margin-top:0}.bplan .btag .tx{display:none}}
+.bkey{display:flex;flex-wrap:wrap;gap:6px 16px;margin:10px 0 0;padding:0;list-style:none;font-size:12.5px;color:var(--muted)}
+.bkey li{display:flex;align-items:center;gap:7px}
+.bkey .bsw{flex:none;width:14px;height:14px;border-radius:50%;background:var(--surface3);box-shadow:inset 0 0 0 2px var(--surface2)}
+.bkey .bsw[data-k="open"]{background:transparent;box-shadow:none;border:1.5px dashed var(--faint)}
+.bkey .bsw[data-k="track"]{background:var(--surface2);box-shadow:inset 0 0 0 2px var(--faint)}
+.bkey .bsw[data-k="soon"]{background:var(--warn-soft);box-shadow:inset 0 0 0 2px var(--warn)}
+.bkey .bsw[data-k="late"]{background:var(--bad-soft);box-shadow:inset 0 0 0 2px var(--bad)}
+.bkey .bsw[data-k="ready"]{background:var(--accent-soft);box-shadow:inset 0 0 0 2px var(--accent)}

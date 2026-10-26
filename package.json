@@ -1,0 +1,10 @@
+{
+  "name": "ivk-tracker",
+  "version": "1.0.0",
+  "private": true,
+  "description": "IVK Tracker: Excel on the web add-in for the IV ketamine front desk",
+  "scripts": {
+    "check": "node --check core.js && node --check notify.js && node --check excel.js && node --check app.js && node --check bayplan.js",
+    "test": "node --test tests/*.test.js"
+  }
+}
