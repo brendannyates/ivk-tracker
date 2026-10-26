@@ -1,6 +1,7 @@
 /* app.js: the IVK Tracker screens. Used at the Castro front desk; the RN never opens it and gets Teams posts instead.
    Today:     chair map (a Bay Map Builder file, else chair tiles), who's waiting and still to come, and one visit card
-   Schedule:  the week by day and time (replaces the Index Planner tab)
+   Schedule:  the week by day and time, with open template slots and holds
+   Index planner: the template by provider, and each new patient's index visits proposed from it, held, then booked in NextGen
    Patients:  everyone on the Master Patient Tracker, sorted by what they need (auth, booking, protocol)
    Consults:  the Consults tab, approved-not-scheduled first
    Settings:  your name, the NextGen upload, Teams workflows and messages, chair map, timing, appearance, workbook setup
@@ -20,7 +21,7 @@
   const hm = () => C.fmtT(nowMin());
   const plural = (n, a, b) => `${n} ${n === 1 ? a : b || a + "s"}`;
 
-  const S = { view: "today", raw: null, sig: "", live: false, err: "", sel: null, bSel: null, pSel: null, chip: "need", q: "", wk: 0,
+  const S = { view: "today", raw: null, sig: "", live: false, err: "", sel: null, bSel: null, pSel: null, chip: "need", q: "", wk: 0, ipView: "plan", ipSel: null, ipPins: {}, ipAlt: null,
     modal: null, m: {}, loading: false, name: LS.get("ivkName", ""), theme: LS.get("ivkTheme", "light") };
   document.documentElement.dataset.theme = S.theme;
 
@@ -44,6 +45,11 @@
     S.list = C.today(S.x); S.chairs = C.chairList(cfg, plan);
     /* a protocol ask posted today counts as asked even if saving the time on the visit failed */
     for (const v of S.list) if (v.st.asked == null) { const l = sentToday("protocol", C.code(v)); if (l) v.st = Object.assign({}, v.st, { asked: C.toMin(timeOf(l.at)) }); }
+    S.slots = C.slotRows(r.tblIvkSlots); S.plans = C.planRows(r.tblIvkPlans); S.holds = C.holdRows(r.tblIvkHolds); S.tabSlots = C.tabSlots(r.planner);
+    S.X = { slots: S.slots, appts: S.A, holds: S.holds, cfg, chairs: S.chairs.length, listAt: r.apptUpdated };
+    const pv = new Map(); for (const a of S.A) if (a.provider && !pv.has(C.norm(C.provName(a.provider)))) pv.set(C.norm(C.provName(a.provider)), a.provider);
+    for (const x of S.slots) if (x.provider && !pv.has(C.norm(C.provName(x.provider)))) pv.set(C.norm(C.provName(x.provider)), x.provider);
+    S.providers = [...pv.values()].sort((a, b) => C.provName(a).localeCompare(C.provName(b)));
     S.freqs = (r.freqs && r.freqs.length ? r.freqs : ["2x per week", "1x per week", "every 2 weeks", "every 3 weeks", "every 4 weeks", "every 6 weeks", "every 2 months", "every 3 months", "PRN"]);
   }
   /* last Teams post of an event for a patient today (from tblIvkLog) */
@@ -75,7 +81,11 @@
   const Local = {
     saveVisit: (k, b, p, g) => X.saveVisit(k, b, p, g), confirmProtocol: (m, f, s) => X.confirmProtocol(m, f, s), replaceAppts: (r, s) => X.replaceAppts(r, s),
     saveKeyed: (t, p) => X.saveKeyed(t, p), saveRoutes: r => X.saveRoutes(r), appendLog: r => X.appendLog(r), openRow: (k, m) => X.openRow(k, m),
-    setup: () => X.setup(), setDoc: (k, v) => X.setDoc(k, v)
+    setup: () => X.setup(), setDoc: (k, v) => X.setDoc(k, v),
+    addSlots: r => X.addSlots(r), removeSlots: ids => X.removeSlots(ids), savePlan: (m, p) => X.savePlan(m, p), placeHolds: (r, by) => X.placeHolds(r, by),
+    setHolds: (ids, st, by) => X.setHolds(ids, st, by),
+    /* the pane reads first so the tab gets every hold anyone has placed, not just this screen's copy */
+    fillPlanner: async () => { await refresh(true); return X.fillPlanner(S.A, S.holds, S.raw.apptUpdated); }
   };
   const Store = {};
   for (const k of Object.keys(Local)) Store[k] = FULL ? (...a) => callPane(k, a) : async (...a) => { const r = await Local[k](...a); if (k !== "openRow") await refresh(true); return r; };
@@ -167,13 +177,15 @@
   }
 
   /* ---------- frame ---------- */
-  const NAV = [["today", "Today"], ["schedule", "Schedule"], ["patients", "Patients"], ["consults", "Consults"]];
+  const NAV = [["today", "Today"], ["schedule", "Schedule"], ["index", "Index planner"], ["patients", "Patients"], ["consults", "Consults"]];
   function badges() {
     const F = floor(), b = {};
     const t = F.late.length + F.ready.length; if (t) b.today = { n: t, bad: F.late.length > 0 };
     /* Patients counts only what blocks the next infusion; the amber needs live under the Needs attention chip */
     const pn = S.P.filter(p => C.needs(p, S.x).some(y => y.bad)).length; if (pn) b.patients = { n: pn, bad: true };
     const ca = S.CS.filter(c => c.state === "act").length; if (ca) b.consults = { n: ca };
+    /* holds waiting to be booked; red once one is past HoldMin without being confirmed */
+    const hs = liveHolds(), np = new Set(hs.map(h => h.mrn)).size; if (np) b.index = { n: np, bad: hs.some(h => h.state === "late") };
     const set = (S.raw?.missing || []).length + (teamsReady("arrival") && teamsReady("protocol") ? 0 : 1); if (set) b.settings = { n: set };
     return b;
   }
@@ -181,7 +193,7 @@
     const page = $(".page"), top = page ? page.scrollTop : 0;
     if (!S.raw) { $("#app").innerHTML = `<div class="landing"><h1>IVK Tracker</h1><p class="muted">${S.err ? esc(S.err) : "Reading the workbook…"}</p></div>`; return; }
     const B = badges(), item = ([k, label]) => `<button class="item" data-act="nav" data-v="${k}"${S.view === k ? ' aria-current="page"' : ""}>${label}${B[k] ? `<span class="count${B[k].bad ? " bad" : ""}" aria-label="${B[k].n} need attention">${B[k].n}</span>` : ""}</button>`;
-    const body = { today: todayHTML, schedule: scheduleHTML, patients: patientsHTML, consults: consultsHTML, settings: settingsHTML }[S.view]();
+    const body = { today: todayHTML, schedule: scheduleHTML, index: indexHTML, patients: patientsHTML, consults: consultsHTML, settings: settingsHTML }[S.view]();
     $("#app").innerHTML = `<div class="app">
       <nav class="rail" aria-label="IVK Tracker">
         <div class="brand">IVK Tracker<small>${esc(S.cfg.Clinic)}</small></div>
@@ -205,6 +217,8 @@
   function setupBanner() {
     const miss = S.raw.missing || [], noTabs = ["mpt", "appt"].filter(k => !S.raw.tables?.[k]);
     if (noTabs.length) return `<div class="msg warn"><b>This workbook has no ${noTabs.map(k => k === "mpt" ? "Master Patient Tracker" : "Appt List").join(" or ")} table.</b> Open the IVK Patient Tracker workbook, then the add-in.</div>`;
+    const NEW = ["tblIvkSlots", "tblIvkPlans", "tblIvkHolds"];
+    if (miss.length && miss.every(n => NEW.includes(n))) return `<div class="msg warn"><b>The Index planner needs three more tables.</b> Updating adds them to the hidden ${esc(X.DATA_SHEET)} tab for the template, plans and holds; nothing else changes. <div class="actions"><button class="btn primary inl" data-act="setup">Update the workbook</button></div></div>`;
     if (miss.length) return `<div class="msg warn"><b>This workbook isn’t set up for the add-in yet.</b> Setting up adds a hidden IVK Tracker Data tab for check-ins and Teams settings; nothing else changes. <div class="actions"><button class="btn primary inl" data-act="setup">Set up this workbook</button></div></div>`;
     return "";
   }
@@ -374,7 +388,13 @@
 
   /* ---------- Schedule ---------- */
   function scheduleHTML() {
-    const T = todayS(), start = C.weekStart(T) + 7 * S.wk, W = C.week(S.A, start, S.PM), F = floor();
+    const T = todayS(), start = C.weekStart(T) + 7 * S.wk, F = floor();
+    /* open template slots from today on, and holds NextGen doesn't have yet */
+    const DS = new Map([1, 2, 3, 4, 5].map(i => [start + i, C.daySlots(start + i, S.X)]));
+    const openIn = (d, t) => d < T ? [] : DS.get(d).slots.filter(x => !x.by && !x.full && x.time >= t && x.time < t + 30);
+    const holdIn = (d, t) => DS.get(d).bookings.filter(b => b.kind === "hold" && b.time >= t && b.time < t + 30);
+    const W = C.week(S.A, start, S.PM, [...DS.values()].flatMap(x => x.slots.map(y => y.time).concat(x.bookings.map(b => b.time))));
+    const nOpen = [...DS.entries()].reduce((n, [d, x]) => n + (d < T ? 0 : x.slots.filter(y => !y.by && !y.full).length), 0);
     const stateOf = a => {
       if (C.isCancelled(a)) return "cx";
       if (/no ?show/i.test(a.status)) return "noshow";
@@ -387,13 +407,137 @@
     };
     const blk = a => { const s = stateOf(a), p = a.p, flag = p && a.date >= T && C.futureOf(S.A, p.mrn, a.date).length === 0 && C.isActive(p) && !/prn/i.test(p.freq);
       return `<button class="blk ${s}" data-act="schedPick" data-m="${esc(a.mrn)}" data-d="${a.date}" aria-label="${esc(`${a.code} at ${C.fmtT(a.time)}, ${C.provName(a.provider)}, ${a.status}`)}"><b>${esc(a.code)}</b> ${C.fmtT(a.time)}<small>${esc(C.provName(a.provider))}${/start/i.test(a.event) ? ", start" : ""}${s === "noshow" ? ", no-show" : flag ? ", last booked" : ""}</small></button>`; };
-    const cells = W.rows.map(t => `<div class="tm">${C.fmtT(t)}</div>${W.days.map(d => `<div class="sc${d === T ? " td" : ""}">${W.cell(d, t).map(blk).join("")}</div>`).join("")}`).join("");
+    const hblk = b => { const late = C.holdState(b.h, S.A, Date.now(), S.cfg) === "late";
+      return `<button class="blk hold${late ? " late" : ""}" data-act="ipPick" data-m="${esc(b.mrn)}" aria-label="${esc(`Hold for ${b.code} at ${C.fmtT(b.time)}${late ? ", not confirmed booked" : ""}`)}">Hold <b>${esc(b.code)}</b> ${C.fmtT(b.time)}<small>${esc(C.provName(b.provider) || "any provider")}${late ? ", not confirmed" : b.h.by ? `, by ${esc(b.h.by)}` : ""}</small></button>`; };
+    const oblk = x => `<div class="blk open">Open ${x.type === "Flex" ? "flex" : x.type === "Index" ? "index" : "slot"} ${C.fmtT(x.time)}<small>${esc(C.provName(x.provider) || "any provider")}</small></div>`;
+    const cells = W.rows.map(t => `<div class="tm">${C.fmtT(t)}</div>${W.days.map(d => `<div class="sc${d === T ? " td" : ""}">${W.cell(d, t).map(blk).join("")}${holdIn(d, t).map(hblk).join("")}${openIn(d, t).map(oblk).join("")}</div>`).join("")}`).join("");
     const label = `${C.fmtD(start)} to ${C.fmtD(start + 6)}`;
-    return `${head("Schedule", `Week of ${label}: ${plural(W.count, "IVK visit")}${W.count ? `, ${W.days.map((d, i) => W.byDay[i] ? `${["Mon", "Tue", "Wed", "Thu", "Fri"][i]} ${W.byDay[i]}` : "").filter(Boolean).join(", ")}` : ""}`, true)}
+    return `${head("Schedule", `Week of ${label}: ${plural(W.count, "IVK visit")}${W.count ? `, ${W.days.map((d, i) => W.byDay[i] ? `${["Mon", "Tue", "Wed", "Thu", "Fri"][i]} ${W.byDay[i]}` : "").filter(Boolean).join(", ")}` : ""}${S.slots.length ? `, ${plural(nOpen, "open template slot")}` : ""}`, true)}
       <section class="card sched"><div class="wkbar"><span class="lbl">${label}</span>
         <button class="btn ghost sm" data-act="wk" data-v="-1">Previous week</button><button class="btn ghost sm" data-act="wk" data-v="0"${S.wk === 0 ? " disabled" : ""}>This week</button><button class="btn ghost sm" data-act="wk" data-v="1">Next week</button>
         <span class="muted small" style="margin-left:auto">“last booked” = no visit booked after this one</span></div>
       <div class="sgrid"><div></div>${W.days.map(d => `<div class="ch${d === T ? " today" : ""}">${["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"][C.weekday(d) - 1]}<small>${C.fmtD(d)}</small></div>`).join("")}${cells}</div></section>`;
+  }
+
+  /* ---------- Index planner ---------- */
+  const DAYW = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
+  const dshort = d => `${["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][C.weekday(d)]} ${C.fmtD(d)}`;
+  const liveHolds = () => (S.holds || []).map(h => Object.assign({}, h, { state: C.holdState(h, S.A, Date.now(), S.cfg) })).filter(h => h.state === "held" || h.state === "late");
+  const holdsOf = mrn => (S.holds || []).filter(h => h.mrn === mrn).map(h => Object.assign({}, h, { state: C.holdState(h, S.A, Date.now(), S.cfg) })).filter(h => h.state !== "released");
+  const minsAgo = ms => Math.max(0, Math.floor((Date.now() - ms) / 60000));
+  /* who is on the list: plans saved in the workbook, and consults waiting for their treatment start */
+  function ipList() {
+    const out = new Map();
+    for (const c of S.CS) if (c.state === "act" && c.mrn && /treatment start/i.test(c.flag)) out.set(c.mrn, { mrn: c.mrn, code: c.code, c, from: `Consult ${c.consult != null ? C.fmtD(c.consult) : ""}`.trim() });
+    for (const [mrn, pl] of S.plans) { if (/^done$/i.test(pl.note)) { out.delete(mrn); continue; } const o = out.get(mrn) || { mrn, code: pl.code || S.PM.get(mrn)?.code || "(no code)", from: "Added here" }; o.pl = pl; out.set(mrn, o); }
+    return [...out.values()].map(o => Object.assign(o, { p: S.PM.get(o.mrn) || null, holds: holdsOf(o.mrn) }));
+  }
+  /* the plan for one patient: protocol, start, availability, and the proposal (or their holds) */
+  function ipModel(o) {
+    const cfg = S.cfg, pl = o.pl || {}, T = todayS();
+    const perWeek = pl.perWeek || +cfg.IndexPerWeek, weeks = pl.weeks || +cfg.IndexWeeks;
+    const start = pl.start ?? (o.c?.start != null && o.c.start > T ? o.c.start : T + 1), avail = C.availOf(pl, o.p);
+    const pins = {}; for (const [n, p] of Object.entries(S.ipPins[o.mrn] || {})) if (pinOk(p)) pins[n] = p;
+    const fixed = S.A.filter(a => a.mrn === o.mrn && a.date >= start && !C.isCancelled(a)).map(a => ({ date: a.date, time: a.time, provider: a.provider }));
+    const res = C.planIndex({ start, today: T, perWeek, weeks, minGap: +cfg.MinGapDays, maxGap: +cfg.MaxGapDays, avail, X: S.X, fixed, pins });
+    return { pl, perWeek, weeks, start, avail, res, custom: perWeek !== +cfg.IndexPerWeek || weeks !== +cfg.IndexWeeks, pins };
+  }
+  const pinOk = p => { const s = C.daySlots(p.date, S.X).slots.find(x => x.time === p.time && C.sameProv(x.provider, p.provider)); return !!s && !s.by && !s.full; };
+  const holdLead = hs => { const held = hs.filter(h => h.state === "held" || h.state === "late"), late = held.filter(h => h.state === "late"), first = held[0];
+    if (!held.length) return null;
+    const ago = minsAgo(Math.min(...held.map(h => h.at ?? Date.now()))), left = +S.cfg.HoldMin - ago;
+    return late.length ? { cls: "late", t: `Held ${ago} min ago${first.by ? ` by ${first.by}` : ""}, not confirmed booked in NextGen` }
+      : { cls: "soon", t: `Held ${ago < 1 ? "just now" : `${ago} min ago`}${first.by ? ` by ${first.by}` : ""}. Book in NextGen and confirm within ${left} min` }; };
+
+  function indexHTML() {
+    const L = ipList(), H = liveHolds(), late = H.filter(h => h.state === "late");
+    const byPt = new Map(); for (const h of H) byPt.set(h.mrn, (byPt.get(h.mrn) || []).concat(h));
+    const sub = [`${plural(L.filter(o => !o.holds.length).length, "patient")} to plan`, byPt.size ? `${plural(byPt.size, "patient")} with holds to book` : "",
+      late.length ? `<strong>${plural(new Set(late.map(h => h.mrn)).size, "patient")}’s holds not confirmed after ${S.cfg.HoldMin} min</strong>` : "",
+      S.slots.length ? "" : "no template yet"].filter(Boolean).join(", ");
+    const chips = `<div class="chips">${[["plan", "Plan"], ["template", "Template"]].map(([k, l]) => `<button class="chip" data-act="ipView" data-v="${k}" aria-pressed="${S.ipView === k}">${l}${k === "template" ? `<span class="n">${S.slots.length}</span>` : ""}</button>`).join("")}</div>`;
+    if (S.ipView === "template") return `${setupBanner()}${head("Index planner", sub, false)}${chips}${templateHTML()}`;
+    if (!S.ipSel || !L.find(o => o.mrn === S.ipSel)) S.ipSel = (L.find(o => o.holds.some(h => h.state === "late")) || L.find(o => !o.holds.length) || L[0] || {}).mrn || null;
+    const cur = L.find(o => o.mrn === S.ipSel);
+    const row = o => { const hl = holdLead(o.holds), booked = o.holds.length && o.holds.every(h => h.state === "booked");
+      const st = hl ? `<span class="f${hl.cls === "late" ? " bad" : ""}">${hl.cls === "late" ? "Holds not confirmed" : `${plural(o.holds.filter(h => h.state !== "booked").length, "hold")} to book`}</span>` : booked ? `<span class="ok">Booked</span>` : "Not held yet";
+      return `<button class="crow" data-act="ipPick" data-m="${esc(o.mrn)}" aria-pressed="${S.ipSel === o.mrn}"><span class="p">${esc(o.code)}</span><span class="proto">${esc(o.from)}${o.p ? `<br>${esc(o.p.status || "")}` : ""}</span><span class="thru">${o.pl?.start != null ? `Start ${C.fmtD(o.pl.start)}` : o.c?.start != null && o.c.start > todayS() ? `Start ${C.fmtD(o.c.start)}` : "As soon as possible"}</span><span class="flags">${st}</span></button>`; };
+    const opts = S.P.filter(p => !L.find(o => o.mrn === p.mrn)).sort((a, b) => a.code.localeCompare(b.code)).map(p => `<option value="${esc(p.mrn)}">${esc(p.code)}${p.status ? `, ${esc(p.status)}` : ""}</option>`).join("");
+    return `${setupBanner()}${head("Index planner", sub, false)}${chips}
+      ${S.slots.length ? "" : `<div class="msg warn"><b>No template yet.</b> Add each provider’s index and flex slots first; plans are made from them. <button class="btn ghost sm" data-act="ipView" data-v="template">Add the template</button></div>`}
+      <div class="cols"><div class="stack"><section class="card plist"><div class="chead"><span>Patient</span><span>From</span><span>Start</span><span>Holds</span></div>
+        ${L.map(row).join("") || `<p class="empty" style="padding:10px 14px">Nobody to plan. Approved consults waiting for a treatment start show here.</p>`}
+        <div class="addpt"><select id="ipAdd" aria-label="Plan another patient"><option value="">Plan another patient…</option>${opts}</select><button class="btn ghost sm line" data-act="ipAddPt">Plan</button></div></section>
+        ${holdsHTML(byPt)}</div>
+      <div>${cur ? ipCardHTML(cur) : ""}</div></div>`;
+  }
+  /* every hold waiting to be booked, oldest first; past HoldMin they turn red */
+  function holdsHTML(byPt) {
+    if (!byPt.size) return "";
+    const rows = [...byPt.values()].sort((a, b) => Math.min(...a.map(h => h.at || 0)) - Math.min(...b.map(h => h.at || 0))).map(hs => { const hl = holdLead(hs), h0 = hs[0];
+      return `<div class="row" role="button" tabindex="0" data-act="ipPick" data-m="${esc(h0.mrn)}" data-state="${hl.cls === "late" ? "late" : ""}"><span class="p">${esc(h0.code)}</span><span class="w">${plural(hs.length, "time")}</span><span class="i"><span class="f${hl.cls === "late" ? " bad" : ""}">${esc(hl.t)}</span></span><span></span></div>`; }).join("");
+    return `<section class="card list"><div class="lh"><h2>Holds to book in NextGen</h2><span>${byPt.size}</span></div>${rows}</section>`;
+  }
+  function ipCardHTML(o) {
+    const M = ipModel(o), r = M.res, hs = o.holds, hl = holdLead(hs), p = o.p, cfg = S.cfg;
+    const meta = [o.from, o.c?.provider, p?.status, p?.freq].filter(Boolean).join(", ");
+    const avTxt = M.pl.avail ? (/^any/i.test(M.pl.avail) ? "any time, set here" : "set here") : p && C.availOf({}, p) ? "from the tracker" : "any time";
+    const av = M.avail || C.DAYS5.map(() => ({ am: true, pm: true }));
+    const avail = `<div class="prefs av">${C.DAYS5.map(d => `<b>${d}</b>`).join("")}${["am", "pm"].map(h => av.map((x, i) => `<button data-act="ipAv" data-d="${i}" data-h="${h}" aria-pressed="${!!x[h]}" aria-label="${DAYW[i]} ${h.toUpperCase()}">${h.toUpperCase()}</button>`).join("")).join("")}</div>`;
+    const per = `<select id="ipPer" aria-label="Visits a week">${[1, 2, 3].map(n => `<option${n === M.perWeek ? " selected" : ""}>${n}</option>`).join("")}</select>`;
+    const wks = `<select id="ipWeeks" aria-label="Weeks">${[1, 2, 3, 4, 5, 6].map(n => `<option${n === M.weeks ? " selected" : ""}>${n}</option>`).join("")}</select>`;
+    const inputs = `<label class="fld">Preferred start<input id="ipStart" type="date" value="${C.isoOf(M.start)}"></label>
+      <div class="fld">Index protocol${M.custom ? " (custom)" : ""}<div class="proto-in">${per}<span>a week for</span>${wks}<span>weeks</span></div></div>
+      <div class="section"><div class="h"><h2>Can come</h2><span>${avTxt}</span></div>${avail}
+        <div class="actions">${M.pl.avail && p && C.availOf({}, p) ? `<button class="btn mute sm" data-act="ipAvReset">Use the tracker’s days</button>` : ""}${M.avail ? `<button class="btn mute sm" data-act="ipAvAny">Any time</button>` : ""}</div></div>`;
+    if (hs.length) {
+      const all = hs.slice().sort((a, b) => a.date - b.date || a.time - b.time), open = all.filter(h => h.state !== "booked");
+      const st = h => `<li class="step ${h.state === "booked" ? "done" : h.state === "late" ? "late" : "soon"}"><span class="k">${h.state === "booked" ? "" : h.n || ""}</span><span><span class="t">${dshort(h.date)}, ${C.fmtT(h.time)}</span><span class="m">${esc(C.provName(h.provider) || "Any provider")}, post check ${C.fmtT(h.time + +cfg.PostCheckMin)}${h.state === "booked" ? (C.onList(h, S.A) ? ", on the appointment list" : ", booked") : ""}</span></span><span class="w">Treatment ${h.n || ""}</span></li>`;
+      return `<aside class="card detail" aria-label="${esc(o.code)}"><div class="dh"><div><div class="name">${esc(o.code)}</div><div class="meta">${esc(meta)}</div></div></div>
+        <p class="lead ${hl ? hl.cls : "ready"}">${esc(hl ? hl.t : `All ${plural(all.length, "visit")} booked`)}</p>
+        <ul class="steps">${all.map(st).join("")}</ul>
+        ${open.length ? `<button class="btn primary" data-act="ipBooked" data-m="${esc(o.mrn)}">Booked in NextGen</button><div class="actions"><button class="btn ghost" data-act="ipRelease" data-m="${esc(o.mrn)}">Release ${open.length === 1 ? "the hold" : "the holds"}</button></div>`
+          : `<button class="btn ghost" data-act="ipDone" data-m="${esc(o.mrn)}">Take off the list</button>`}
+        <p class="note">Holds show on the Schedule and the Index Planner tab for everyone. NextGen isn’t changed by the add-in.</p></aside>`;
+    }
+    const N = r.N, it = r.items, toHold = it.filter(x => !x.fixed);
+    const lead = !S.slots.length ? { cls: "soon", t: "Add the template first" } : !it.length ? { cls: "soon", t: "No times fit yet" }
+      : it.length < N || it.some(x => x.long) || r.notes.length ? { cls: "soon", t: `${plural(it.length, "visit")} planned, ${dshort(it[0].date)} to ${dshort(it[it.length - 1].date)}. Check the notes` }
+      : { cls: "ready", t: `${plural(it.length, "visit")}, ${dshort(it[0].date)} to ${dshort(it[it.length - 1].date)}` };
+    const alt = n => { const A = C.altSlots(r, n, +cfg.MinGapDays).slice(0, 12);
+      return `<div class="alts">${A.length ? A.map((s, i) => `<button data-act="ipUse" data-n="${n}" data-i="${i}">${dshort(s.date)}<small>${C.fmtT(s.time)}, ${esc(C.provName(s.provider) || "any provider")}${s.type === "Flex" ? ", flex" : ""}</small></button>`).join("") : `<span class="muted small">No other open slot keeps a day off on each side.</span>`}</div>`; };
+    const step = x => `<li class="step ${x.fixed ? "done" : x.long ? "soon" : "now"}"><span class="k">${x.fixed ? "" : x.n}</span><span><span class="t">${dshort(x.date)}, ${C.fmtT(x.time)}</span>
+        <span class="m">Week ${x.week}, ${esc(C.provName(x.provider) || "any provider")}, ${x.fixed ? "already booked, " : x.type === "Flex" ? "flex slot, " : ""}post check ${C.fmtT(x.post)}${x.gap != null ? `, ${plural(x.gap, "day")} after the last` : ""}${x.long ? ` (over ${cfg.MaxGapDays})` : ""}</span>
+        ${S.ipAlt === x.n - 1 ? alt(x.n - 1) : ""}</span><span class="w">${x.fixed ? "" : `<button class="btn mute sm" data-act="ipAlt" data-n="${x.n - 1}">${S.ipAlt === x.n - 1 ? "Keep" : "Change"}</button>`}</span></li>`;
+    const last = it[it.length - 1], afterD = last ? last.date + (C.freqDays(cfg.AfterIndex) || 7) : null;
+    return `<aside class="card detail" aria-label="${esc(o.code)}"><div class="dh"><div><div class="name">${esc(o.code)}</div><div class="meta">${esc(meta)}</div></div></div>
+      <p class="lead ${lead.cls}">${esc(lead.t)}</p>${inputs}
+      ${it.length ? `<div class="section"><div class="h"><h2>Index visits</h2><span>week 1 starts ${dshort(it[0].date)}</span></div><ul class="steps">${it.map(step).join("")}</ul>
+        ${r.notes.map(n => `<p class="note warn">${esc(n)}</p>`).join("")}${afterD ? `<p class="note">Then ${esc(cfg.AfterIndex)}, from around ${dshort(afterD)}.</p>` : ""}</div>` : r.notes.map(n => `<p class="note warn">${esc(n)}</p>`).join("")}
+      ${toHold.length ? `<button class="btn primary" data-act="ipHold" data-m="${esc(o.mrn)}"${S.busy ? " disabled" : ""}>Hold ${toHold.length === 1 ? "this time" : `these ${toHold.length} times`}</button>` : ""}
+      <div class="actions">${Object.keys(M.pins).length ? `<button class="btn ghost" data-act="ipReset" data-m="${esc(o.mrn)}">Undo my changes</button>` : ""}${o.pl ? `<button class="btn mute" data-act="ipDone" data-m="${esc(o.mrn)}">Take off the list</button>` : ""}</div>
+      <p class="note">Holding saves the times at once, so the team sees them. Book them in NextGen and confirm here within ${cfg.HoldMin} min.</p></aside>`;
+  }
+  /* the template: each provider's slots by weekday; the post check is PostCheckMin after the start */
+  /* the tab's own index slot list first, then every half hour */
+  const timeOpts = cur => { const tab = S.tabSlots.map(x => x.time), all = []; for (let t = 480; t <= 1020; t += 30) if (!tab.includes(t)) all.push(t);
+    const o = t => `<option value="${t}"${t === cur ? " selected" : ""}>${C.fmtT(t)}</option>`;
+    return tab.length ? `<optgroup label="Index slots on the tab">${tab.map(o).join("")}</optgroup><optgroup label="Other times">${all.map(o).join("")}</optgroup>` : all.map(o).join(""); };
+  function templateHTML() {
+    const cfg = S.cfg, provs = [...new Set(S.slots.map(s => s.provider))].sort((a, b) => (!a) - (!b) || C.provName(a).localeCompare(C.provName(b)));
+    const f = S.tf || { prov: "", days: [], time: S.tabSlots[0]?.time ?? 540, type: "Index" };
+    const form = `<section class="card set"><h3>Add slots</h3><p>One slot is one infusion start for that provider. The post check is ${cfg.PostCheckMin} min in, the last 30 min of the ${cfg.VisitMin / 60}-hour visit. Index and flex slots are offered for index plans; follow-up slots aren’t.</p>
+      <div class="two"><label class="fld">Provider<select id="tfProv"><option value="">Any provider</option>${S.providers.map(p => `<option value="${esc(p)}"${C.sameProv(p, f.prov) && f.prov ? " selected" : ""}>${esc(C.provName(p))}</option>`).join("")}</select></label>
+        <label class="fld">Start<select id="tfTime">${timeOpts(f.time)}</select></label></div>
+      <div class="fld">Days<div class="pick">${C.DAYS5.map((d, i) => `<button data-act="tfDay" data-d="${i + 1}" aria-pressed="${f.days.includes(i + 1)}">${d}</button>`).join("")}</div></div>
+      <div class="fld">Type<div class="pick">${C.SLOT_TYPES.map(t => `<button data-act="tfType" data-v="${t}" aria-pressed="${f.type === t}">${t}<small>${t === "Index" ? "for starts" : t === "Flex" ? "index or follow-up" : "not for index"}</small></button>`).join("")}</div></div>
+      <div class="actions"><button class="btn primary inl" data-act="tfAdd"${f.days.length && !S.busy ? "" : " disabled"}>${f.days.length ? `Add ${plural(f.days.length, "slot")}` : "Choose the days"}</button></div></section>`;
+    const clash = (a, b) => a.day === b.day && a.id !== b.id && C.sameProv(a.provider, b.provider) && Math.abs(a.time - b.time) < 30;
+    const card = pv => { const L = S.slots.filter(s => C.sameProv(s.provider, pv) && !!s.provider === !!pv), warn = L.filter(s => L.some(t => clash(s, t)));
+      return `<section class="card tcard"><div class="lh"><h2>${esc(C.provName(pv) || "Any provider")}</h2><span>${plural(L.length, "slot")} a week</span></div>
+        <div class="tgrid">${C.DAYS5.map((d, i) => `<div><b>${DAYW[i]}</b>${L.filter(s => s.day === i + 1).sort((a, b) => a.time - b.time).map(s => `<div class="slot ${s.type.toLowerCase().replace(/[^a-z]/g, "")}"><span>${C.fmtT(s.time)}<small>${s.type}, post ${C.fmtT(s.time + +cfg.PostCheckMin)}</small></span><button class="x" data-act="tfDel" data-id="${esc(s.id)}" aria-label="Remove ${DAYW[i]} ${C.fmtT(s.time)} ${esc(C.provName(pv) || "any provider")}">×</button></div>`).join("") || `<span class="muted small">None</span>`}</div>`).join("")}</div>
+        ${warn.length ? `<p class="note warn">Post checks less than 30 min apart: ${warn.map(s => `${C.DAYS5[s.day - 1]} ${C.fmtT(s.time)}`).join(", ")}.</p>` : ""}</section>`; };
+    return `<div class="cols"><div class="stack">${provs.map(card).join("") || `<section class="card"><p class="empty">No slots yet. Add each provider’s index and flex slots; where two providers work the same hours, add both and the Schedule shows each one’s open slots.</p></section>`}</div><div>${form}</div></div>`;
   }
 
   /* ---------- Patients ---------- */
@@ -474,7 +618,8 @@
         <details class="fold"><summary>How to run the report</summary><ol class="how">
           <li>In NextGen PM, open Reports, then Memorized.</li><li>Set Report Type to Appointment Reports and pick the IVK appointment list (Castro Street, IV Ketamine visits).</li>
           <li>Select OK to run it, then export with the x icon beside the bar graph <img src="assets/export-icon.png" alt="Export icon" height="16">.</li>
-          <li>Choose that file here. It replaces MRN to Location on the Appt List tab; the Name and Lookup Key formulas are left alone.</li></ol></details></section>
+          <li>Choose that file here. It replaces MRN to Location on the Appt List tab; the Name and Lookup Key formulas are left alone.</li>
+          <li>The Index Planner tab is then filled with every IVK visit and hold, as plain values.</li></ol></details></section>
 
       <section class="card set"><h3>Teams</h3><p>Each chat gets its own workflow made from Teams’ <b>Send webhook alerts to a chat</b> template. Patients are named by code only.</p>
         <label class="opt"><input type="checkbox" id="nfyOn"${N.truthy(c.Enabled) ? " checked" : ""}> Post to Teams from this workbook</label>
@@ -501,6 +646,13 @@
         <label class="fld">Auth ending within, days<input id="cf_AuthWarnDays" inputmode="numeric" value="${esc(c.AuthWarnDays)}"></label><label class="fld">Visits left on auth, at most<input id="cf_EncountersWarn" inputmode="numeric" value="${esc(c.EncountersWarn)}"></label></div>
         <label class="fld">Clinic<input id="cf_Clinic" value="${esc(c.Clinic)}"></label>
         <div class="actions"><button class="btn ghost sm line" data-act="saveCfg">Save timing</button></div></section>
+
+      <section class="card set"><h3>Index protocol</h3><p>The standard for new starts. Week 1 begins on the day of treatment 1. A patient’s own protocol can be changed in the Index planner.</p>
+        <div class="two"><label class="fld">Visits a week<input id="cf_IndexPerWeek" inputmode="numeric" value="${esc(c.IndexPerWeek)}"></label><label class="fld">Weeks<input id="cf_IndexWeeks" inputmode="numeric" value="${esc(c.IndexWeeks)}"></label>
+        <label class="fld">Days apart, at least<input id="cf_MinGapDays" inputmode="numeric" value="${esc(c.MinGapDays)}"><span class="hint">2 = a day off between visits</span></label><label class="fld">Days apart, at most<input id="cf_MaxGapDays" inputmode="numeric" value="${esc(c.MaxGapDays)}"><span class="hint">Broken only when no slot fits</span></label>
+        <label class="fld">Post check after the start, min<input id="cf_PostCheckMin" inputmode="numeric" value="${esc(c.PostCheckMin)}"></label><label class="fld">Confirm a hold within, min<input id="cf_HoldMin" inputmode="numeric" value="${esc(c.HoldMin)}"></label></div>
+        <label class="fld">After index<select id="cf_AfterIndex">${[...new Set([c.AfterIndex, ...S.freqs])].map(f => `<option${f === c.AfterIndex ? " selected" : ""}>${esc(f)}</option>`).join("")}</select></label>
+        <div class="actions"><button class="btn ghost sm line" data-act="saveIdx">Save index protocol</button></div></section>
 
       <section class="card set"><h3>Appearance</h3><label class="opt"><input type="checkbox" id="darkOn"${S.theme === "dark" ? " checked" : ""}> Dark mode<small>On this computer only</small></label></section>
 
@@ -570,7 +722,7 @@
       const why = [sh.few ? `only ${plural(u.rows.length, "appointment")}` : "", sh.half ? `fewer than half of the ${sh.had} on file` : "", sh.short ? `it ends ${C.fmtD(sh.nMax)}; the list on file runs to ${C.fmtD(sh.cMax)}` : ""].filter(Boolean);
       return `<h2 id="mh">Replace the appointment list?</h2><p class="sub muted">${esc(u.file)}</p>
         <div class="preview">${plural(u.rows.length, "appointment")}, ${C.fmtD(Math.min(...ds))} to ${C.fmtD(Math.max(...ds))}. ${Object.entries(sts).map(([k, n]) => `${esc(k)} ${n}`).join(", ")}</div>
-        <p class="note">The ${sh.had} rows on the Appt List tab are replaced (MRN to Location). The Name and Lookup Key formulas stay.</p>
+        <p class="note">The ${sh.had} rows on the Appt List tab are replaced (MRN to Location). The Name and Lookup Key formulas stay. Then the Index Planner tab’s grid is rewritten with every IVK visit and hold, as values; anything typed in that grid is replaced.</p>
         ${sh.flag ? `<div class="msg warn" style="margin-top:12px"><b>This list is much smaller than the one on file:</b> ${why.join("; ")}. The date range in NextGen may have been narrowed.<label class="opt"><input type="checkbox" id="mShrink"${u.ok ? " checked" : ""}> The smaller list is right; replace anyway</label></div>` : ""}
         <div class="foot"><button class="btn mute" data-act="close">Cancel</button><button class="btn primary inl" data-act="doUpload"${sh.flag && !u.ok || S.busy ? " disabled" : ""}>Replace list</button></div>`;
     }
@@ -697,8 +849,81 @@
     },
     mapDown: () => { const P = S.raw.plan, a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([JSON.stringify(P, null, 1)], { type: "application/json" })); a.download = `Chair map - ${S.cfg.Clinic} IVK.json`; a.click(); },
     mapRemove: () => openModal("confirm", { title: "Remove the chair map?", body: "Today shows chair tiles instead. You can load the file again any time.", yes: "Remove the map", run: () => Store.setDoc(MAP_KEY, null) }),
-    async doUpload() { const u = S.m; if (u.sh.flag && !$("#mShrink")?.checked) return; closeModal(); await write("Writing the appointment list…", () => Store.replaceAppts(u.rows, C.serialOf(new Date()) + nowMin() / 1440), `Appointment list updated: ${plural(u.rows.length, "appointment")}.`); }
+    async doUpload() {
+      const u = S.m; if (u.sh.flag && !$("#mShrink")?.checked) return; closeModal();
+      const ok = await write("Writing the appointment list…", () => Store.replaceAppts(u.rows, C.serialOf(new Date()) + nowMin() / 1440)); if (!ok) return;
+      await write("Filling the Index Planner tab…", () => Store.fillPlanner(), r => `Appointment list updated: ${plural(u.rows.length, "appointment")}.${r && r.skipped ? ` Index Planner tab not filled (${r.skipped}).` : r ? ` Index Planner tab filled, ${C.fmtD(r.from)} to ${C.fmtD(r.to)}.` : ""}`)
+        || toast("The appointment list is updated, but the Index Planner tab wasn’t filled. Upload again, or place or release a hold, to retry.", true);
+    },
+    /* index planner */
+    ipView: e => { S.ipView = e.dataset.v; S.ipAlt = null; render(); },
+    ipPick: e => { S.ipSel = e.dataset.m; S.ipAlt = null; S.ipView = "plan"; S.view = "index"; render(); },
+    ipAlt: e => { const n = +e.dataset.n; S.ipAlt = S.ipAlt === n ? null : n; render(); },
+    ipUse: e => {
+      const o = ipList().find(x => x.mrn === S.ipSel); if (!o) return;
+      const M = ipModel(o), n = +e.dataset.n, s = C.altSlots(M.res, n, +S.cfg.MinGapDays)[+e.dataset.i]; if (!s) return;
+      /* the visits before this one stay where they are; the ones after are planned again around it */
+      const pins = {}; M.res.items.slice(0, n).forEach((x, k) => { if (!x.fixed) pins[k] = { date: x.date, time: x.time, provider: x.provider, type: x.type }; });
+      pins[n] = { date: s.date, time: s.time, provider: s.provider, type: s.type }; S.ipPins[o.mrn] = pins; S.ipAlt = null; render();
+    },
+    ipReset: e => { delete S.ipPins[e.dataset.m]; S.ipAlt = null; render(); },
+    async ipAddPt() {
+      const m = $("#ipAdd")?.value, p = S.PM.get(m); if (!p) return toast("Pick the patient first.", true);
+      if (await write("Saving…", () => Store.savePlan(m, { Patient: p.code, Note: "", By: S.name, Updated: new Date().toISOString() }))) { S.ipSel = m; render(); }
+    },
+    async ipAv(e) {
+      const o = ipList().find(x => x.mrn === S.ipSel); if (!o) return;
+      const a = (C.availOf(o.pl || {}, o.p) || C.DAYS5.map(() => ({ am: true, pm: true }))).map(x => Object.assign({}, x)), d = +e.dataset.d, h = e.dataset.h;
+      a[d][h] = !a[d][h];
+      if (!a.some(x => x.am || x.pm)) return toast("Leave at least one morning or afternoon.", true);
+      await savePlanOf(o, { Avail: a.every(x => x.am && x.pm) ? "any" : C.availText(a) });
+    },
+    ipAvAny: async () => { const o = ipList().find(x => x.mrn === S.ipSel); if (o) await savePlanOf(o, { Avail: "any" }); },
+    ipAvReset: async () => { const o = ipList().find(x => x.mrn === S.ipSel); if (o) await savePlanOf(o, { Avail: "" }); },
+    async ipHold(e) {
+      if (needName()) return; const o = ipList().find(x => x.mrn === e.dataset.m); if (!o) return;
+      const M = ipModel(o), it = M.res.items.filter(x => !x.fixed);
+      const gone = it.filter(x => !pinOk(x));
+      if (gone.length) { delete S.ipPins[o.mrn]; render(); return toast(`${dshort(gone[0].date)} at ${C.fmtT(gone[0].time)} was just taken. The plan is made again; check it and hold.`, true); }
+      const rows = it.map(x => ({ MRN: o.mrn, Patient: o.code, Date: C.isoOf(x.date), Time: C.fmtT(x.time), Provider: x.provider, Treatment: x.n }));
+      const ok = await write("Holding the times…", async () => { await Store.savePlan(o.mrn, { Patient: o.code, Start: C.isoOf(M.start), By: S.name, Updated: new Date().toISOString() }); return Store.placeHolds(rows, S.name); });
+      if (!ok) return; delete S.ipPins[o.mrn];
+      toast(`${plural(rows.length, "time")} held for ${o.code}. Book them in NextGen, then press Booked in NextGen within ${S.cfg.HoldMin} min.`);
+      await write("Filling the Index Planner tab…", () => Store.fillPlanner());
+    },
+    async ipBooked(e) {
+      const hs = holdsOf(e.dataset.m).filter(h => h.state !== "booked"); if (!hs.length) return;
+      if (await write("Saving…", () => Store.setHolds(hs.map(h => h.id), "booked", S.name), `${hs[0].code}: ${plural(hs.length, "visit")} marked booked in NextGen.`)) await write("Filling the Index Planner tab…", () => Store.fillPlanner());
+    },
+    ipRelease: e => {
+      const hs = holdsOf(e.dataset.m).filter(h => h.state !== "booked"); if (!hs.length) return;
+      openModal("confirm", { title: `Release ${hs[0].code}’s ${plural(hs.length, "hold")}?`, body: "The times open up for other patients. Anything already booked in NextGen stays booked there.", yes: "Release",
+        run: async () => { await Store.setHolds(hs.map(h => h.id), "released", S.name); await Store.fillPlanner(); } });
+    },
+    ipDone: e => {
+      const o = ipList().find(x => x.mrn === e.dataset.m); if (!o) return;
+      openModal("confirm", { title: `Take ${o.code} off the Index planner?`, body: "Their holds and bookings stay. Add them again from Plan another patient.", yes: "Take off the list",
+        run: () => Store.savePlan(o.mrn, { Patient: o.code, Note: "done", By: S.name, Updated: new Date().toISOString() }) });
+    },
+    tfDay: e => { const f = tfState(), d = +e.dataset.d; f.days = f.days.includes(d) ? f.days.filter(x => x !== d) : f.days.concat(d).sort(); render(); },
+    tfType: e => { tfState().type = e.dataset.v; render(); },
+    async tfAdd() {
+      const f = tfState(); if (!f.days.length) return;
+      const rows = f.days.map(d => ({ Provider: f.prov, Day: C.DAYS5[d - 1], Time: C.fmtT(f.time), Type: f.type }));
+      const r = await write("Adding slots…", () => Store.addSlots(rows), x => `${plural(x.added, "slot")} added${x.skipped ? `; ${x.skipped} already in the template` : ""}.`);
+      if (r) { f.days = []; render(); }
+    },
+    async tfDel(e) { await write("Removing the slot…", () => Store.removeSlots([e.dataset.id]), "Slot removed."); },
+    async saveIdx() {
+      const o = {}; for (const k of ["IndexPerWeek", "IndexWeeks", "MinGapDays", "MaxGapDays", "PostCheckMin", "HoldMin"]) { const n = C.num($(`#cf_${k}`).value); if (n == null || n < 0) return toast(`${k} needs a number.`, true); o[k] = n; }
+      if (o.IndexPerWeek < 1 || o.IndexWeeks < 1) return toast("At least 1 visit a week for 1 week.", true);
+      if (o.MinGapDays < 1 || o.MaxGapDays < o.MinGapDays) return toast("Days apart: at least 1, and the most can’t be less than the least.", true);
+      o.AfterIndex = $("#cf_AfterIndex").value;
+      await write("Saving…", () => Store.saveKeyed("tblIvkConfig", o), "Index protocol saved.");
+    }
   };
+  const tfState = () => S.tf || (S.tf = { prov: "", days: [], time: S.tabSlots[0]?.time ?? 540, type: "Index" });
+  const savePlanOf = (o, patch) => write("Saving…", () => Store.savePlan(o.mrn, Object.assign({ Patient: o.code, By: S.name, Updated: new Date().toISOString() }, patch)));
   function freeChair() { const F = floor(); return (F.chairs.find(c => !c.v) || {}).id || ""; }
 
   /* ---------- file inputs and fields ---------- */
@@ -727,6 +952,13 @@
     else if (t.id === "mFreq" && (S.modal === "checkout" || S.modal === "proto")) { S.m.freq = t.value; S.m.proto = $("#mProto")?.checked ?? S.m.proto; render(); }
     else if (t.id === "mProto") S.m.proto = t.checked;
     else if (t.id === "mShrink") { S.m.ok = t.checked; render(); }
+    else if (t.id === "tfProv") tfState().prov = t.value;
+    else if (t.id === "tfTime") tfState().time = +t.value;
+    else if (["ipStart", "ipPer", "ipWeeks"].includes(t.id)) {
+      const o = ipList().find(x => x.mrn === S.ipSel); if (!o) return; delete S.ipPins[o.mrn];
+      if (t.id === "ipStart") { const d = C.toSerial(t.value); if (d != null) savePlanOf(o, { Start: C.isoOf(d) }); }
+      else savePlanOf(o, t.id === "ipPer" ? { PerWeek: t.value } : { Weeks: t.value });
+    }
     else if (t.id === "mRn") S.m.rn = t.checked;
     else if (t.id === "mAsk") S.m.ask = t.checked;
   });
@@ -764,5 +996,5 @@
   }
   window.addEventListener("error", e => console.error(e.message));
   if (window.Office && Office.onReady) Office.onReady(start); else landing();
-  window.IvkApp = { S, render, derive, refresh, ACT, floor };   // for the test harness
+  window.IvkApp = { S, render, derive, refresh, ACT, floor, ipList, ipModel };   // for the test harness
 })();

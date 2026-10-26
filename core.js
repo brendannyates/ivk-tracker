@@ -11,7 +11,10 @@
   /* Defaults for tblIvkConfig. Castro: 4 chairs, each IVK visit holds a chair 2 hours. The SOP has the clinician check in within
      the first 30 min and again in the last 5-10 min. */
   const DEFAULTS = { Enabled: "TRUE", Clinic: "Castro", Chairs: "1, 2, 3, 4", VisitMin: 120, ProviderCheckMin: 30, LateMin: 10, SoonMin: 10,
-    AheadWeeks: 6, ProtocolDays: 90, AuthWarnDays: 14, EncountersWarn: 3 };
+    AheadWeeks: 6, ProtocolDays: 90, AuthWarnDays: 14, EncountersWarn: 3,
+    /* index: 2 visits in each 7 days from treatment 1, for 3 weeks; at least a day off between visits, no more than 5 days apart
+       when the slots allow; the provider's post check is in the last 30 min of the 2 hours; a hold is booked in NextGen within 10 min */
+    IndexPerWeek: 2, IndexWeeks: 3, MinGapDays: 2, MaxGapDays: 5, PostCheckMin: 90, HoldMin: 10, AfterIndex: "1x per week" };
   const ACTIVE = ["ongoing", "induction"];
   const DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
   const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
@@ -299,11 +302,171 @@
     return { flag: few || half || short, few, half, short, n, had, nMax, cMax };
   }
 
+  /* ---------- Index planner ---------- */
+  const DAYS5 = ["Mon", "Tue", "Wed", "Thu", "Fri"];
+  const dayNum = s => { const i = ["mo", "tu", "we", "th", "fr"].indexOf(norm(s).slice(0, 2)); return i < 0 ? null : i + 1; };
+  const SLOT_TYPES = ["Index", "Flex", "Follow-up"];
+  const slotType = s => { const n = norm(s); return n.startsWith("flex") ? "Flex" : n.startsWith("follow") ? "Follow-up" : "Index"; };
+  const sameProv = (a, b) => norm(provName(a)) === norm(provName(b));
+  /* tblIvkSlots: Id | Provider | Day | Time | Type. One row is one provider's infusion start on a weekday (Index, Flex or Follow-up);
+     their post check is PostCheckMin later. A row with no provider is filled by whoever is booked at that time. */
+  function slotRows(values) {
+    return byHeader(values).rows.map(x => ({ id: txt(x.get("id")), provider: txt(x.get("provider")), day: dayNum(x.get("day")), time: toMin(x.get("time")), type: slotType(x.get("type")) }))
+      .filter(s => s.id && s.day && s.time != null);
+  }
+  /* tblIvkPlans: MRN | Patient | Start | PerWeek | Weeks | Avail | Note | By | Updated, one row per patient being planned.
+     PerWeek/Weeks blank = the clinic's index protocol; Avail blank = the tracker's AM/PM preferences, "any" = any time. */
+  const PLAN_COLS = ["MRN", "Patient", "Start", "PerWeek", "Weeks", "Avail", "Note", "By", "Updated"];
+  function planRows(values) {
+    const m = new Map();
+    byHeader(values).rows.forEach(x => { const mrn = mrnKey(x.get("mrn")); if (!mrn) return;
+      m.set(mrn, { mrn, code: txt(x.get("patient")), start: toSerial(x.get("start")), perWeek: num(x.get("perweek")), weeks: num(x.get("weeks")),
+        avail: txt(x.get("avail")), note: txt(x.get("note")), by: txt(x.get("by")) }); });
+    return m;
+  }
+  /* tblIvkHolds: a time kept for a patient until the desk books it in NextGen. Status held, booked or released. */
+  const HOLD_COLS = ["Id", "MRN", "Patient", "Date", "Time", "Provider", "Treatment", "Status", "PlacedBy", "PlacedAt", "DoneBy", "DoneAt"];
+  function holdRows(values) {
+    return byHeader(values).rows.map(x => { const g = x.get, at = Date.parse(txt(g("placedat"))), done = Date.parse(txt(g("doneat")));
+      return { id: txt(g("id")), mrn: mrnKey(g("mrn")), code: txt(g("patient")), date: toSerial(g("date")), time: toMin(g("time")), provider: txt(g("provider")),
+        n: num(g("treatment")), status: txt(g("status")).toLowerCase() || "held", by: txt(g("placedby")), at: isNaN(at) ? null : at, doneBy: txt(g("doneby")),
+        doneAt: isNaN(done) ? null : done }; })
+      .filter(h => h.id && h.date != null && h.time != null);
+  }
+  /* NextGen has the visit (same patient, day and time), so the hold is done whatever its status says */
+  const onList = (h, A) => A.some(a => a.mrn === h.mrn && a.date === h.date && a.time === h.time && !isCancelled(a));
+  /* Does the hold still keep its time? Not once released or on the list; and a hold marked booked stops once an appointment list
+     uploaded after the booking is in (listAt, the Appt List's Last Updated serial), since NextGen is then the record, even if the
+     visit went in at another time. */
+  const msSerial = ms => { const d = new Date(ms); return serialOf(d) + (d.getHours() * 60 + d.getMinutes()) / 1440; };
+  const holding = (h, A, listAt) => h.status !== "released" && !onList(h, A) && !(h.status === "booked" && listAt != null && h.doneAt != null && msSerial(h.doneAt) < listAt);
+  /* held: waiting to be booked; late: not confirmed booked within HoldMin, so someone has to act (red); booked; released */
+  function holdState(h, A, nowMs, cfg) {
+    if (h.status === "released") return "released";
+    if (h.status === "booked" || onList(h, A)) return "booked";
+    return h.at != null && nowMs - h.at > +cfg.HoldMin * 60000 ? "late" : "held";
+  }
+  /* One day's template slots, each matched to the visit or hold in it (same time and provider, else a slot with no provider).
+     full: every chair is in use at some point in the slot's 2 hours. X = { slots, appts, holds, cfg, chairs, listAt } */
+  function daySlots(d, X) {
+    const wd = weekday(d), vm = +X.cfg.VisitMin;
+    const B = X.appts.filter(a => a.date === d && a.time != null && !isCancelled(a) && !/no ?show/i.test(a.status)).map(a => ({ mrn: a.mrn, code: a.code, time: a.time, provider: a.provider, kind: "appt" }))
+      .concat((X.holds || []).filter(h => h.date === d && holding(h, X.appts, X.listAt)).map(h => ({ mrn: h.mrn, code: h.code, time: h.time, provider: h.provider, kind: "hold", h })));
+    const out = X.slots.filter(s => s.day === wd).map(s => ({ ...s, date: d, post: s.time + +X.cfg.PostCheckMin, by: null }))
+      .sort((a, b) => a.time - b.time || a.provider.localeCompare(b.provider));
+    for (const b of B) {
+      const i = out.findIndex(s => !s.by && s.time === b.time && s.provider && sameProv(s.provider, b.provider));
+      const j = i >= 0 ? i : out.findIndex(s => !s.by && s.time === b.time && !s.provider); if (j >= 0) out[j].by = b;
+    }
+    const inUse = t => Math.max(...[t, ...B.map(b => b.time).filter(x => x > t && x < t + vm)].map(p => B.filter(b => b.time <= p && p < b.time + vm).length));
+    for (const s of out) s.full = !s.by && inUse(s.time) >= X.chairs;
+    return { slots: out, bookings: B };
+  }
+  /* availability Mon-Fri as [{ am, pm }], or null for any time. AM is a start before noon. */
+  function availOf(plan, p) {
+    const t = txt(plan?.avail);
+    if (/^any/i.test(t)) return null;
+    if (t) {
+      const a = DAYS5.map(() => ({ am: false, pm: false }));
+      t.split(/[,;]+/).forEach(w => { const d = dayNum(w.trim()), h = /pm/i.test(w) ? "pm" : /am/i.test(w) ? "am" : null; if (d && h) a[d - 1][h] = true; });
+      return a.some(x => x.am || x.pm) ? a : null;
+    }
+    const pr = p?.prefs; return pr && pr.some(x => x.am || x.pm) ? pr.map(x => ({ am: x.am, pm: x.pm })) : null;
+  }
+  const availText = a => a ? a.flatMap((x, i) => [x.am ? `${DAYS5[i]} AM` : "", x.pm ? `${DAYS5[i]} PM` : ""]).filter(Boolean).join(", ") || "any" : "any";
+  const fits = (a, wd, t) => !a || !!(a[wd - 1] && (t < 720 ? a[wd - 1].am : a[wd - 1].pm));
+
+  /* Proposes a patient's index visits. o = { start, today, perWeek, weeks, minGap, maxGap, avail, X, fixed, pins }.
+     Treatment 1 is the first open Index or Flex slot on or after the start date that fits the patient. Week 1 is the 7 days from
+     treatment 1 (Wednesday to Tuesday when treatment 1 is a Wednesday), and each week gets perWeek visits. Visits are at least
+     minGap days apart (never back to back), no more than maxGap apart when the slots allow it, and as evenly spaced as they can be.
+     fixed: the patient's visits already on the list, kept as they are. pins: { n: slot } picked by hand (n from 0). */
+  function planIndex(o) {
+    const N = Math.max(1, Math.round(o.perWeek * o.weeks)), ideal = 7 / o.perWeek, pins = o.pins || {};
+    const from = Math.max(o.start ?? o.today + 1, o.today + 1), endD = from + 7 * (N + 1);
+    const fixed = (o.fixed || []).filter(f => f.date >= from).sort((a, b) => a.date - b.date), fixedD = fixed.map(f => f.date);
+    const cand = new Map();
+    for (let d = from; d <= endD; d++) {
+      const wd = weekday(d); if (wd < 1 || wd > 5) continue;
+      const f = fixed.find(x => x.date === d); if (f) { cand.set(d, [{ ...f, fixed: true }]); continue; }
+      const L = daySlots(d, o.X).slots.filter(s => !s.by && !s.full && s.type !== "Follow-up" && fits(o.avail, wd, s.time));
+      if (L.length) cand.set(d, L);
+    }
+    for (const p of Object.values(pins)) if (p && !cand.has(p.date)) cand.set(p.date, [p]);
+    const days = [...cand.keys()].sort((a, b) => a - b), t1 = pins[0] ? pins[0].date : days[0];
+    if (t1 == null) return { items: [], N, cand, notes: ["No open index or flex slot fits this patient in the weeks after the start date. Check the template and their availability."] };
+    const wk = d => Math.floor((d - t1) / 7);
+    let best = null, budget = 200000;
+    const go = (seq, c) => {
+      if (--budget < 0 || (best && best.seq.length === N && c >= best.c)) return;
+      const n = seq.length, lastD = seq[n - 1], kids = [];
+      if (n < N) for (const d of days) {
+        if (d <= lastD) continue; const g = d - lastD;
+        if (g > o.maxGap + 4 || fixedD.some(f => f > lastD && f < d)) break;
+        if (g < o.minGap || (pins[n] && pins[n].date !== d)) continue;
+        const w = wk(d), inW = seq.filter(x => wk(x) === w).length;
+        kids.push([d, (g - ideal) ** 2 + (g > o.maxGap ? 50 : 0) + (inW >= o.perWeek ? 100 : 0) + (w >= o.weeks ? 100 : 0)]);
+      }
+      kids.sort((a, b) => a[1] - b[1]).forEach(([d, add]) => { seq.push(d); go(seq, c + add); seq.pop(); });
+      if (!kids.length && (!best || n > best.seq.length || (n === best.seq.length && c < best.c))) best = { seq: seq.slice(), c };
+    };
+    go([t1], 0);
+    const seq = best.seq;
+    /* the slot on each day: the pinned one, a visit already booked, then Index before Flex, closest to treatment 1's time */
+    const pick = (d, n, t) => pins[n] && pins[n].date === d ? pins[n] : cand.get(d).slice().sort((a, b) => (b.fixed ? 1 : 0) - (a.fixed ? 1 : 0)
+      || (a.type === "Flex") - (b.type === "Flex") || (t == null ? 0 : Math.abs(a.time - t) - Math.abs(b.time - t)) || a.time - b.time)[0];
+    const s1 = pick(t1, 0, null), pc = +o.X.cfg.PostCheckMin;
+    const items = seq.map((d, n) => { const s = n === 0 ? s1 : pick(d, n, s1.time), g = n ? d - seq[n - 1] : null;
+      return { n: n + 1, week: wk(d) + 1, date: d, time: s.time, provider: s.provider || "", type: s.fixed ? "Booked" : s.type, post: s.time + pc, gap: g,
+        fixed: !!s.fixed, pinned: !!pins[n], long: g != null && g > o.maxGap }; });
+    const notes = [];
+    if (items.length < N) notes.push(`Only ${items.length} of ${N} visits fit: no open slot within ${o.maxGap + 4} days after ${fmtD(seq[seq.length - 1])} for this patient.`);
+    for (let w = 1; w <= o.weeks; w++) { const k = items.filter(x => x.week === w).length; if (items.length === N && k !== o.perWeek) notes.push(`Week ${w} has ${k} visit${k === 1 ? "" : "s"} instead of ${o.perWeek}.`); }
+    if (items.some(x => x.week > o.weeks)) notes.push(`Runs into week ${Math.max(...items.map(x => x.week))}.`);
+    return { items, N, cand, notes, t1 };
+  }
+  /* other open slots treatment n (from 0) could move to, still minGap+ days from the visits either side */
+  function altSlots(res, n, minGap) {
+    const it = res.items, prev = it[n - 1], next = it[n + 1], cur = it[n], out = [];
+    for (const [d, L] of [...res.cand.entries()].sort((a, b) => a[0] - b[0])) {
+      if ((prev && d - prev.date < minGap) || (next && next.date - d < minGap) || (!prev && next && d >= next.date)) continue;
+      for (const s of L) if (!s.fixed && !(cur && s.date === cur.date && s.time === cur.time && sameProv(s.provider, cur.provider))) out.push(s);
+    }
+    return out;
+  }
+
+  /* The Index Planner tab: dates across the "Date" row, half hours down column A. Each cell gets the codes booked in that half
+     hour, then "HOLD CODE" for holds NextGen doesn't have yet. layout = { rows: [[row, minutes]], cols: [[col, serial]] } */
+  function plannerLayout(values) {
+    const V = values || [], r = V.findIndex(row => /^date$/i.test(txt(row[0]))); if (r < 0) return null;
+    const isT = v => (typeof v === "number" && v >= 0 && v < 1) || /^\d{1,2}:\d\d/.test(txt(v)), rows = [], cols = [];
+    for (let i = r + 1; i < V.length && isT(V[i][0]); i++) rows.push([i, toMin(V[i][0])]);
+    for (let c = 1; c < V[r].length; c++) { const d = toSerial(V[r][c]); if (d != null) cols.push([c, d]); }
+    return rows.length && cols.length ? { dateRow: r, rows, cols } : null;
+  }
+  function plannerGrid(L, A, holds, listAt) {
+    return L.rows.map(([, t], i) => { const t2 = L.rows[i + 1] ? L.rows[i + 1][1] : t + 30;
+      return L.cols.map(([, d]) => { const inCell = x => x.date === d && x.time != null && x.time >= t && x.time < t2;
+        return A.filter(a => inCell(a) && !isCancelled(a)).map(a => a.code || "HOLD")
+          .concat(holds.filter(h => inCell(h) && holding(h, A, listAt)).map(h => `HOLD ${h.code}`)).join(", "); }); });
+  }
+  /* the tab's own list of index start times and their post checks ("Index Slot" and "Post Check" under Index Planning) */
+  function tabSlots(values) {
+    const V = values || [];
+    for (let r = 0; r < V.length; r++) {
+      const c = V[r].findIndex(v => norm(v) === "indexslot"); if (c < 0) continue;
+      const pc = V[r].findIndex(v => norm(v) === "postcheck"), out = [];
+      for (let i = r + 1; i < V.length; i++) { const t = txt(V[i][c]) ? toMin(V[i][c]) : null; if (t == null) break; out.push({ time: t, post: pc >= 0 ? toMin(V[i][pc]) : null }); }
+      return out;
+    }
+    return [];
+  }
+
   /* ---------- Schedule ---------- */
   /* one Sunday-to-Saturday week of IVK visits by weekday and time. Rows are every 30 min from the first to the last visit (9:00 AM to 3:30 PM at least). */
-  function week(A, start, P) {
+  function week(A, start, P, extra) {
     const days = [1, 2, 3, 4, 5].map(i => start + i), inWeek = A.filter(a => a.date >= start && a.date < start + 7);
-    const times = inWeek.map(a => a.time).filter(t => t != null);
+    const times = inWeek.map(a => a.time).concat(extra || []).filter(t => t != null);
     const lo = Math.min(540, ...times), hi = Math.max(930, ...times), rows = [];
     for (let t = Math.floor(lo / 30) * 30; t <= hi; t += 30) rows.push(t);
     const cell = (d, t) => inWeek.filter(a => a.date === d && a.time != null && a.time >= t && a.time < t + 30).map(a => ({ ...a, p: P?.get(a.mrn) || null }));
@@ -313,5 +476,6 @@
   return { DEFAULTS, VISIT_COLS, TEMPLATES, norm, txt, num, serialOf, dateOf, isoOf, fromIso, toSerial, toMin, fmtT, fmtD, fmtDay, weekday, weekStart,
     lasfir, provName, mrnKey, pickRow, eventShort, freqDays, byHeader, patients, appts, isCancelled, visitKey, visitRows, phase, isActive, futureOf, asks,
     today, code, chairState, chairStatus, waitMin, isLate, chairList, needs, loud, consults, fill, protoWords, arrivalText, askText,
-    parseReport, shrink, week };
+    parseReport, shrink, week, DAYS5, dayNum, SLOT_TYPES, slotType, sameProv, slotRows, PLAN_COLS, planRows, HOLD_COLS, holdRows, onList, holding, holdState,
+    daySlots, availOf, availText, fits, planIndex, altSlots, plannerLayout, plannerGrid, tabSlots };
 });

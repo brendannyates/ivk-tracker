@@ -6,7 +6,11 @@
      tblIvkRoutes     T1   Event | Sends to | FlowUrl | Enabled
      tblIvkTemplates  Y1   Event | Template
      tblIvkLog        AB1  Id | Event | Patient | Chair | Message | SentBy | SentAt | Result
-   Text cells only on that sheet ("13:22" stays text). The chair map is a document setting (a map file can be larger than a cell holds). */
+     tblIvkSlots      AK1  Id | Provider | Day | Time | Type                (the index template)
+     tblIvkPlans      AQ1  MRN | Patient | Start | PerWeek | Weeks | Avail | Note | By | Updated
+     tblIvkHolds      BA1  Id | MRN | Patient | Date | Time | Provider | Treatment | Status | PlacedBy | PlacedAt | DoneBy | DoneAt
+   The Index Planner tab's grid is rewritten as plain values (fillPlanner), replacing the lookups into another workbook.
+   Text cells only on that sheet ("1:22 PM" stays text). The chair map is a document setting (a map file can be larger than a cell holds). */
 (function (root, factory) {
   if (typeof module === "object" && module.exports) module.exports = factory(require("./core.js"));
   else root.IvkExcel = factory(root.IvkCore);
@@ -14,7 +18,7 @@
   "use strict";
 
   const DATA_SHEET = "IVK Tracker Data";
-  const SHEETS = { mpt: "Master Patient Tracker", appt: "Appt List", consults: "Consults", access: "Access" };
+  const SHEETS = { mpt: "Master Patient Tracker", appt: "Appt List", consults: "Consults", access: "Access" }, PLANNER = "Index Planner";
   const CH = 250;   // rows per write: big single syncs fail in Excel on the web
   const VISIT_READ = 400;   // the newest visit rows read on each refresh (today's are always among them)
   const SPEC = [
@@ -22,8 +26,13 @@
     { name: "tblIvkConfig", anchor: "Q", columns: ["Key", "Value"], rows: Object.entries(C.DEFAULTS).map(([k, v]) => [k, String(v)]) },
     { name: "tblIvkRoutes", anchor: "T", columns: ["Event", "Sends to", "FlowUrl", "Enabled"], rows: [["arrival", "the RN", "", "TRUE"], ["protocol", "Castro IVK group chat", "", "TRUE"]] },
     { name: "tblIvkTemplates", anchor: "Y", columns: ["Event", "Template"], rows: Object.entries(C.TEMPLATES) },
-    { name: "tblIvkLog", anchor: "AB", columns: ["Id", "Event", "Patient", "Chair", "Message", "SentBy", "SentAt", "Result"], rows: [["", "", "", "", "", "", "", ""]] }
+    { name: "tblIvkLog", anchor: "AB", columns: ["Id", "Event", "Patient", "Chair", "Message", "SentBy", "SentAt", "Result"], rows: [["", "", "", "", "", "", "", ""]] },
+    { name: "tblIvkSlots", anchor: "AK", columns: ["Id", "Provider", "Day", "Time", "Type"], rows: [["", "", "", "", ""]] },
+    { name: "tblIvkPlans", anchor: "AQ", columns: C.PLAN_COLS, rows: [C.PLAN_COLS.map(() => "")] },
+    { name: "tblIvkHolds", anchor: "BA", columns: C.HOLD_COLS, rows: [C.HOLD_COLS.map(() => "")] }
   ];
+  const BIG = ["tblIvkVisits", "tblIvkLog", "tblIvkHolds"];
+  const IP_RANGE = "A1:AZ60";   // the Index Planner tab: 9 weeks of Mon-Fri across, half hours down, the slot list below
   const colIdx = l => l.split("").reduce((n, c) => n * 26 + c.charCodeAt(0) - 64, 0) - 1;
   const colL = i => { let s = ""; for (let n = i + 1; n > 0; n = Math.floor((n - 1) / 26)) s = String.fromCharCode(65 + (n - 1) % 26) + s; return s; };
   const isF = v => typeof v === "string" && v.startsWith("=");
@@ -48,15 +57,16 @@
       const wb = ctx.workbook; wb.load("name");
       const small = {};
       for (const k of ["mpt", "consults"]) if (tm[k]) small[k] = readTable(ctx, tm[k]);
-      const TAIL = ["tblIvkVisits", "tblIvkLog"];
+      const TAIL = BIG;
       for (const s of SPEC) if (tm.own[s.name] && !TAIL.includes(s.name)) small[s.name] = readTable(ctx, s.name);
-      const apSheet = wb.worksheets.getItemOrNullObject(SHEETS.appt), acSheet = wb.worksheets.getItemOrNullObject(SHEETS.access);
-      apSheet.load("isNullObject"); acSheet.load("isNullObject");
+      const apSheet = wb.worksheets.getItemOrNullObject(SHEETS.appt), acSheet = wb.worksheets.getItemOrNullObject(SHEETS.access), ipSheet = wb.worksheets.getItemOrNullObject(PLANNER);
+      apSheet.load("isNullObject"); acSheet.load("isNullObject"); ipSheet.load("isNullObject");
       const bodies = TAIL.filter(n => tm.own[n]).map(n => { const b = wb.tables.getItem(n).getDataBodyRange(); b.load("rowCount"); return [n, b]; });
       await ctx.sync();
       out.wbName = wb.name;
       for (const [k, r] of Object.entries(small)) out[k] = r.values;
-      out.apptUpdated = null; out.freqs = [];
+      out.apptUpdated = null; out.freqs = []; out.planner = null;
+      if (!ipSheet.isNullObject) { const r = ipSheet.getRange(IP_RANGE); r.load("values"); await ctx.sync(); out.planner = r.values; }
       if (!apSheet.isNullObject || !acSheet.isNullObject) {
         const upd = apSheet.isNullObject ? null : apSheet.getRange("L1:M1"), fr = acSheet.isNullObject ? null : acSheet.getRange("R5:R14");
         if (upd) upd.load("values"); if (fr) fr.load("values"); await ctx.sync();
@@ -69,7 +79,7 @@
         const h = wb.tables.getItem(n).getHeaderRowRange(); h.load("values");
         const cnt = b.rowCount, from = Math.max(0, cnt - VISIT_READ), part = b.getRow(from).getResizedRange(cnt - from - 1, 0); part.load("values");
         await ctx.sync();
-        out[n === "tblIvkVisits" ? "visits" : n] = [h.values[0], ...part.values];
+        out[n === "tblIvkVisits" ? "visits" : n] = cnt ? [h.values[0], ...part.values] : [h.values[0]];
       }
       return out;
     });
@@ -89,14 +99,14 @@
       for (const { s, addr, r } of checks) {
         if (!isNew && r.values.some(row => row.some(v => v !== "" && v != null))) { blocked.push(s.name); continue; }
         const c = colIdx(s.anchor), last = colL(c + s.columns.length - 1);
-        const n = s.name === "tblIvkVisits" || s.name === "tblIvkLog" ? 2000 : 60;
+        const n = BIG.includes(s.name) ? 2000 : 200;
         ws.getRange(`${s.anchor}2:${last}${n + 1}`).numberFormat = Array.from({ length: n }, () => s.columns.map(() => "@"));
         const t = ws.tables.add(addr, true); t.name = s.name; t.style = "TableStyleLight1";
         t.getHeaderRowRange().values = [s.columns];
         t.getDataBodyRange().values = s.rows.map(r => r.map(String));
         made.push(s.name);
       }
-      if (made.length) { ws.getRange("A:AI").format.autofitColumns(); ws.visibility = Excel.SheetVisibility.hidden; }
+      if (made.length) { ws.getRange("A:BL").format.autofitColumns(); ws.visibility = Excel.SheetVisibility.hidden; }
       await ctx.sync();
       return { made, blocked };
     });
@@ -225,6 +235,97 @@
       return i >= 0;
     });
   }
+  /* ---------- Index planner ---------- */
+  const isBlank = r => r.every(v => v === "" || v == null);
+  /* rows by column name; the blank starter row from setup is used first */
+  function addRows(t, cols, b, objs) {
+    const rows = objs.map(o => cols.map(c => { const k = Object.keys(o).find(x => C.norm(x) === c); return k == null || o[k] == null ? "" : String(o[k]); }));
+    if (!rows.length) return;
+    if (b.values.length === 1 && isBlank(b.values[0])) { b.getRow(0).values = [rows[0]]; rows.shift(); }
+    if (rows.length) t.rows.add(null, rows);
+  }
+  const openTable = async (ctx, name) => {
+    const t = ctx.workbook.tables.getItemOrNullObject(name); t.load("isNullObject"); await ctx.sync();
+    if (t.isNullObject) throw new Error("The Index Planner tables aren’t in this workbook yet. Use Update the workbook in Settings.");
+    const h = t.getHeaderRowRange(), b = t.getDataBodyRange(); h.load("values"); b.load("values"); await ctx.sync();
+    return { t, b, cols: h.values[0].map(C.norm) };
+  };
+  /* template slots: rows = [{ Provider, Day, Time, Type }]; a slot the provider already has on that day and time is skipped */
+  async function addSlots(rows) {
+    return Excel.run(async ctx => {
+      const { t, b, cols } = await openTable(ctx, "tblIvkSlots"), at = n => cols.indexOf(n);
+      const have = b.values.filter(r => !isBlank(r)).map(r => `${C.norm(C.provName(r[at("provider")]))}|${C.dayNum(r[at("day")])}|${C.toMin(r[at("time")])}`);
+      const add = rows.filter(r => !have.includes(`${C.norm(C.provName(r.Provider))}|${C.dayNum(r.Day)}|${C.toMin(r.Time)}`))
+        .map((r, i) => Object.assign({ Id: "s" + Date.now().toString(36) + i }, r));
+      addRows(t, cols, b, add); await ctx.sync();
+      return { added: add.length, skipped: rows.length - add.length };
+    });
+  }
+  async function removeSlots(ids) {
+    return Excel.run(async ctx => {
+      const { t, b, cols } = await openTable(ctx, "tblIvkSlots"), c = cols.indexOf("id"), idx = [];
+      b.values.forEach((r, i) => { if (ids.includes(String(r[c]))) idx.push(i); });
+      /* a table keeps one row, so the last slot is cleared rather than deleted */
+      for (const i of idx.sort((x, y) => y - x)) { if (b.values.length - idx.length === 0 && i === 0) b.getRow(0).clear(Excel.ClearApplyTo.contents); else t.rows.getItemAt(i).delete(); }
+      await ctx.sync();
+      return idx.length;
+    });
+  }
+  /* one plan row per patient, by MRN */
+  async function savePlan(mrn, patch) {
+    return Excel.run(async ctx => {
+      const { t, b, cols } = await openTable(ctx, "tblIvkPlans"), cM = cols.indexOf("mrn");
+      const i = b.values.findIndex(r => C.mrnKey(r[cM]) === C.mrnKey(mrn));
+      if (i < 0) { addRows(t, cols, b, [Object.assign({ MRN: mrn }, patch)]); await ctx.sync(); return true; }
+      const row = b.values[i].map(v => v == null ? "" : String(v));
+      for (const [k, v] of Object.entries(patch)) { const c = cols.indexOf(C.norm(k)); if (c >= 0) row[c] = v == null ? "" : String(v); }
+      b.getRow(i).values = [row]; await ctx.sync(); return true;
+    });
+  }
+  /* Holds: [{ MRN, Patient, Date (iso), Time, Provider, Treatment }]. The table is read again first: if someone else has just held one
+     of these times, or this patient already has holds waiting, nothing is written and the error says which. */
+  async function placeHolds(rows, by) {
+    return Excel.run(async ctx => {
+      const { t, b, cols } = await openTable(ctx, "tblIvkHolds"), H = C.holdRows([cols.map(c => c), ...b.values]);
+      const live = H.filter(h => h.status !== "released");
+      const mine = live.filter(h => h.status === "held" && rows.some(r => C.mrnKey(r.MRN) === h.mrn));
+      if (mine.length) throw new Error(`${mine[0].code} already has ${mine.length} hold${mine.length === 1 ? "" : "s"} waiting. Book or release those first`);
+      for (const r of rows) {
+        const d = C.toSerial(r.Date), tm = C.toMin(r.Time), x = live.find(h => h.date === d && h.time === tm && C.sameProv(h.provider, r.Provider) && h.mrn !== C.mrnKey(r.MRN));
+        if (x) throw new Error(`${x.by || "Someone"} just held ${C.fmtD(d)} at ${C.fmtT(tm)} for ${x.code}. The plan refreshes; check the times again`);
+      }
+      const at = new Date().toISOString(), base = Date.now().toString(36);
+      addRows(t, cols, b, rows.map((r, i) => Object.assign({ Id: `h${base}${i}`, Status: "held", PlacedBy: by, PlacedAt: at }, r)));
+      await ctx.sync();
+      return { placed: rows.length, at };
+    });
+  }
+  async function setHolds(ids, status, by) {
+    return Excel.run(async ctx => {
+      const { b, cols } = await openTable(ctx, "tblIvkHolds"), c = n => cols.indexOf(n), at = new Date().toISOString(); let n = 0;
+      b.values.forEach((r, i) => { if (!ids.includes(String(r[c("id")]))) return; const row = r.map(v => v == null ? "" : String(v));
+        row[c("status")] = status; if (c("doneby") >= 0) row[c("doneby")] = by || ""; if (c("doneat") >= 0) row[c("doneat")] = at; b.getRow(i).values = [row]; n++; });
+      await ctx.sync();
+      return n;
+    });
+  }
+  /* Rewrites the Index Planner tab's grid as plain values: every IVK visit on the Appt List in its half hour, and holds as
+     "HOLD CODE". The lookups into the other workbook go; the dates row, times, colours and the planning block stay. */
+  async function fillPlanner(A, holds, listAt) {
+    return Excel.run(async ctx => {
+      const ws = ctx.workbook.worksheets.getItemOrNullObject(PLANNER); ws.load("isNullObject"); await ctx.sync();
+      if (ws.isNullObject) return { skipped: "no Index Planner tab" };
+      const r = ws.getRange(IP_RANGE); r.load("values"); await ctx.sync();
+      const L = C.plannerLayout(r.values); if (!L) return { skipped: "no Date row on the Index Planner tab" };
+      const g = C.plannerGrid(L, A, holds || [], listAt), r0 = L.rows[0][0], c0 = L.cols[0][0], c1 = L.cols[L.cols.length - 1][0];
+      const block = ws.getRange(IP_RANGE).getCell(r0, c0).getResizedRange(L.rows.length - 1, c1 - c0); block.load("formulas"); await ctx.sync();
+      const colAt = new Map(L.cols.map(([c], j) => [c, j]));
+      block.formulas = block.formulas.map((row, i) => row.map((f, k) => colAt.has(c0 + k) ? g[i][colAt.get(c0 + k)] : f));
+      await ctx.sync();
+      return { cells: g.flat().filter(Boolean).length, from: L.cols[0][1], to: L.cols[L.cols.length - 1][1] };
+    });
+  }
+
   /* document settings: the chair map */
   const getDoc = k => { try { return Office.context.document.settings.get(k); } catch (e) { return null; } };
   /* pick up a chair map saved on another computer (the pane otherwise keeps the copy it opened with) */
@@ -236,5 +337,6 @@
     });
   }
 
-  return { DATA_SHEET, SHEETS, SPEC, load, setup, saveVisit, confirmProtocol, replaceAppts, saveKeyed, saveRoutes, appendLog, openRow, getDoc, setDoc, refreshDoc };
+  return { DATA_SHEET, SHEETS, PLANNER, SPEC, load, setup, saveVisit, confirmProtocol, replaceAppts, saveKeyed, saveRoutes, appendLog, openRow,
+    addSlots, removeSlots, savePlan, placeHolds, setHolds, fillPlanner, getDoc, setDoc, refreshDoc };
 });

@@ -14,8 +14,9 @@ The hosted files hold no patient data. Patients only ever appear as LASFIR codes
 - **Today**: the chair map (a file from the [Bay Map Builder](https://brendannyates.github.io/bay-map-builder/), or chair tiles
   until one is loaded), who's checked in and waiting, who's still to come, and one visit card with the next step. Red only means
   a patient has waited 10+ minutes for a chair.
-- **Schedule**: the week (Sunday to Saturday) by day and time, from the Appt List tab. Replaces the Index Planner tab, which reads
-  another workbook's Appt List.
+- **Schedule**: the week (Sunday to Saturday) by day and time, from the Appt List tab, with open template slots and holds.
+- **Index planner**: each provider's template, and the index visits for each new start, proposed from it, held, then booked in
+  NextGen (below).
 - **Patients**: everyone on the Master Patient Tracker, sorted by what they need: auth ended or ending, visits left on the auth,
   nothing booked, protocol not confirmed. Each need has the action that clears it.
 - **Consults**: the Consults tab, approved-but-not-scheduled first.
@@ -35,10 +36,25 @@ The hosted files hold no patient data. Patients only ever appear as LASFIR codes
 A patient needs booking when they're active (Ongoing or Induction), not PRN, and booked less than 6 weeks ahead. The protocol needs
 confirming when Protocol Updated is blank or older than 90 days. Both are in Settings.
 
+## Index planning
+
+- **Template**: per provider, the weekday start times they offer, each marked Index, Flex or Follow-up. The post check is 90 min
+  after the start, the last 30 minutes of the 2-hour visit. Where two providers work the same hours, both sets of slots show.
+- **Protocol**: 2 visits in each 7 days for 3 weeks unless the patient's own protocol is set. Week 1 starts on treatment 1's day
+  (a Wednesday start makes week 1 Wednesday to Tuesday). Visits are never back to back, no more than 5 days apart when the open
+  slots allow it, and as evenly spaced as they can be. After index: 1x per week. All of it is in Settings › Index protocol.
+- **Proposal**: from the open Index and Flex slots on the Appt List, the patient's AM/PM days (from the tracker, or set in the
+  planner) and their preferred start date. Any visit can be moved to another open slot; the ones after it are re-planned.
+- **Holds**: Hold saves the times straight to the workbook, so everyone sees them on the Schedule and the Index Planner tab.
+  Book them in NextGen and press Booked in NextGen within 10 minutes; after that the hold turns red. Releasing frees the times.
+- **Index Planner tab**: each upload (and each hold) rewrites its grid as plain values, every IVK visit and hold in its half
+  hour. The lookups into the other workbook are gone; the dates, colours and the planning block stay.
+
 ## Where things are kept
 
 The clinic's tabs are found by sheet name: Master Patient Tracker, Appt List, Consults (and Access R5:R14 for the frequency list).
-The add-in adds one hidden tab, **IVK Tracker Data**, when someone presses Set up this workbook:
+The add-in adds one hidden tab, **IVK Tracker Data**, when someone presses Set up this workbook (a workbook set up before the
+Index planner gets the last three tables from Update the workbook):
 
 | Table | What |
 |---|---|
@@ -47,6 +63,9 @@ The add-in adds one hidden tab, **IVK Tracker Data**, when someone presses Set u
 | tblIvkRoutes | arrival → the RN's chat, protocol → the Castro IVK group chat, each with its Teams workflow URL |
 | tblIvkTemplates | The message wording |
 | tblIvkLog | Every Teams post and its result |
+| tblIvkSlots | The index template: provider, weekday, start, type |
+| tblIvkPlans | One row per patient being planned: preferred start, protocol, availability |
+| tblIvkHolds | Every hold: patient, date, time, provider, treatment, held / booked / released, who and when |
 
 The chair map is a document setting (`ivkBayPlan`), the same file format as ESK Tracker's bay map.
 
