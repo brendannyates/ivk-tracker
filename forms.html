@@ -1,0 +1,373 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>IVK forms</title>
+<!--
+  The forms the IVK Tracker prints for a patient: their schedule, the IV ketamine consent, the patient availability form, and the
+  start email (schedule in the body; the schedule PDF and the filled-in consent PDF attached, as an Outlook draft .eml).
+  Shown in a frame over the add-in. The details arrive by postMessage from the add-in (same origin) and live only in this page's
+  memory: nothing goes in the URL, storage, the console or the workbook.
+  Consent wording is verbatim from MHS_Consent_for_IV_Ketamine_Fillable.pdf (assets/ivk-consent.pdf, which is also the PDF that is
+  filled and attached to the email). Do not edit the wording here without compliance sign-off, and change both together.
+  Availability form wording is from the IVN Availability Form, laid out in the consent's design.
+-->
+<style>
+@page{size:letter;margin:0}
+:root{--ink:#2E2E2E;--muted:#6B6B6B;--accent:#D04600;--soft:#FFF4EA;--edge:#F8902A;--rule:#888;--line:#D9D9D9}
+*{box-sizing:border-box}
+html,body{margin:0;background:#e9ecef;color:var(--ink);font:10pt/1.22 "Liberation Sans",Arial,Helvetica,sans-serif}
+.bar{position:sticky;top:0;z-index:5;display:flex;flex-wrap:wrap;gap:8px;align-items:center;padding:10px 16px;background:#1B211F;color:#fff;font:14px "Segoe UI",system-ui,sans-serif}
+.bar .msg{margin-right:auto;max-width:60ch}
+.bar button{font:inherit;padding:6px 14px;border-radius:6px;border:1px solid #fff;background:transparent;color:#fff;cursor:pointer}
+.bar button.pri{background:#fff;color:#1B211F;font-weight:600}
+.bar button:disabled{opacity:.5;cursor:default}
+.bar button:focus-visible{outline:2px solid #FFD38A;outline-offset:2px}
+.page{position:relative;width:8.5in;height:11in;overflow:hidden;margin:16px auto;padding:.6in .9in .9in;background:#fff;box-shadow:0 1px 6px rgba(0,0,0,.25);break-after:page;page-break-after:always}
+.page:last-child{break-after:auto;page-break-after:auto}
+.logo{height:.55in;width:auto;display:block}
+.hdr{display:flex;justify-content:space-between;align-items:flex-start;gap:24px;margin-bottom:16pt}
+.idbox{display:grid;grid-template-columns:auto 2.6in;gap:4pt 8pt;align-items:end;font-size:10pt}
+.idbox .v{border-bottom:.9pt solid var(--rule);min-height:13pt;padding:0 2pt;font-weight:600}
+h1{font:700 16pt/1.2 "Liberation Serif","Times New Roman",serif;margin:0 0 10pt;color:var(--ink);text-align:center}
+h2{font-size:10.5pt;margin:11pt 0 4pt;color:var(--accent);letter-spacing:.02em}
+p{margin:0 0 6pt}
+ul.b{margin:2pt 0 6pt;padding-left:14pt}
+ul.b li{margin:0 0 2pt}
+ul.b li::marker{color:var(--accent)}
+ul.two{columns:2;column-gap:20pt}
+ul.two li{break-inside:avoid}
+ol.n{margin:2pt 0 6pt;padding-left:18pt}ol.n li{margin:0 0 3pt}
+ol.a{list-style:lower-alpha;margin:2pt 0 6pt;padding-left:18pt}ol.a li{margin:0 0 2pt}
+.call{background:var(--soft);border-left:3pt solid var(--edge);padding:8pt 10pt;margin:4pt 0 10pt;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+.foot{position:absolute;left:.9in;right:.9in;bottom:.45in;display:flex;justify-content:space-between;font-size:8pt;color:var(--muted);border-top:.6pt solid var(--line);padding-top:4pt}
+.sig{display:grid;grid-template-columns:1.1in 1fr .5in 1.4in;gap:12pt 8pt;align-items:end;margin:4pt 0 10pt}
+.sig .ln{border-bottom:.9pt solid var(--rule);min-height:15pt;padding:0 3pt;font-weight:600}
+.sigh{font-weight:700;margin:10pt 0 2pt}
+.fine{font-size:8.5pt;color:var(--muted)}
+/* the patient schedule: the TMS Tracker's schedule.html, landscape */
+@page sched{size:letter landscape;margin:.5in .4in}
+.page.sched{page:sched;width:11in;height:auto;min-height:8.5in;overflow:visible;padding:24px 28px;font:13px/1.4 "Aptos Narrow","Segoe UI",system-ui,sans-serif;color:#1c2a33}
+.sched .slogo{display:block;margin:0 auto 14px;width:281px;height:auto}
+.sched .asof{display:table;margin:0 auto 14px;padding:3px 10px;background:#156082;color:#fff;font-weight:700;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+.sched table{width:100%;border-collapse:collapse;text-align:center}
+.sched th{background:#156082;color:#fff;font-weight:700;padding:5px 6px;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+.sched td{padding:4px 6px}
+.sched tbody tr:nth-child(odd){background:#D9D9D9;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+.sched thead{display:table-header-group}.sched tr{break-inside:avoid}
+@media print{.page.sched{padding:0;min-height:0}}
+/* the desk's week */
+table.t{width:100%;border-collapse:collapse;margin:6pt 0 10pt}
+table.t th{background:var(--accent);color:#fff;text-align:left;padding:4pt 6pt;font-size:9.5pt;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+table.t td{padding:4pt 6pt;border-bottom:.6pt solid var(--line);font-size:9.5pt}
+table.t tr:nth-child(even) td{background:#FAFAFA;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+table.t .num{text-align:right;width:.35in}
+.meta{display:grid;grid-template-columns:auto 1fr auto 1fr;gap:3pt 10pt;margin:0 0 8pt}
+.meta b{font-weight:400;color:var(--muted)}
+/* availability */
+.fields{display:grid;grid-template-columns:auto 1fr auto 1fr;gap:8pt 8pt;align-items:end;margin:8pt 0 10pt}
+.fields .v{border-bottom:.9pt solid var(--rule);min-height:15pt;padding:0 3pt;font-weight:600}
+table.av{width:100%;border-collapse:collapse;margin:6pt 0 8pt;table-layout:fixed}
+table.av th,table.av td{border:.6pt solid var(--rule);padding:5pt 3pt;text-align:center;font-size:9pt}
+table.av thead th{background:var(--soft);-webkit-print-color-adjust:exact;print-color-adjust:exact}
+table.av th.day{text-align:left;padding-left:6pt;width:.95in}
+table.av .half{color:var(--accent);font-weight:700}
+.box{display:inline-block;width:10pt;height:10pt;border:.9pt solid var(--ink);vertical-align:middle;position:relative}
+.box.x::after{content:"";position:absolute;inset:1.5pt;background:var(--ink)}
+.noteline{border-bottom:.9pt solid var(--rule);height:18pt}
+/* email preview */
+.mail{max-width:8.5in;margin:16px auto;padding:20px 24px;background:#fff;box-shadow:0 1px 6px rgba(0,0,0,.25);font:14px/1.5 "Segoe UI",system-ui,sans-serif;color:#1B211F}
+.mail .hd{color:#66706B;font-size:13px;margin-bottom:10px}
+.mail ul{margin:6px 0 0 18px;padding:0;font-size:13px}
+.mail .mf{display:block;margin:8px 0 0;font-size:13px;color:#66706B}
+.mail .mf input{display:block;width:100%;margin-top:3px;padding:6px 8px;border:1.5px solid #D9D9D9;border-radius:8px;font:inherit;color:#1B211F}
+.mail .mf .hd{display:block;margin:2px 0 0;font-size:12px}
+.chk{list-style:none;margin:12px 0 0;padding:10px 12px;border-radius:10px;background:#F7F8F5;font-size:13.5px}
+.chk li{display:grid;grid-template-columns:20px auto 1fr;gap:6px;align-items:baseline;padding:2px 0}
+.chk li small{color:#66706B}.chk li.ok span{color:#1E6B59;font-weight:700}.chk li.no span{color:#B3261E;font-weight:700}.chk li.no b{color:#B3261E}
+@media print{html,body{background:#fff}.bar,.mail{display:none!important}.page{margin:0;box-shadow:none}}
+</style>
+</head>
+<body>
+<div class="bar">
+  <span class="msg" id="msg" role="status">Waiting for the details from the IVK Tracker…</span>
+  <button class="pri" id="bPrint" disabled>Print</button>
+  <button id="bSched" hidden disabled>Schedule PDF</button>
+  <button id="bConsent" hidden disabled>Consent PDF</button>
+  <button id="bEml" hidden disabled>Outlook draft (.eml)</button>
+  <button id="bCopy" hidden disabled>Copy email</button>
+  <button id="bClose">Close</button>
+</div>
+<div id="out"></div>
+<script>
+(function () {
+  "use strict";
+  const $ = id => document.getElementById(id);
+  const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  const tell = m => { try { parent.postMessage(Object.assign({ forms: "" }, m), location.origin); } catch (e) { /* opened on its own */ } };
+  let D = null;
+  const logo = `<img class="logo" src="assets/mhs-logo.png" alt="Mindful Health Solutions">`;
+  const FOOT = "P: 844.867.8444 &nbsp;|&nbsp; F: 916.932.0381 &nbsp;|&nbsp; www.mindfulhealthsolutions.com";
+  const foot = (doc, n, of) => `<div class="foot"><span>${FOOT}</span><span>${doc}${n ? ` &nbsp;|&nbsp; Page ${n} of ${of}` : ""}</span></div>`;
+
+  /* ---------- IV ketamine consent: four pages, wording verbatim ---------- */
+  function consent(d) {
+    const C = "Ketamine Treatment Consent";
+    const id = `<div class="idbox"><span>Name of Patient:</span><span class="v">${esc(d.name)}</span><span>DOB of Patient:</span><span class="v">${esc(d.dob)}</span><span>Clinic Location:</span><span class="v">${esc(d.clinic)}</span></div>`;
+    const p1 = `<div class="page"><div class="hdr">${logo}${id}</div>
+      <h1>KETAMINE TREATMENT CONSENT</h1>
+      <p>Welcome to our practice. This document contains important information about medical and professional services. Please read and ask any questions you might have so that we can discuss.</p>
+      <p><b>I voluntarily seek and consent to Ketamine treatment from an MHS psychiatrist, nurse or nurse practitioner, or other provider or designee. I agree they may perform reasonable and necessary medical services, assessments, testing and Ketamine treatment.</b></p>
+      <p>This consent contains information about the use of ketamine therapy for the treatment of depression and other psychiatric illnesses. Ketamine has been approved by the Food and Drug Administration (FDA) for use as an anesthetic agent. The use of ketamine in lower doses to treat depression is a newer, <i>off-label</i> use of ketamine. It is usually used after other treatments have been unsuccessful.</p>
+      <p>While ketamine is not formally approved by the FDA to treat depression, there are studies that say it may be an effective treatment option for multiple disorders, including major depressive disorder.</p>
+      <h2>OVERVIEW OF KETAMINE TREATMENT</h2>
+      <p>Ketamine can be given as an intravenous (IV) injection or drip, or as an intramuscular (IM) injection. For IV treatment, an intravenous catheter is placed, and ketamine is infused. You will remain awake and able to talk during the procedure, but your perception and mental state will likely be altered by the ketamine. You will return to a normal mental state as the medication effects wear off.</p>
+      <p>You may ask your provider any questions you may have concerning the procedure or effects of ketamine at any time. Your consent to receive ketamine may be withdrawn by you, and you may discontinue your participation at any time up until the actual dose has been administered.</p>
+      <h2>CONTRAINDICATIONS TO KETAMINE THERAPY</h2>
+      <p>Ketamine therapy should not be used in patients with the following:</p>
+      <ul class="b two"><li>Psychosis</li><li>Active suicidal ideation or plans</li><li>Increased intracranial pressure (ICP), current or past</li><li>Uncontrolled high blood pressure (hypertension) or angina</li><li>Unstable heart rhythm</li><li>Active alcohol or substance use</li><li>Pregnancy or breastfeeding</li><li>Untreated hyperthyroidism</li><li>Aneurysmal vascular disease</li><li>Liver disease</li><li>Prior hypersensitivity or negative reaction to ketamine</li></ul>
+      ${foot(C, 1, 4)}</div>`;
+    const p2 = `<div class="page"><div class="hdr">${logo}</div>
+      <h2>POSSIBLE SIDE EFFECTS OCCURRING DURING KETAMINE THERAPY</h2>
+      <p>Most side effects are brief or subside as the medication wears off.</p>
+      <ul class="b two"><li>Impaired balance and coordination</li><li>Sleepiness or fatigue</li><li>Headaches</li><li>Nausea or vomiting, loss of appetite</li><li>Blurred or double vision</li><li>Slurred speech</li><li>Confusion, excitability, anxiety</li><li>Impaired ability to see, hear or feel things accurately, or hallucinations</li><li>Bad taste in mouth, reduced sense of touch</li><li>Altered sense of time</li><li>Elevated pulse or blood pressure</li><li>Nystagmus (rapid eye movements) – rare</li><li>Elevated intraocular pressure (increased pressure in the eyes) – rare</li><li>Allergic reactions – rare</li></ul>
+      <ul class="b"><li>Any altered state of consciousness produced by ketamine usually lasts approximately 30 minutes after the infusion but can last longer.</li>
+        <li>The impaired sense of balance, dizziness and possible nausea gradually subside over three to six hours. <b>Patients should not drive themselves home after ketamine treatment.</b></li>
+        <li>Because of the risk of nausea and vomiting, <b>please refrain from eating and drinking for at least 6 hours before your session.</b> If you are unduly nauseated during treatment, you may be offered an anti-nausea medication.</li>
+        <li>Ketamine can cause a significant increase in blood pressure or heart rate (pulse). If monitoring shows this has occurred, you may be offered medication to lower your blood pressure or heart rate.</li>
+        <li>Agitation may occur during a ketamine session. If you are uncomfortable, you may be offered medication to help you relax.</li>
+        <li>Chronic, high-dose recreational abuse of ketamine can cause urinary tract symptoms and even permanent bladder dysfunction, though no significant effects have been reported with medical use.</li></ul>
+      <p><b>Risks of having an IV placed:</b></p>
+      <ul class="b two"><li>Mild discomfort at the placement site</li><li>Fainting</li><li>Bruising</li><li>Bleeding</li><li>Infection</li></ul>
+      <h2>POTENTIAL FOR KETAMINE ABUSE AND PHYSICAL DEPENDENCE</h2>
+      <p>Ketamine is a controlled substance and is subject to Schedule III rules under the Controlled Substances Act of 1970. Medical evidence regarding the issue of drug abuse and dependence suggests that ketamine’s abuse potential is low risk when medically prescribed. Ketamine should never be used except under the supervision of a licensed physician. Ketamine abuse has been known to cause unusual thoughts, hallucinations, ulcerative or interstitial cystitis, long-term cognitive impairment, liver damage, addiction, and death in people who abuse ketamine for recreational purposes.</p>
+      <h2>SUICIDAL IDEATION</h2>
+      <p>Psychiatric illnesses carry the risk of suicidal ideation (thoughts of ending one’s life). Any such thoughts you may have now, at any time during the weeks of your ketamine infusions, or at any point in the future, which cannot be immediately addressed by visiting with a mental health professional, should prompt you to seek emergency care or to call 911 or 988.</p>
+      ${foot(C, 2, 4)}</div>`;
+    const p3 = `<div class="page"><div class="hdr">${logo}</div>
+      <div class="call"><b>IMPORTANT:</b> If you are experiencing a psychiatric emergency, a life-threatening emergency, and/or medication side effects causing shortness of breath, heart problems, severe rash, or other life-threatening concerns, please call 911 or go to your nearest emergency room. If you have any thoughts of harming yourself or others, please go to your nearest emergency room or dial 911. The 988 Suicide &amp; Crisis Lifeline (formerly the National Suicide Prevention Lifeline) is available 24 hours a day by calling 988. This is a national network of local crisis centers that provides free and confidential emotional support to people in suicidal or emotional crisis.</div>
+      <h2>INFORMED CONSENT</h2>
+      <p>By signing this consent, I agree that:</p>
+      <ol class="n"><li>I understand that I am to have no food or drink for 6 hours prior to my ketamine session.</li>
+        <li>I fully understand that ketamine sessions can result in a brief but profound change in mental state or in unusual psychological and physiological effects. I will leave the clinic only when I am sufficiently recovered from the infusion state.</li>
+        <li>I understand that I may need to have someone drive me home from the sessions, and I will not engage in driving or hazardous activity without at least one night’s sleep after treatment.</li>
+        <li>I give my consent to the use of additional medications if deemed necessary to treat agitation, high blood pressure or high pulse rate.</li>
+        <li>I have the right to discuss all medical treatments with my clinician. Please discuss with us if you have any questions or uncertainty about whether to continue treatment.</li>
+        <li>There are no guarantees being made to me as to the results of any evaluation or ketamine treatment.</li>
+        <li>I am an active participant in this endeavor and share the responsibility for treatment by providing information about myself that is as accurate as I can.</li></ol>
+      <p>Specifically, I understand:</p>
+      <ol class="a"><li>IV ketamine is not an FDA-approved treatment for major depressive disorder, bipolar disorder, post-traumatic stress disorder or obsessive-compulsive disorder.</li>
+        <li>Ketamine will be administered intravenously by a provider or a nurse under the supervision of a physician.</li>
+        <li>To be effective, ketamine may need to be administered repeatedly, and some patients may experience benefits in less time while other patients may take longer to respond.</li>
+        <li>Even if effective, the effects of ketamine may not be permanent, and some form of subsequent or ongoing treatment may be necessary.</li>
+        <li>As with any medical treatment, side effects may occur.</li>
+        <li>I will arrange for a safe ride home after each appointment and will not drive or use heavy machinery for the rest of the day on which I receive ketamine.</li>
+        <li>This consent is valid for the duration of the treatment, but I may revoke all or any part of this authorization at any time.</li>
+        <li>I am responsible for the costs of treatment regardless of treatment outcome.</li>
+        <li>This practice and MHS have an outcomes database. Outcomes, demographic variables and information regarding treatment history are entered in the repository, and information from the database may be shared for educational, research or other purposes. No protected health information (PHI) that identifies individuals is entered in the database.</li></ol>
+      ${foot(C, 3, 4)}</div>`;
+    const sig = (who, name) => `<div class="sigh">${who}</div><div class="sig"><span>Signature:</span><span class="ln"></span><span>Date:</span><span class="ln"></span><span>Printed Name:</span><span class="ln">${esc(name || "")}</span><span></span><span></span></div>`;
+    const p4 = `<div class="page"><div class="hdr">${logo}</div>
+      <h2>TREATMENT CONSENT</h2>
+      <p>I have fully read this informed consent form describing IV ketamine therapy. I have had the opportunity to ask and raise questions and have received satisfactory answers. I understand the risks and benefits, and I freely give my consent to participate.</p>
+      <p>By signing below, you confirm that you have read and understand the terms stated in this Treatment Consent.</p>
+      ${sig("Patient", d.name)}
+      <div class="sigh">Parent or Guardian (if applicable)</div>
+      <p class="fine">In order to authorize mental health treatment for your child, you must have either sole or joint legal custody of your child. In the course of our treatment of your child, we may meet with the child’s parents/guardians either separately or together. Please be aware, however, that at all times our patient is your child – not the parents/guardians nor any siblings or other family members of the child.</p>
+      <div class="sig"><span>Signature:</span><span class="ln"></span><span>Date:</span><span class="ln"></span><span>Printed Name:</span><span class="ln"></span><span></span><span></span></div>
+      ${sig("Provider", d.provider)}
+      <h2>CONTACT INFORMATION</h2>
+      <p>Please call (844) 867-8444 to contact us. When you leave a message, please state your name clearly, your phone number(s) (even if you think we have it), the reason for calling, and let us know when the best time is to contact you. Messages left late in the day, on weekends or holidays may not be returned until the next business day.</p>
+      ${foot(C, 4, 4)}</div>`;
+    return p1 + p2 + p3 + p4;
+  }
+
+  /* ---------- patient availability form ---------- */
+  const LV = [["P", "Preferred"], ["M", "Mostly Available"], ["S", "Sometimes Available"], ["N", "Not Available"]];
+  const DAYS = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
+  function availForm(d) {
+    const row = day => `<tr><th class="day" scope="row">${day}</th>${["am", "pm"].map(h => LV.map(([k]) => `<td><span class="box" aria-label="${day} ${h.toUpperCase()} ${k}"></span></td>`).join("")).join("")}</tr>`;
+    return `<div class="page"><div class="hdr">${logo}</div>
+      <h1>Patient Availability Form</h1>
+      <p>This form is intended to gather ‘general’ availability from our patients so that such information may be used to:</p>
+      <ul class="b"><li>Measure our ability to meet demand</li><li>Guide operational decisions as it pertains to expanding hours or days</li><li>Improve treatment scheduling moving forward</li></ul>
+      <p>For the purposes of this form, we are unable to take specific appointment time requests – only broader day parts (AM or PM). This keeps us flexible enough to support matching your availability to openings without over-committing days/times as our patients’ availabilities may change due to their own schedule changes.</p>
+      <div class="fields"><span>Patient:</span><span class="v">${esc(d.name)}</span><span>DOB:</span><span class="v">${esc(d.dob)}</span><span>Effective:</span><span class="v"></span><span>Expires:</span><span class="v"></span></div>
+      <div class="call"><b>Instructions:</b> Please indicate at least <b>three</b> days per week in which you are available on most occasions.</div>
+      <table class="av"><thead><tr><th class="day" rowspan="2">Please Fill:</th><th colspan="4" class="half">AM</th><th colspan="4" class="half">PM</th></tr>
+        <tr>${[0, 1].map(() => LV.map(([, l]) => `<th>${l}</th>`).join("")).join("")}</tr></thead>
+        <tbody>${DAYS.map(row).join("")}</tbody></table>
+      <p class="fine">(AM = morning slots, e.g. ~9–10 am window; PM = afternoon slots, e.g. ~12:30–3 pm window.)</p>
+      <p style="margin-top:10pt">Note:</p><div class="noteline"></div><div class="noteline"></div>
+      ${foot("Patient Availability Form")}</div>`;
+  }
+
+  /* ---------- schedule: the TMS Tracker's patient schedule (schedule.html there), the NextGen appointment list's columns ---------- */
+  const HEAD = ["MRN", "Location", "Appointment Date", "Time", "Provider", "Appointment Type", "Status"];
+  function schedule(d) {
+    const s = d.sch;
+    return `<div class="page sched"><img class="slogo" src="assets/logo.png" alt="Mindful Health Solutions"><div class="asof">${esc(s.asOf)}</div>
+      <table><thead><tr>${HEAD.map(h => `<th scope="col">${h}</th>`).join("")}</tr></thead><tbody>${s.rows.map(r => `<tr>${r.map(c => `<td>${esc(c)}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`;
+  }
+  /* the clinic's week (codes only, for the desk) */
+  function week(d) {
+    return `<div class="page"><div class="hdr">${logo}<div class="fine">${esc(d.clinic)} IVK</div></div><h1>IVK schedule: ${esc(d.asOf)}</h1>
+      <table class="t"><thead><tr><th>Day</th><th>Time</th><th>Patient</th><th class="num">Tx</th><th>Visit</th><th>Provider</th><th>Status</th></tr></thead>
+      <tbody>${d.week.map(r => `<tr><td>${esc(r.day)}</td><td>${esc(r.at)}</td><td><b>${esc(r.code)}</b></td><td class="num">${r.n ?? ""}</td><td>${esc(r.type)}</td><td>${esc(r.provider)}</td><td>${esc(r.status)}</td></tr>`).join("") || `<tr><td colspan="7">No IVK visits this week.</td></tr>`}</tbody></table>
+      ${foot("Internal: patient codes only")}</div>`;
+  }
+
+  /* ---------- the start email ---------- */
+  /* the same table in the email body, inline-styled for Outlook */
+  const tdS = "padding:4px 6px;text-align:center;font:13px Aptos Narrow,Aptos,Arial,sans-serif;color:#1c2a33";
+  const schedHtml = d => `<table style="border-collapse:collapse;margin:8px 0"><tr>${HEAD.map(h => `<th style="${tdS};background:#156082;color:#fff;font-weight:700;padding:5px 6px">${h}</th>`).join("")}</tr>
+    ${d.sch.rows.map((r, i) => `<tr${i % 2 ? "" : ' style="background:#D9D9D9"'}>${r.map(c => `<td style="${tdS}">${esc(c)}</td>`).join("")}</tr>`).join("")}</table>`;
+  const schedText = d => d.sch.rows.map(r => `${r[2]}  ${r[3]}  ${r[5]}  ${r[4]}  ${r[1]}`).join("\n");
+  /* the template is HTML (the Castro desk's email, values already escaped by the add-in) or, if someone pastes plain text, paragraphs */
+  const mailHtml = d => `<div style="font:12pt/1.4 Aptos,Calibri,Arial,sans-serif;color:#000">${d.email.html ? d.email.body.replace("{schedule}", schedHtml(d))
+    : d.email.body.split(/\n{2,}/).map(par => par.trim() === "{schedule}" ? schedHtml(d) : `<p style="margin:0 0 10px">${esc(par).replace(/\n/g, "<br>").replace("{schedule}", schedHtml(d))}</p>`).join("")}</div>`;
+  const untag = h => h.replace(/<li[^>]*>/gi, "• ").replace(/<br\s*\/?>|<\/(p|li|ul|div)>/gi, "\n").replace(/<[^>]+>/g, "").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/\n{3,}/g, "\n\n").trim();
+  const mailText = d => d.email.html ? untag(d.email.body.replace("{schedule}", `</p>${esc(schedText(d)).replace(/\n/g, "<br>")}<p>`)) : d.email.body.replace("{schedule}", schedText(d));
+  /* file names by the patient's code, never their name; the schedule's as the TMS Tracker names it */
+  const fname = (what, ext) => what === "schedule" ? D.sch.fname : what === "consent" ? `${D.code} IVK Consent.${ext}` : `IVK ${what} - ${D.code}.${ext}`;
+  const hdr = s => String(s || "").replace(/[\r\n]/g, "");
+
+  function render(d) {
+    D = d; const parts = d.parts || {}, out = [];
+    if (d.email) { X.to = ""; X.bidf = null; X.more = [];
+      out.push(`<div class="mail"><h3 style="margin:0 0 8px;font-size:15px">Before it goes to Outlook</h3>
+        <label class="mf">Patient’s email address<input id="eTo" type="email" autocomplete="off" spellcheck="false"></label>
+        <label class="mf">BIDF<input id="eBidf" type="file"><span class="hd">The patient’s benefits form, from wherever it’s saved</span></label>
+        <label class="mf">Anything else to attach (optional)<input id="eMore" type="file" multiple></label>
+        <ul class="chk" id="eChk"></ul>
+        <div class="hd" style="margin-top:14px">Subject: <b>${esc(d.email.subject)}</b></div>${mailHtml(d)}</div>`); }
+    if (parts.week) out.push(week(d));
+    if (parts.sched) out.push(schedule(d));
+    if (parts.consent) out.push(consent(d));
+    if (parts.avail) out.push(availForm(d));
+    $("out").innerHTML = out.join("");
+    const em = !!d.email;
+    ["bSched", "bConsent", "bEml", "bCopy"].forEach(id => { $(id).hidden = !em; $(id).disabled = !em; });
+    $("bPrint").disabled = false; $("bPrint").focus();
+    if (em) check();
+    const W = [parts.week && "the week", parts.sched && "the schedule", parts.consent && "the consent", parts.avail && "the availability form"].filter(Boolean), what = W.length > 1 ? `${W.slice(0, -1).join(", ")} and ${W[W.length - 1]}` : W[0];
+    $("msg").textContent = em ? "Start email ready. Everything here has the patient’s name: send it only from Outlook, and print only to a clinic printer."
+      : parts.sched && !parts.consent && !parts.avail ? `${d.sch.rows.length} visit${d.sch.rows.length === 1 ? "" : "s"}. This contains the MRN, so keep it only where PHI is allowed.` : `${what[0].toUpperCase()}${what.slice(1)}. ${parts.week ? "Patient codes only." : "This has the patient’s name and date of birth: print it for the patient, and don’t save it anywhere else."}`;
+  }
+
+  /* ---------- the start email's checklist: nothing goes to Outlook until every piece is in ---------- */
+  const X = { to: "", bidf: null, more: [] };   // the address and the files live only in this page's memory
+  const mailOk = s => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(s);
+  function items() {
+    return [
+      ["Patient’s email address", mailOk(X.to), X.to ? (mailOk(X.to) ? X.to : "That isn’t an email address") : "Type it above"],
+      ["CC", !!D.email.cc, D.email.cc || "No CC set: add the Castro help desk in Settings › Messages"],
+      ["BCC", !!D.email.bcc, D.email.bcc || "No BCC set: add it in Settings › Messages"],
+      ["Start email template", !/\[Start email template/i.test(D.email.body), /\[Start email template/i.test(D.email.body) ? "Still the placeholder: paste the template in Settings › Messages" : "Filled in"],
+      ["Schedule in the body and as a PDF", D.sch.rows.length > 0, D.sch.rows.length ? `${D.sch.rows.length} visit${D.sch.rows.length === 1 ? "" : "s"}` : "No visits in the date range"],
+      ["IV ketamine consent PDF", !!(D.name && D.dob && D.provider), D.name && D.dob && D.provider ? "Name, DOB, clinic and clinician filled in" : `Missing ${[!D.name && "the name", !D.dob && "the date of birth", !D.provider && "the clinician"].filter(Boolean).join(", ")}: close and open the start email again`],
+      ["BIDF", !!X.bidf, X.bidf ? X.bidf.name : "Attach it above"]
+    ].concat(X.more.map(f => [f.name, true, "Extra attachment"]));
+  }
+  function check() {
+    const L = items(), miss = L.filter(i => !i[1]);
+    $("eChk").innerHTML = L.map(([t, ok, s]) => `<li class="${ok ? "ok" : "no"}"><span aria-hidden="true">${ok ? "✓" : "!"}</span><b>${esc(t)}</b> <small>${esc(s)}</small></li>`).join("");
+    $("bEml").disabled = miss.length > 0 || !!X.busy;
+    $("bEml").title = miss.length ? `Still needed: ${miss.map(i => i[0]).join(", ")}` : "";
+    $("msg").textContent = miss.length ? `Start email: still needed before Outlook: ${miss.map(i => i[0].toLowerCase()).join(", ")}.` : "Everything is in. Outlook draft makes one message with the address, the email, the schedule, the consent and the BIDF.";
+    return miss;
+  }
+  const readFile = async f => ({ name: f.name, type: f.type || "application/octet-stream", bytes: new Uint8Array(await f.arrayBuffer()) });
+  document.addEventListener("input", e => { if (e.target.id === "eTo") { X.to = e.target.value.trim(); check(); } });
+  document.addEventListener("change", async e => {
+    if (e.target.id === "eBidf") { X.bidf = e.target.files[0] ? await readFile(e.target.files[0]) : null; check(); }
+    if (e.target.id === "eMore") { X.more = await Promise.all([...e.target.files].map(readFile)); check(); }
+  });
+
+  /* ---------- PDFs and the Outlook draft ---------- */
+  const load = (srcs) => new Promise((res, rej) => { const go = i => { if (i >= srcs.length) return rej(new Error("a PDF library didn’t load; check the connection"));
+    const s = document.createElement("script"); s.src = srcs[i]; s.onload = () => res(); s.onerror = () => { s.remove(); go(i + 1); }; document.head.appendChild(s); }; go(0); });
+  async function jspdf() {
+    if (!window.jspdf) await load(["https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"]);
+    if (!window.jspdf.jsPDF.API.autoTable) await load(["https://cdnjs.cloudflare.com/ajax/libs/jspdf-autotable/3.8.2/jspdf.plugin.autotable.min.js"]);
+    return window.jspdf.jsPDF;
+  }
+  async function logoData() {
+    /* onload rather than decode(), which can stall while the pane is in the background; no logo beats no PDF */
+    const img = new Image(); await new Promise(res => { img.onload = img.onerror = res; setTimeout(res, 3000); img.src = "assets/logo.png"; }); if (!img.naturalWidth) return null;
+    const c = document.createElement("canvas"); c.width = img.naturalWidth; c.height = img.naturalHeight; c.getContext("2d").drawImage(img, 0, 0);
+    return { url: c.toDataURL("image/png"), ratio: img.naturalHeight / img.naturalWidth };
+  }
+  /* the TMS Tracker's savePdf (schedule.html), returning the bytes so the email can attach them */
+  async function schedulePdf() {
+    const JsPDF = await jspdf(), doc = new JsPDF({ orientation: "landscape", unit: "pt", format: "letter" }), W = doc.internal.pageSize.getWidth(), S = D.sch;
+    let y = 30; const lg = await logoData();
+    if (lg) { const w = 210.75, h = w * lg.ratio; doc.addImage(lg.url, "PNG", (W - w) / 2, y, w, h); y += h + 14; }   // centered with the table
+    doc.setFont("helvetica", "bold"); doc.setFontSize(10);
+    const tw = doc.getTextWidth(S.asOf) + 16; doc.setFillColor(21, 96, 130); doc.rect((W - tw) / 2, y, tw, 16, "F");
+    doc.setTextColor(255, 255, 255); doc.text(S.asOf, W / 2, y + 11.5, { align: "center" }); y += 28;
+    doc.autoTable({ head: [HEAD], body: S.rows, startY: y, margin: { left: 28.8, right: 28.8, top: 36, bottom: 36 }, theme: "plain",
+      styles: { font: "helvetica", fontSize: 10, halign: "center", valign: "middle", textColor: [28, 42, 51], cellPadding: 4 },
+      headStyles: { fillColor: [21, 96, 130], textColor: [255, 255, 255], fontStyle: "bold" },
+      didParseCell: c => { if (c.section === "body" && c.row.index % 2 === 0) c.cell.styles.fillColor = [217, 217, 217]; } });
+    return new Uint8Array(doc.output("arraybuffer"));
+  }
+  /* the official consent PDF with its three fields filled, and the patient's and provider's printed names on page 4 */
+  async function consentPdf() {
+    if (!window.PDFLib) await load(["https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js", "https://unpkg.com/pdf-lib@1.17.1/dist/pdf-lib.min.js"]);
+    const { PDFDocument, StandardFonts, rgb } = window.PDFLib;
+    const pdf = await PDFDocument.load(await (await fetch("assets/ivk-consent.pdf")).arrayBuffer()), form = pdf.getForm();
+    const set = (n, v) => { try { form.getTextField(n).setText(v || ""); } catch (e) { /* field renamed */ } };
+    set("patient_name", D.name); set("patient_dob", D.dob); set("clinic_location", D.clinic);
+    const font = await pdf.embedFont(StandardFonts.Helvetica), p4 = pdf.getPages()[3];
+    try { form.updateFieldAppearances(font); } catch (e) { /* the viewer draws them */ }
+    /* page 4's Printed Name lines (from the PDF's layout): patient at y 593, provider at y 341, right of the label */
+    if (p4) { if (D.name) p4.drawText(D.name, { x: 150, y: 593, size: 10, font, color: rgb(0.18, 0.18, 0.18) }); if (D.provider) p4.drawText(D.provider, { x: 150, y: 341, size: 10, font, color: rgb(0.18, 0.18, 0.18) }); }
+    return await pdf.save();
+  }
+  const download = (bytes, name, type) => { const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([bytes], { type })); a.download = name; document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 4000); };
+  const b64 = u8 => { let s = ""; for (let i = 0; i < u8.length; i += 0x8000) s += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000)); return btoa(s); };
+  const b64t = t => b64(new TextEncoder().encode(t));
+  const wrap = s => s.replace(/.{1,76}/g, "$&\r\n").trim();
+  async function eml() {
+    const [sp, cp] = await Promise.all([schedulePdf(), consentPdf()]), B = "=_ivk_" + Date.now().toString(36), B2 = B + "_alt";
+    /* attachment names in RFC 2231 form so any file name (spaces, accents) survives */
+    const att = (bytes, name, type = "application/pdf") => { const n = String(name).replace(/["\r\n]/g, ""), enc = encodeURIComponent(n);
+      return [`--${B}`, `Content-Type: ${type}; name="${n}"`, `Content-Disposition: attachment; filename="${n}"; filename*=UTF-8''${enc}`, "Content-Transfer-Encoding: base64", "", wrap(b64(bytes))]; };
+    const extra = [X.bidf, ...X.more].filter(Boolean).flatMap(f => att(f.bytes, f.name, f.type));
+    return ["X-Unsent: 1", `To: ${hdr(X.to)}`, ...(D.email.cc ? [`Cc: ${hdr(D.email.cc)}`] : []), ...(D.email.bcc ? [`Bcc: ${hdr(D.email.bcc)}`] : []), `Subject: =?UTF-8?B?${b64t(D.email.subject)}?=`, "MIME-Version: 1.0", `Content-Type: multipart/mixed; boundary="${B}"`, "",
+      `--${B}`, `Content-Type: multipart/alternative; boundary="${B2}"`, "",
+      `--${B2}`, 'Content-Type: text/plain; charset="utf-8"', "Content-Transfer-Encoding: base64", "", wrap(b64t(mailText(D))),
+      `--${B2}`, 'Content-Type: text/html; charset="utf-8"', "Content-Transfer-Encoding: base64", "", wrap(b64t(`<html><body>${mailHtml(D)}</body></html>`)), `--${B2}--`,
+      ...att(sp, fname("schedule", "pdf")), ...att(cp, fname("consent", "pdf")), ...extra, `--${B}--`, ""].join("\r\n");
+  }
+  async function busy(btn, label, fn) {
+    const was = btn.textContent; btn.disabled = true; btn.textContent = label; X.busy = true;
+    let err = null;
+    try { await fn(); } catch (e) { err = e; console.error(e); }
+    finally { X.busy = false; btn.disabled = false; btn.textContent = was; if (D && D.email) check(); }
+    if (err) $("msg").textContent = `Couldn’t make it (${err.message || err}). Try again, or use Print and choose Save as PDF.`;
+    if (X.done) { X.done = false; $("msg").textContent = "Saved to Downloads. Open it and Outlook shows one draft: the address, the email, the schedule, the consent and the BIDF. Read it over, then send."; }
+  }
+
+  $("bPrint").onclick = () => window.print();
+  $("bClose").onclick = () => { D = null; $("out").innerHTML = ""; tell({ forms: "close" }); };
+  $("bSched").onclick = e => busy(e.target, "Making…", async () => { download(await schedulePdf(), fname("schedule", "pdf"), "application/pdf"); tell({ forms: "saved", text: "Schedule PDF saved to Downloads." }); });
+  $("bConsent").onclick = e => busy(e.target, "Making…", async () => { download(await consentPdf(), fname("consent", "pdf"), "application/pdf"); tell({ forms: "saved", text: "Consent PDF saved to Downloads." }); });
+  $("bEml").onclick = e => busy(e.target, "Making…", async () => { if (check().length) return; download(new TextEncoder().encode(await eml()), fname("start email", "eml"), "message/rfc822");
+    X.done = true; tell({ forms: "saved", text: "Outlook draft saved to Downloads." }); });
+  $("bCopy").onclick = e => busy(e.target, "Copying…", async () => {
+    const html = mailHtml(D), text = mailText(D);
+    if (window.ClipboardItem && navigator.clipboard?.write) await navigator.clipboard.write([new ClipboardItem({ "text/html": new Blob([html], { type: "text/html" }), "text/plain": new Blob([text], { type: "text/plain" }) })]);
+    else await navigator.clipboard.writeText(text);
+    $("msg").textContent = "Copied. Paste it into a new Outlook message, then attach the schedule and consent PDFs (the buttons above) and the BIDF.";
+  });
+
+  window.addEventListener("message", ev => { if (ev.origin !== location.origin || ev.source !== parent) return; const m = ev.data || {}; if (m.forms === "data" && m.data) render(m.data); });
+  if (window.__formsTest) render(window.__formsTest);   // the harness sets invented values here
+  else tell({ forms: "ready" });
+})();
+</script>
+</body>
+</html>

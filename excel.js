@@ -10,6 +10,9 @@
      tblIvkHolds      BA1  Id | MRN | Patient | Date | Time | Provider | Treatment | Status | PlacedBy | PlacedAt | DoneBy | DoneAt
      tblIvkOther      BN1  Date | Time | Provider | Event | Status   (the providers' non-IVK visits from the wider report; no patient)
      tblIvkFlags      BT1  MRN | Patient | RequiresPostCheck | By | Updated
+     tblIvkPatient    BZ1  MRN | Patient | CardOnFile | OkToCollect | Oakland | OakTasked | Avail | AvailEffective | AvailExpires | AvailNote | Away |
+                          WaitRank | WaitingOn | Appeal | WaitNote | By | Updated   (per patient: payment flags, Oakland, availability, waitlist)
+     tblIvkPay        CR1  Id | Date | MRN | Patient | Key | Kind | Amount | Method | Note | By | At   (payments due, collected, missed, reminders)
    (AK1 held tblIvkSlots, the first template; it is no longer read.)
    Text cells only on that sheet ("1:22 PM" stays text). The chair map is a document setting (a map file can be larger than a cell holds).
    Two visible tabs hold the provider templates, in the Clinic Template Tool's format so that tool can read them (template.js):
@@ -37,9 +40,11 @@
     { name: "tblIvkPlans", anchor: "AQ", columns: C.PLAN_COLS, rows: [C.PLAN_COLS.map(() => "")] },
     { name: "tblIvkHolds", anchor: "BA", columns: C.HOLD_COLS, rows: [C.HOLD_COLS.map(() => "")] },
     { name: "tblIvkOther", anchor: "BN", columns: C.OTHER_COLS, rows: [C.OTHER_COLS.map(() => "")] },
-    { name: "tblIvkFlags", anchor: "BT", columns: C.FLAG_COLS, rows: [C.FLAG_COLS.map(() => "")] }
+    { name: "tblIvkFlags", anchor: "BT", columns: C.FLAG_COLS, rows: [C.FLAG_COLS.map(() => "")] },
+    { name: "tblIvkPatient", anchor: "BZ", columns: C.PT_COLS, rows: [C.PT_COLS.map(() => "")] },
+    { name: "tblIvkPay", anchor: "CR", columns: C.PAY_COLS, rows: [C.PAY_COLS.map(() => "")] }
   ];
-  const BIG = ["tblIvkVisits", "tblIvkLog", "tblIvkHolds", "tblIvkOther"];
+  const BIG = ["tblIvkVisits", "tblIvkLog", "tblIvkHolds", "tblIvkOther", "tblIvkPay"];
   const IP_RANGE = "A1:AZ60";   // the Index Planner tab: 9 weeks of Mon-Fri across, half hours down, the slot list below
   const colIdx = l => l.split("").reduce((n, c) => n * 26 + c.charCodeAt(0) - 64, 0) - 1;
   const colL = i => { let s = ""; for (let n = i + 1; n > 0; n = Math.floor((n - 1) / 26)) s = String.fromCharCode(65 + (n - 1) % 26) + s; return s; };
@@ -123,7 +128,7 @@
         t.getDataBodyRange().values = s.rows.map(r => r.map(String));
         made.push(s.name);
       }
-      if (made.length) { ws.getRange("A:BX").format.autofitColumns(); ws.visibility = Excel.SheetVisibility.hidden; }
+      if (made.length) { ws.getRange("A:DB").format.autofitColumns(); ws.visibility = Excel.SheetVisibility.hidden; }
       await ctx.sync();
       return { made, blocked };
     });
@@ -252,6 +257,64 @@
       return i >= 0;
     });
   }
+  /* One patient's row on the Master Patient Tracker (kind "mpt") or the Consults tab ("consults"), for the edit form: headers,
+     values, formulas and number formats, so formula cells are shown but never offered for editing. */
+  async function findRow(ctx, kind, mrn) {
+    const tm = await tableMap(ctx), name = tm[kind]; if (!name) throw new Error(`No ${kind === "consults" ? "Consults" : "Master Patient Tracker"} table in this workbook.`);
+    const t = ctx.workbook.tables.getItem(name), h = t.getHeaderRowRange(), b = t.getDataBodyRange(); h.load("values"); b.load("values"); await ctx.sync();
+    const cols = h.values[0].map(C.norm), c = cols.indexOf(kind === "consults" ? "patientmrn" : "mrn");
+    const i = C.pickRow(b.values, r => r[c], r => r[cols.indexOf("status")], mrn);
+    if (i < 0) throw new Error(`That patient isn’t on the ${kind === "consults" ? "Consults tab" : "Master Patient Tracker"}.`);
+    return { t, b, i, head: h.values[0].map(v => C.txt(v)) };
+  }
+  async function readRow(kind, mrn) {
+    return Excel.run(async ctx => {
+      const { b, i, head } = await findRow(ctx, kind, mrn), r = b.getRow(i); r.load("values,formulas,numberFormat"); await ctx.sync();
+      return { head, values: r.values[0], formulas: r.formulas[0].map(f => isF(f) ? f : ""), formats: r.numberFormat[0] };
+    });
+  }
+  /* patch = { header: { v, date } }: a date goes in as a serial with m/d/yyyy. Formula cells are skipped and named in the result,
+     so nothing the clinic built is overwritten. The row is found again by MRN inside the same run. */
+  async function saveRow(kind, mrn, patch) {
+    return Excel.run(async ctx => {
+      const { b, i, head } = await findRow(ctx, kind, mrn), r = b.getRow(i); r.load("formulas"); await ctx.sync();
+      const cols = head.map(C.norm), wrote = [], skipped = [];
+      for (const [k, x] of Object.entries(patch)) {
+        const c = cols.indexOf(C.norm(k)); if (c < 0) { skipped.push(k); continue; }
+        if (isF(r.formulas[0][c])) { skipped.push(head[c]); continue; }
+        const cell = b.getCell(i, c), o = x && typeof x === "object" ? x : { v: x };
+        if (o.date) cell.numberFormat = [["m/d/yyyy"]];
+        cell.values = [[o.v == null ? "" : o.v]];
+        wrote.push(head[c]);
+      }
+      await ctx.sync();
+      return { wrote, skipped };
+    });
+  }
+  /* payments: rows by column name, appended (Id and At filled in) */
+  async function addPays(rows) {
+    return Excel.run(async ctx => {
+      const { t, b, cols } = await openTable(ctx, "tblIvkPay"), at = new Date().toISOString(), base = Date.now().toString(36);
+      addRows(t, cols, b, rows.map((r, i) => Object.assign({ Id: `p${base}${i}`, At: at }, r)));
+      await ctx.sync();
+      return { n: rows.length };
+    });
+  }
+  /* the waitlist order: WaitRank 1..n for these MRNs, in this order (anyone else on the table keeps theirs) */
+  async function saveRanks(order, by) {
+    return Excel.run(async ctx => {
+      const { t, b, cols } = await openTable(ctx, "tblIvkPatient"), c = n => cols.indexOf(n), at = new Date().toISOString(), add = [];
+      order.forEach(({ mrn, code }, n) => {
+        const i = b.values.findIndex(r => C.mrnKey(r[c("mrn")]) === C.mrnKey(mrn));
+        if (i < 0) { add.push({ MRN: mrn, Patient: code, WaitRank: n + 1, By: by, Updated: at }); return; }
+        const row = b.values[i].map(v => v == null ? "" : String(v)); row[c("waitrank")] = String(n + 1);
+        if (c("by") >= 0) row[c("by")] = by || ""; if (c("updated") >= 0) row[c("updated")] = at;
+        b.getRow(i).values = [row];
+      });
+      addRows(t, cols, b, add); await ctx.sync();
+      return { n: order.length };
+    });
+  }
   /* ---------- Index planner ---------- */
   const isBlank = r => r.every(v => v === "" || v == null);
   /* rows by column name; the blank starter row from setup is used first */
@@ -263,7 +326,7 @@
   }
   const openTable = async (ctx, name) => {
     const t = ctx.workbook.tables.getItemOrNullObject(name); t.load("isNullObject"); await ctx.sync();
-    if (t.isNullObject) throw new Error("The Index Planner tables aren’t in this workbook yet. Use Update the workbook in Settings.");
+    if (t.isNullObject) throw new Error(`The ${name} table isn’t in this workbook yet. Use Update the workbook in Settings.`);
     const h = t.getHeaderRowRange(), b = t.getDataBodyRange(); h.load("values"); b.load("values"); await ctx.sync();
     return { t, b, cols: h.values[0].map(C.norm) };
   };
@@ -404,6 +467,7 @@
   /* one row per patient, by MRN: index plans (tblIvkPlans) and the requires post-check flag (tblIvkFlags) */
   const savePlan = (mrn, patch) => upsertMrn("tblIvkPlans", mrn, patch);
   const saveFlag = (mrn, patch) => upsertMrn("tblIvkFlags", mrn, patch);
+  const savePt = (mrn, patch) => upsertMrn("tblIvkPatient", mrn, patch);
   async function upsertMrn(table, mrn, patch) {
     return Excel.run(async ctx => {
       const { t, b, cols } = await openTable(ctx, table), cM = cols.indexOf("mrn");
@@ -470,5 +534,6 @@
   }
 
   return { DATA_SHEET, SHEETS, PLANNER, TPL_SHEET, TYPES_SHEET, SPEC, load, setup, saveVisit, confirmProtocol, replaceAppts, saveKeyed, saveRoutes, appendLog, openRow,
-    setupTemplate, addGrid, setCells, saveTypes, replaceOther, savePlan, saveFlag, placeHolds, setHolds, fillPlanner, getDoc, setDoc, refreshDoc };
+    setupTemplate, addGrid, setCells, saveTypes, replaceOther, savePlan, saveFlag, placeHolds, setHolds, fillPlanner, getDoc, setDoc, refreshDoc,
+    readRow, saveRow, savePt, addPays, saveRanks };
 });

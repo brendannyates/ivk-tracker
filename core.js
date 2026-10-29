@@ -14,7 +14,12 @@
     AheadWeeks: 6, ProtocolDays: 90, AuthWarnDays: 14, EncountersWarn: 3,
     /* index: 2 visits in each 7 days from treatment 1, for 3 weeks; at least a day off between visits, no more than 5 days apart
        when the slots allow; the provider's post check is in the last 30 min of the 2 hours; a hold is booked in NextGen within 10 min */
-    IndexPerWeek: 2, IndexWeeks: 3, MinGapDays: 2, MaxGapDays: 5, PostCheckMin: 90, HoldMin: 10, AfterIndex: "1x per week", CapacityWeeks: 4 };
+    IndexPerWeek: 2, IndexWeeks: 3, MinGapDays: 2, MaxGapDays: 5, PostCheckMin: 90, HoldMin: 10, AfterIndex: "1x per week", CapacityWeeks: 4,
+    /* Oakland patients: index (the first 6) at Castro, OAK tasked to book maintenance at treatment 3. Balance reminders every 14 days.
+       PayStart: the day the payment log started (visits before it are never asked about) */
+    OakIndex: 6, OakRemindAt: 3, ReminderDays: 14, PayStart: "",
+    /* the start email: the clinic's address for "your first treatment at", and who is copied on every one */
+    ClinicAddress: "45 Castro Street Suite 318, San Francisco, CA 94114", StartCc: "helpcastro@mindfulhealthsolutions.com", StartBcc: "amreed@mymhs.com" };
   const ACTIVE = ["ongoing", "induction"];
   const DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
   const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
@@ -102,6 +107,8 @@
       const g = x.get, el = g("encountersremaining"), ea = g("encountersauthorized");
       return {
         i: x.i, mrn: mrnKey(g("mrn")), code: lasfir(g("patientname")), status: txt(g("status")),
+        /* the name and DOB are only for the forms printed for the patient; never shown on screen or posted */
+        name: txt(g("patientname")), dob: toSerial(g(["dob", "dateofbirth", "patientdob", "birthdate"])),
         authExp: toSerial(g(["authexpdate", "authexp"])), encLeft: num(el), encLeftTxt: txt(el), encAuth: num(ea), encAuthTxt: txt(ea),
         copay: txt(g("copay")), infusion: txt(g("infusion")), protoAt: toSerial(g(["protocolupdated", "protocolexpdate"])),
         freq: txt(g(["frequency", "txfrequency"])), loc: txt(g("primarylocation")),
@@ -209,19 +216,36 @@
   function needs(p, x) {
     const n = [], add = (k, t, act, o) => n.push(Object.assign({ k, t, act }, o)), c = x.cfg, T = x.today;
     if (/discontinued/i.test(p.status)) return n;
-    const A = isActive(p), a = asks(p, x, null), fut = futureOf(x.appts, p.mrn, T - 1);
-    if (A && p.authExp != null && p.authExp < T) add("auth", `Auth ended ${fmtD(p.authExp)}`, ["Open in the tracker", "open"], { bad: true });
-    else if (A && p.authExp != null && p.authExp <= T + +c.AuthWarnDays) add("auth", `Auth ends ${fmtD(p.authExp)}`, ["Open in the tracker", "open"]);
-    if (A && p.encLeft != null && p.encLeft <= 0) add("enc", "No visits left on the auth", ["Open in the tracker", "open"], { bad: true });
-    else if (A && p.encLeft != null && p.encLeft <= +c.EncountersWarn) add("enc", `${p.encLeft} visit${p.encLeft === 1 ? "" : "s"} left on the auth`, ["Open in the tracker", "open"]);
+    const A = isActive(p), a = asks(p, x, null), fut = futureOf(x.appts, p.mrn, T - 1), ED = ["Update the auth", "edit"];
+    if (A && p.authExp != null && p.authExp < T) add("auth", `Auth ended ${fmtD(p.authExp)}`, ED, { bad: true });
+    else if (A && p.authExp != null && p.authExp <= T + +c.AuthWarnDays) add("auth", `Auth ends ${fmtD(p.authExp)}`, ED);
+    if (A && p.encLeft != null && p.encLeft <= 0) add("enc", "No visits left on the auth", ED, { bad: true });
+    else if (A && p.encLeft != null && p.encLeft <= +c.EncountersWarn) add("enc", `${p.encLeft} visit${p.encLeft === 1 ? "" : "s"} left on the auth`, ED);
+    /* money: a balance from missed payments, its reminder, and past visits nobody said were paid */
+    const pt = x.PT ? x.PT.get(p.mrn) || null : null, pays = x.pays || [];
+    if (x.pays) {
+      const L = ledger(p.mrn, pays), last = L.lastReminder;
+      if (L.balance > 0) add("bal", `Balance ${money(L.balance)}${pt?.card && pt?.okCollect ? ", card on file" : ""}`, ["Record a payment", "pay"]);
+      if (L.balance > 0 && (!last || T - (last.date ?? 0) >= +c.ReminderDays)) add("remind", last ? `Balance reminder last sent ${fmtD(last.date)}` : "No balance reminder sent", ["Record a reminder", "pay"]);
+      const tc = toConfirm(p, x.appts, pays, T, x.payStart); if (tc.length) add("payconf", `${tc.length} payment${tc.length === 1 ? "" : "s"} to confirm`, ["Confirm payments", "pay"]);
+    }
+    /* Oakland: OAK books maintenance from treatment OakRemindAt; after the index they go back */
+    const oak = oakState(p, pt, x.appts, T, c);
+    if (oak && A && oak.task) add("oak", `Treatment ${oak.done}: task OAK to book maintenance`, ["Mark OAK tasked", "oakTask"]);
+    if (oak && A && oak.back) add("oakback", `Index done: back to Oakland for maintenance (${oak.after.length} booked here)`, ["Mark OAK tasked", "oakTask"]);
+    /* availability: expired, or a visit booked on a day they said they're away */
+    if (pt && A && pt.availExp != null && pt.availExp < T) add("avail", `Availability expired ${fmtD(pt.availExp)}`, ["Update availability", "avail"]);
+    const clash = pt ? fut.find(f => awayOn(pt.away, f.date)) : null;
+    if (clash && A) add("away", `Booked ${fmtD(clash.date)} while away`, ["Update availability", "avail"]);
     if (A && !/prn/i.test(p.freq) && !fut.length) add("book", "Nothing booked", ["Ask the group chat", "ask"], { bad: true });
     else if (A && a.book) add("book", a.thru == null ? "Nothing booked after today" : `Booked through ${fmtD(a.thru)}`, ["Ask the group chat", "ask"]);
     if (A && !p.freq) add("freq", "No frequency on the tracker", ["Ask the group chat", "ask"]);
     if (A && a.proto) add("proto", p.protoAt == null ? "Protocol not confirmed" : `Protocol last confirmed ${fmtD(p.protoAt)}`, ["Confirm protocol", "proto"]);
-    if (A && p.encAuth != null && p.authStart == null) add("authstart", "No auth start date", ["Open in the tracker", "open"]);
+    if (A && p.encAuth != null && p.authStart == null) add("authstart", "No auth start date", ED);
     if (/induction/i.test(p.status)) add("induction", "Induction", null, { quiet: true });
     if (/paused/i.test(p.status)) add("paused", "Paused", null, { quiet: true });
-    if (p.loc && x.clinic && norm(p.loc) !== norm(x.clinic)) add("home", `Home clinic ${p.loc}`, null, { quiet: true });
+    if (oak) add("oakq", oak.unknown ? "Oakland patient" : `Oakland: index here, ${oak.done} of ${oak.idx} done`, null, { quiet: true });
+    else if (p.loc && x.clinic && norm(p.loc) !== norm(x.clinic)) add("home", `Home clinic ${p.loc}`, null, { quiet: true });
     if (/self ?pay/i.test(p.ins2)) add("selfpay", "Self-pay infusion", null, { quiet: true });
     if (p.reqPost) add("post", "Requires post-check", null, { quiet: true });
     const rank = y => y.quiet ? 2 : y.bad ? 0 : 1;
@@ -346,6 +370,10 @@
   const msSerial = ms => { const d = new Date(ms); return serialOf(d) + (d.getHours() * 60 + d.getMinutes()) / 1440; };
   const holding = (h, A, listAt) => h.status !== "released" && !onList(h, A) && !(h.status === "booked" && listAt != null && h.doneAt != null && msSerial(h.doneAt) < listAt);
   /* held: waiting to be booked; late: not confirmed booked within HoldMin, so someone has to act (red); booked; released */
+  /* A hold marked booked is only confirmed by NextGen: onlist when the appointment list has the visit, missing when a list uploaded
+     after the booking (listAt) still doesn't, pending until then (the desk uploads a fresh report) */
+  const holdConfirm = (h, A, listAt) => onList(h, A) ? "onlist" : h.status !== "booked" ? null
+    : listAt != null && h.doneAt != null && msSerial(h.doneAt) < listAt ? "missing" : "pending";
   function holdState(h, A, nowMs, cfg) {
     if (h.status === "released") return "released";
     if (h.status === "booked" || onList(h, A)) return "booked";
@@ -423,6 +451,7 @@
     const cand = new Map();
     for (let d = from; d <= endD; d++) {
       const wd = weekday(d); if (wd < 1 || wd > 5) continue;
+      if (o.away && awayOn(o.away, d)) continue;
       const f = fixed.find(x => x.date === d); if (f) { cand.set(d, [{ ...f, fixed: true }]); continue; }
       const L = daySlots(d, o.X).slots.filter(s => s.openIndex && fits(o.avail, wd, s.time));
       if (L.length) cand.set(d, L);
@@ -513,9 +542,179 @@
     return { start, days, rows, cell, count: inWeek.filter(a => !isCancelled(a)).length, byDay: days.map(d => inWeek.filter(a => a.date === d && !isCancelled(a)).length) };
   }
 
+  /* ---------- per patient: payments flags, Oakland, availability, waitlist (tblIvkPatient) ---------- */
+  /* MRN | Patient | CardOnFile | OkToCollect | Oakland | OakTasked | Avail | AvailEffective | AvailExpires | AvailNote | Away |
+     WaitRank | WaitingOn | Appeal | WaitNote | By | Updated. Blank Oakland = decide from the home clinic. */
+  const PT_COLS = ["MRN", "Patient", "CardOnFile", "OkToCollect", "Oakland", "OakTasked", "Avail", "AvailEffective", "AvailExpires", "AvailNote", "Away",
+    "WaitRank", "WaitingOn", "Appeal", "WaitNote", "By", "Updated"];
+  const yes = v => /^(y|yes|true|1|x)$/i.test(txt(v)), no = v => /^(n|no|false|0)$/i.test(txt(v));
+  function ptRows(values) {
+    const m = new Map();
+    byHeader(values).rows.forEach(x => { const g = x.get, mrn = mrnKey(g("mrn")); if (!mrn) return;
+      m.set(mrn, { mrn, card: yes(g("cardonfile")), okCollect: yes(g("oktocollect")), oak: yes(g("oakland")) ? true : no(g("oakland")) ? false : null,
+        oakTasked: toSerial(g("oaktasked")), avail: availGrid(g("avail")), availEff: toSerial(g("availeffective")), availExp: toSerial(g("availexpires")),
+        availNote: txt(g("availnote")), away: awayList(g("away")), rank: num(g("waitrank")), waitOn: txt(g("waitingon")).toLowerCase(), appeal: yes(g("appeal")),
+        waitNote: txt(g("waitnote")), by: txt(g("by")) }); });
+    return m;
+  }
+
+  /* Availability, as the patient availability form asks it: each weekday morning and afternoon is Preferred, Mostly available,
+     Sometimes available or Not available. Saved as "Mon AM:P; Mon PM:S; ...". Preferred and Mostly count as available for planning
+     and go to the tracker's AM/PM columns as 1. */
+  const AV_LEVELS = [["P", "Preferred"], ["M", "Mostly available"], ["S", "Sometimes available"], ["N", "Not available"]];
+  const avName = k => (AV_LEVELS.find(l => l[0] === k) || [])[1] || "Not set";
+  function availGrid(v) {
+    const a = DAYS5.map(() => ({ am: "", pm: "" })), s = txt(v); if (!s) return null;
+    s.split(/[;,]+/).forEach(w => { const m = w.trim().match(/^(\w{3})\w*\s*(AM|PM)\s*:\s*([PMSN])$/i); if (!m) return; const d = dayNum(m[1]); if (d) a[d - 1][m[2].toLowerCase()] = m[3].toUpperCase(); });
+    return a.some(x => x.am || x.pm) ? a : null;
+  }
+  const availStr = a => (a || []).flatMap((x, i) => ["am", "pm"].filter(h => x[h]).map(h => `${DAYS5[i]} ${h.toUpperCase()}:${x[h]}`)).join("; ");
+  const canCome = k => k === "P" || k === "M";
+  /* the tracker's preference columns (AM, PM, AM2, PM3, ...) from a grid: 1 for Preferred or Mostly, 0 otherwise */
+  const prefCells = a => Object.fromEntries(PREF_DAYS.flatMap(([, am, pm], i) => [[am, canCome(a[i].am) ? 1 : 0], [pm, canCome(a[i].pm) ? 1 : 0]]));
+  /* dates away: "2026-11-02|2026-11-06|Vacation; ..." */
+  const awayList = v => txt(v).split(";").map(w => { const [f, t, ...n] = w.split("|"); const from = fromIso(f), to = fromIso(t) ?? from; return from == null ? null : { from, to: Math.max(from, to), note: n.join("|").trim() }; }).filter(Boolean).sort((a, b) => a.from - b.from);
+  const awayStr = L => (L || []).filter(w => w.from != null).map(w => `${isoOf(w.from)}|${isoOf(w.to ?? w.from)}|${txt(w.note).replace(/[;|]/g, ",")}`).join("; ");
+  const awayOn = (L, d) => (L || []).find(w => w.from <= d && d <= w.to) || null;
+
+  /* ---------- payments (tblIvkPay) ---------- */
+  /* Id | Date | MRN | Patient | Key | Kind | Amount | Method | Note | By | At, one row per event:
+     collected / missed  the payment due at a visit (Key = the visit), collected at the desk or not
+     paid / waived       a missed payment settled later, or waived (Key = the missed visit)
+     reminder            a balance reminder sent (Method: In-person or Luma) */
+  const PAY_COLS = ["Id", "Date", "MRN", "Patient", "Key", "Kind", "Amount", "Method", "Note", "By", "At"];
+  const REMIND_METHODS = ["In-person", "Luma"];
+  const money = n => n == null ? "" : `$${(+n).toFixed(2).replace(/\.00$/, "")}`;
+  const amt = v => { const n = num(txt(v).replace(/[$,\s]/g, "")); return n == null ? 0 : n; };
+  function payRows(values) {
+    return byHeader(values).rows.map(x => { const g = x.get;
+      return { id: txt(g("id")), date: toSerial(g("date")), mrn: mrnKey(g("mrn")), code: txt(g("patient")), key: txt(g("key")), kind: txt(g("kind")).toLowerCase(),
+        amount: amt(g("amount")), method: txt(g("method")), note: txt(g("note")), by: txt(g("by")), at: txt(g("at")) }; })
+      .filter(r => r.mrn && r.kind);
+  }
+  /* what an IVK visit costs the patient: the tracker's copay plus the infusion (self-pay) amount */
+  const dueOf = p => p ? { copay: amt(p.copay), infusion: amt(p.infusion), total: amt(p.copay) + amt(p.infusion) } : { copay: 0, infusion: 0, total: 0 };
+  /* the visit's own answer: the last collected or missed row for its key */
+  const payOf = (pays, key) => pays.filter(r => r.key === key && (r.kind === "collected" || r.kind === "missed")).pop() || null;
+  /* A patient's money: every missed visit with what's been paid or waived against it, the balance, the last reminder. */
+  function ledger(mrn, pays) {
+    const mine = pays.filter(r => r.mrn === mrn), settled = k => mine.filter(r => r.key === k && (r.kind === "paid" || r.kind === "waived")).reduce((n, r) => n + r.amount, 0);
+    const missed = mine.filter(r => r.kind === "missed" && payOf(mine, r.key) === r).map(r => Object.assign({}, r, { left: Math.max(0, r.amount - settled(r.key)) }));
+    /* a payment with no visit (paid on account) comes off the oldest balance */
+    let loose = mine.filter(r => r.kind === "paid" && !r.key).reduce((n, r) => n + r.amount, 0);
+    for (const r of missed.sort((a, b) => (a.date ?? 0) - (b.date ?? 0))) { const x = Math.min(loose, r.left); r.left -= x; loose -= x; }
+    const open = missed.filter(r => r.left > 0.004), reminders = mine.filter(r => r.kind === "reminder").sort((a, b) => (a.date ?? 0) - (b.date ?? 0));
+    return { open, balance: Math.round(open.reduce((n, r) => n + r.left, 0) * 100) / 100, lastReminder: reminders[reminders.length - 1] || null, reminders,
+      collected: mine.filter(r => r.kind === "collected" || r.kind === "paid").reduce((n, r) => n + r.amount, 0) };
+  }
+  /* past IVK visits with something due and no answer yet (since the payment log started, PayStart), newest first */
+  function toConfirm(p, A, pays, today, from) {
+    if (!p || dueOf(p).total <= 0) return [];
+    return A.filter(a => a.mrn === p.mrn && a.date < today && a.date >= (from ?? today) && !isCancelled(a) && !/no ?show/i.test(a.status))
+      .filter(a => !payOf(pays, visitKey(a.date, a.mrn, a.time))).sort((a, b) => b.date - a.date);
+  }
+
+  /* ---------- treatment numbers, Oakland ---------- */
+  /* the patient's IVK treatments in order, from the treatment start (Tx Start Date, else the first "start" visit on the list) */
+  function treatments(p, A) {
+    const L = A.filter(a => a.mrn === p.mrn && !isCancelled(a) && !/no ?show/i.test(a.status)).sort((a, b) => a.date - b.date || (a.time ?? 0) - (b.time ?? 0));
+    const first = p.start ?? (L.find(a => /start/i.test(a.event)) || {}).date;
+    return first == null ? [] : L.filter(a => a.date >= first);
+  }
+  /* the count is only right when the appointment list goes back to the treatment start; a course that began before the list's first
+     day (the export's date range) can't be numbered from it */
+  const listFrom = A => A.reduce((m, a) => a.date < m ? a.date : m, Infinity);
+  const countable = (p, A) => p.start == null || p.start >= listFrom(A);
+  const txNo = (p, A, date, time) => { if (!countable(p, A)) return null; const i = treatments(p, A).findIndex(a => a.date === date && a.time === time); return i < 0 ? null : i + 1; };
+  /* Oakland patients have their index (the first OakIndex treatments) at Castro and go back to Oakland for maintenance. Blank on the
+     add-in's table: an Oakland home clinic decides. */
+  const isOak = (p, pt) => pt && pt.oak != null ? pt.oak : /oak/i.test(p?.loc || "");
+  /* where an Oakland patient is: done (count of treatments up to today), task (treatment OakRemindAt reached, OAK not tasked yet),
+     back (index finished, still booked here after it) */
+  function oakState(p, pt, A, today, cfg) {
+    if (!isOak(p, pt)) return null;
+    if (!countable(p, A)) return { unknown: true, done: null, idx: +cfg.OakIndex, task: false, tasked: pt?.oakTasked ?? null, back: false, after: [], booked: 0 };
+    const L = treatments(p, A), done = L.filter(a => a.date <= today).length, idx = +cfg.OakIndex, at = +cfg.OakRemindAt;
+    const lastIdx = L[idx - 1], after = lastIdx ? L.filter(a => a.date > lastIdx.date && a.date > today) : [];
+    return { done, idx, task: done >= at && !(pt && pt.oakTasked != null), tasked: pt?.oakTasked ?? null, back: done >= idx && after.length > 0, after, booked: L.length };
+  }
+
+  /* ---------- waitlist ---------- */
+  /* Everyone on the Consults tab still waiting for a treatment start, in line by consult date (or the order set by hand, WaitRank).
+     Waiting on: ready (approved, can start), referral (keeps their place until it comes), auth (an appeal can push their start back,
+     so the next ready patient usually starts first). */
+  const WAIT_ON = [["ready", "Ready to start"], ["referral", "Referral"], ["auth", "Authorization"]];
+  const waitDefault = c => /unclear|referr/i.test(c.stage) ? "referral" : c.state === "wait" ? "auth" : "ready";
+  function waitlist(CS, PT) {
+    const L = CS.filter(c => c.mrn && (c.state === "act" || c.state === "wait")).map(c => { const t = PT.get(c.mrn) || null;
+      return { c, mrn: c.mrn, code: c.code, t, rank: t?.rank ?? null, on: WAIT_ON.some(w => w[0] === t?.waitOn) ? t.waitOn : waitDefault(c), appeal: !!t?.appeal && (t?.waitOn || waitDefault(c)) === "auth" }; });
+    /* hand-set places first (their order), then the rest by consult date, then referral date */
+    L.sort((a, b) => (a.rank ?? 1e9) - (b.rank ?? 1e9) || (a.c.consult ?? 1e9) - (b.c.consult ?? 1e9) || (a.c.ref ?? 1e9) - (b.c.ref ?? 1e9) || a.code.localeCompare(b.code));
+    const next = L.find(w => w.on === "ready") || null;
+    L.forEach((w, i) => { w.pos = i + 1; w.next = w === next; w.ahead = !!next && i < L.indexOf(next); });
+    return { list: L, next };
+  }
+  /* the line after moving one patient: dir -1 up, +1 down, "top"; or, for an appeal, behind the next ready patient below them */
+  function waitMove(list, mrn, dir) {
+    const L = list.map(w => w.mrn), i = L.indexOf(mrn); if (i < 0) return L;
+    L.splice(i, 1);
+    let j = dir === "top" ? 0 : dir === "appeal" ? (() => { const k = list.findIndex((w, x) => x > i && w.on === "ready"); return k < 0 ? L.length : k; })() : i + dir;
+    L.splice(Math.max(0, Math.min(L.length, j)), 0, mrn);
+    return L;
+  }
+
+  /* ---------- patient schedule (print, start packet, start email) ---------- */
+  /* "Rivera MD, Ana Maria" -> "Ana Maria Rivera, MD"; "Chen, Paul MD" -> "Paul Chen, MD" */
+  function provFull(p) {
+    const s = txt(p); if (!s) return "";
+    const cred = (s.match(/\b(MD|DO|NP|PA|PMHNP|FNP|RN|PhD)\b/i) || [""])[0].toUpperCase(), parts = s.split(",").map(x => x.replace(/\b(MD|DO|NP|PA|PMHNP|FNP|RN|PhD)\b\.?/gi, "").trim());
+    const name = parts.length > 1 && parts[1] ? `${parts[1]} ${parts[0]}` : parts[0];
+    return `${name.replace(/\s+/g, " ").trim()}${cred ? `, ${cred.replace("PHD", "PhD")}` : ""}`;
+  }
+  /* "Smith, Jane" -> "Jane Smith"; first name for a greeting */
+  const fullName = n => { const s = txt(n); if (!s.includes(",")) return s; const [l, f] = s.split(","); return `${f.trim()} ${l.trim()}`.trim(); };
+  const firstName = n => fullName(n).split(/\s+/)[0] || "";
+  /* a patient's IVK visits from a day on, with treatment numbers: { date, time, day, when, provider, type, n, loc } */
+  function scheduleOf(p, A, from) {
+    const L = countable(p, A) ? treatments(p, A) : [], all = A.filter(a => a.mrn === p.mrn && a.date >= from && !isCancelled(a)).sort((a, b) => a.date - b.date || (a.time ?? 0) - (b.time ?? 0));
+    return all.map(a => { const i = L.indexOf(a); return { date: a.date, time: a.time, day: fmtDay(a.date), when: `${fmtDay(a.date)}, ${dateOf(a.date).getFullYear()}`, at: fmtT(a.time),
+      provider: provFull(a.provider), type: /start/i.test(a.event) ? "Treatment start" : "IV ketamine infusion", n: i < 0 ? null : i + 1, loc: a.loc, status: a.status }; });
+  }
+  /* "Monday, November 4th, 2026, at 10:00 AM", as the start email says it */
+  const ordinal = n => n + (n % 100 >= 11 && n % 100 <= 13 ? "th" : ["th", "st", "nd", "rd"][n % 10] || "th");
+  const longWhen = (d, t) => { const x = dateOf(d); return `${DAY_NAMES[x.getDay()]}, ${MONTHS[x.getMonth()]} ${ordinal(x.getDate())}, ${x.getFullYear()}${t != null ? `, at ${fmtT(t)}` : ""}`; };
+  /* The Castro desk's start email ("MHS: Upcoming Appointment(s)"), as HTML. {mrn} {first} {clinic} {firstVisit} {address} are
+     filled in; {schedule} is where the appointment table goes. Edit it in Settings › Messages. */
+  const LI = s => `<li style="margin:0">${s}</li>`, UL = a => `<ul style="margin-top:0;margin-bottom:0">${a.map(LI).join("")}</ul>`, H = (s, m) => `<p style="margin:${m || "12pt"} 0 0"><b>${s}</b></p>`;
+  const START_TPL = {
+    startSubject: "SECURE: Upcoming Visit Information | MHS",
+    startEmail: [
+      `<p style="margin:0"><b>MRN: {mrn}</b><br><br>Hi {first}!<br><br>Thank you for connecting with me via phone recently. As mentioned, please see the information below pertaining to your upcoming visit(s).<br><br>We’re looking forward to meeting you at our {clinic} clinic, <b>{firstVisit}</b> for your first treatment at <b>{address}</b>. Below is a brief overview of what to expect and how to prepare, so your first session goes as smoothly and comfortably as possible. Please note that you may want to budget extra time for your first appointment, though you typically can expect appointments to last at least 2 hours. Your Benefits Investigation Disclosure Form (BIDF) has also been included for your review.</p>`,
+      H("Your Upcoming Appointments:", "6pt"), "{schedule}",
+      H("Before Your Appointment:", "6pt"), UL(["<b>Avoid food for at least 4 hours</b> prior to your infusion. Small sips of water are okay up to 1 hour before.",
+        "<b>Hydrate well earlier in the day</b>, but limit liquids in the hour leading up to your appointment.", "<b>Take your usual medications</b> unless your provider has instructed otherwise.",
+        "<b>Avoid alcohol or recreational substances</b> for at least 24 hours beforehand.", "<b>Arrange a ride home.</b> You will not be able to drive or take rideshare alone after your session.",
+        "<b>Arrive Early</b> – You will have a short two documents to review prior to your visit, 5-10 minutes is the average time to review the documents!"]),
+      H("What To Bring:"), UL(["Layers or a light sweater—rooms can feel cool while relaxing.", "Headphones, an eye mask, or a comfort item to help you feel grounded."]),
+      H("What to Expect During the Session:"), UL(["You’ll be seated in a comfortable treatment chair throughout the infusion.",
+        "Our RN will place the IV and monitor your vitals and response throughout treatment, while your provider will connect with you 1:1 and follow up with you during the end of your observation period, prior to discharge.",
+        "Normal experiences may include floating sensations, mild dissociation, or visual distortions. These typically resolve shortly after the infusion ends.", "The infusion itself usually lasts 40–60 minutes, followed by a brief recovery period."]),
+      H("After Your Treatment:"), UL(["Plan for quiet rest and avoid driving, working, major decisions, or strenuous activity until the next day.", "Continue hydrating and eat light, balanced meals once your stomach feels settled."]),
+      H("How to Contact Us:"), UL(["<b>Email - </b>CC’d is our Castro Help email, for direct access to our team regarding any needs you may have as it pertains to your appointments (best for non-urgent communication)",
+        "<b>Phone -</b> For more immediate communication, any questions before or after your appointment, feel free to contact us directly at <b>844-867-8444 ext. 3400 </b><i>(once the voice prompt begins)</i>",
+        "<b>Portal –</b> Patient Portal messaging is HIPAA secure, offers appointment visibility, and message history if you prefer to consolidate communication"]),
+      `<p style="margin:12pt 0 0"><b>Please note:</b> We ask that patients confirm their appointments or request a reschedule at least 24 <i>business hours </i>prior to their appointment. With our patients’ cooperation, prompt cancellations and reschedules ensure we have appointment availability to accommodate reschedule requests, or make needed adjustments to your schedule. You will receive an electronic confirmation request at least 5 days prior to all appointments.</p>`,
+      `<p style="margin:12pt 0 0">Whatever you may need, we’re here to ensure you feel supported and informed every step of the way.</p>`,
+      `<p style="margin:12pt 0 0">Best,<br>Mindful Health Solutions – SF Castro<br>P: (844) 867-8444 (Option #3400) | F: (415) 964-5419<br><br><a href="https://mindfulhealthsolutions.com/">https://mindfulhealthsolutions.com</a></p>`,
+      `<p style="margin:12pt 0 0;font-size:10pt">This email communication and any attachments may contain confidential information for the use of the designated recipients named above.  Distribution, reproduction or any other use of this transmission by any party other than the intended recipient is prohibited and may be subject to protection under the law, including the Health Insurance Portability and Accountability Act (HIPAA).  If you receive this e-mail in error, please notify the sender immediately by reply e-mail and permanently delete this e-mail and any attachments.</p>`
+    ].join("\n")
+  };
+
   return { DEFAULTS, VISIT_COLS, TEMPLATES, norm, txt, num, serialOf, dateOf, isoOf, fromIso, toSerial, toMin, fmtT, fmtD, fmtDay, weekday, weekStart,
+    PT_COLS, ptRows, AV_LEVELS, avName, availGrid, availStr, canCome, prefCells, awayList, awayStr, awayOn, PAY_COLS, REMIND_METHODS, money, amt, payRows, dueOf, payOf, ledger, toConfirm,
+    treatments, txNo, isOak, oakState, WAIT_ON, waitlist, waitMove, provFull, fullName, firstName, scheduleOf, START_TPL, longWhen,
     lasfir, provName, mrnKey, pickRow, eventShort, freqDays, byHeader, patients, appts, isCancelled, visitKey, visitRows, phase, isActive, futureOf, asks,
     today, code, chairState, chairStatus, waitMin, isLate, chairList, needs, loud, consults, fill, protoWords, arrivalText, askText,
     parseReport, shrink, week, DAYS5, dayNum, sameProv, OTHER_COLS, otherRows, isIvkVisit, FLAG_COLS, flagRows, PLAN_COLS, planRows, HOLD_COLS, holdRows,
-    onList, holding, holdState, daySlots, postCheckSlots, availOf, availText, fits, planIndex, altSlots, capacity, plannerLayout, plannerGrid };
+    onList, holding, holdState, holdConfirm, daySlots, postCheckSlots, availOf, availText, fits, planIndex, altSlots, capacity, plannerLayout, plannerGrid };
 });

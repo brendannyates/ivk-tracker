@@ -289,6 +289,10 @@ ol.how li+li{margin-top:3px}
 /* index planner */
 .addpt{display:flex;gap:8px;align-items:center;padding:10px 14px 8px}
 .addpt select{flex:1;min-height:40px;padding:6px 10px;border-radius:10px;border:1.5px solid var(--surface-2);background:var(--surface);color:var(--ink);font:inherit;font-size:14px}
+.addpt.new{box-shadow:0 -1px 0 var(--surface-2);padding-top:12px}
+.addpt .lbl{font-size:13px;font-weight:600;color:var(--muted);white-space:nowrap}
+.addpt input{min-width:0;flex:1;min-height:40px;padding:6px 10px;border-radius:10px;border:1.5px solid var(--surface-2);background:var(--surface);color:var(--ink);font:inherit;font-size:14px}
+#ipNewCode{text-transform:uppercase;max-width:110px}
 .prefs.av{row-gap:6px}
 .prefs.av button{min-height:44px;border-radius:8px;background:var(--surface-3);color:var(--muted);text-align:center;font-size:12.5px}
 .prefs.av button[aria-pressed="true"]{background:var(--accent-soft);color:var(--accent);font-weight:600;box-shadow:inset 0 0 0 1.5px var(--accent)}
@@ -355,3 +359,42 @@ ol.how li+li{margin-top:3px}
 .msl{position:absolute;right:0;z-index:5;width:260px;max-height:280px;overflow:auto;margin-top:4px;padding:6px 12px 10px;border-radius:12px;background:var(--surface);box-shadow:var(--shadow)}
 .msl .opt{margin-top:8px;font-size:13px;align-items:center}
 @media (max-width:760px){.agrid{grid-template-columns:48px repeat(5,minmax(64px,1fr))}.access{overflow-x:auto}.tl2{grid-template-columns:1fr 1fr}}
+
+/* availability: the patient availability form's four levels, on the card and in the editor */
+.avgrid{display:grid;grid-template-columns:44px 1fr 1fr;gap:4px;margin-top:10px;font-size:12px;text-align:center}
+.avgrid b{font-weight:600;color:var(--muted)}
+.lv{padding:3px 0;border-radius:6px;background:var(--surface-3);color:var(--faint)}
+.lv.pref{background:var(--accent);color:var(--accent-ink);font-weight:600}
+.lv.on{background:var(--accent-soft);color:var(--accent);font-weight:600}
+.lv.some{background:var(--warn-soft);color:var(--warn)}
+.lv.off{background:var(--surface-2);color:var(--muted);text-decoration:line-through}
+.avedit{display:grid;grid-template-columns:auto 1fr 1fr;gap:6px 10px;align-items:center;margin-top:14px;font-size:13px}
+.avedit>b{font-weight:600;color:var(--muted)}
+.avpick{display:grid;grid-template-columns:repeat(4,1fr);gap:3px}
+.avpick button{min-height:36px;padding:2px 4px;border-radius:8px;font-size:11.5px;text-align:center;box-shadow:inset 0 0 0 1.5px var(--surface-2);color:var(--muted)}
+.avpick button[aria-pressed="true"].pref{background:var(--accent);color:var(--accent-ink);box-shadow:none;font-weight:600}
+.avpick button[aria-pressed="true"].on{background:var(--accent-soft);color:var(--accent);box-shadow:inset 0 0 0 2px var(--accent);font-weight:600}
+.avpick button[aria-pressed="true"].some{background:var(--warn-soft);color:var(--warn);box-shadow:inset 0 0 0 2px var(--warn);font-weight:600}
+.avpick button[aria-pressed="true"].off{background:var(--surface-2);color:var(--ink);box-shadow:inset 0 0 0 2px var(--muted);font-weight:600}
+.awrow{display:grid;grid-template-columns:1fr 1fr 1.3fr auto;gap:6px;margin-top:8px}
+.awrow input{min-height:36px;padding:4px 8px;border-radius:8px;border:1.5px solid var(--surface-2);background:var(--surface);color:var(--ink);font:inherit;font-size:13px;min-width:0}
+.modal:has(.avedit),.modal:has(.egrid){width:min(720px,100%)}
+/* edit any tracker field */
+.egrid{display:grid;grid-template-columns:1fr 1fr;gap:0 12px}
+.egrid .wide{grid-column:1/-1}
+.fld.ro .rov{display:block;margin-top:4px;min-height:40px;padding:8px 12px;border-radius:10px;background:var(--surface-3);color:var(--ink);font-size:14px}
+.flagt{color:var(--warn)!important;font-weight:600}
+/* waitlist */
+.wl .chead,.wrow{grid-template-columns:30px 76px minmax(100px,1fr) minmax(120px,1fr) minmax(110px,1.1fr) 76px}
+.wrow{display:grid;gap:12px;align-items:center;width:100%;min-height:52px;padding:10px 14px;border-radius:12px;transition:background .2s;cursor:pointer}
+.wrow:hover{background:var(--surface-3)}
+.wrow[aria-pressed="true"]{background:var(--accent-soft)}
+.wrow + .wrow{box-shadow:0 -1px 0 var(--surface-2)}
+.wrow .pos{font-weight:600;color:var(--muted);text-align:right}
+.wrow .p{font-weight:600}.wrow .proto{font-size:13.5px;color:var(--muted)}.wrow .thru,.wrow .flags{font-size:13.5px}
+.wrow .flags .f{color:var(--warn);font-weight:500}.wrow .flags .ok{color:var(--accent);font-weight:600}
+.wrow .mv{display:flex;gap:2px}.wrow .mv .btn{min-width:34px;padding:0 6px}
+.sech{margin:28px 0 12px;font-size:17px}
+/* the forms window, over the add-in */
+.formwrap{position:fixed;inset:0;z-index:40;background:var(--bg)}
+.formwrap iframe{width:100%;height:100%;border:0;display:block}

@@ -119,7 +119,7 @@ test("needs: red only for what blocks the next infusion, sorted red, amber, quie
   assert.ok(tes.some(y => y.k === "proto" && !y.bad));
   assert.ok(tes.some(y => y.k === "selfpay" && y.quiet));
   assert.deepEqual(C.needs(P("PARSAM"), x), []);
-  const oak = C.needs(P("OAKAVA"), x); assert.ok(oak.every(y => y.quiet)); assert.deepEqual(oak.map(y => y.k), ["paused", "home", "selfpay"]);
+  const oak = C.needs(P("OAKAVA"), x); assert.ok(oak.every(y => y.quiet)); assert.deepEqual(oak.map(y => y.k), ["paused", "oakq", "selfpay"]);
   assert.equal(C.loud(C.needs(P("ROEMAR"), x)).filter(y => y.k === "book").length, 0, "PRN");
   const soon = Object.assign({}, P("DOEJON"), { authExp: T + 10, encLeft: 2 });
   assert.deepEqual(C.loud(C.needs(soon, x)).map(y => [y.k, !!y.bad]), [["auth", false], ["enc", false]]);
@@ -178,4 +178,70 @@ test("a patient listed twice: the active row wins, else the later one", () => {
   assert.equal(C.pickRow(rows, r => r[0], r => r[1], "990009"), -1);
   const P = C.patients([MPT_H, pt({ mrn: "990001", code: "TESANN", status: "Ongoing", freq: "every 2 weeks" }), pt({ mrn: "990001", code: "TESANN", status: "Discontinued", freq: "PRN" })]);
   assert.equal(P.length, 1); assert.equal(P[0].freq, "every 2 weeks"); assert.equal(P[0].i, 0);
+});
+
+/* ---------- payments, availability, Oakland, waitlist, forms ---------- */
+const payH = C.PAY_COLS;
+const pay = o => payH.map(h => ({ Id: o.id, Date: o.date ?? "", MRN: o.mrn, Patient: "TESANN", Key: o.key ?? "", Kind: o.kind, Amount: String(o.amt ?? ""), Method: o.method ?? "", By: "Sam" }[h] ?? ""));
+
+test("payments: missed visits make the balance; later payments, waivers and money on account come off it", () => {
+  const k1 = C.visitKey(T - 14, "990001", 810), k2 = C.visitKey(T - 7, "990001", 810);
+  const P = C.payRows([payH, pay({ id: "a", mrn: "990001", key: k1, kind: "missed", amt: 450, date: C.isoOf(T - 14) }), pay({ id: "b", mrn: "990001", key: k2, kind: "missed", amt: 450, date: C.isoOf(T - 7) }),
+    pay({ id: "c", mrn: "990001", key: k1, kind: "paid", amt: 200 }), pay({ id: "d", mrn: "990001", kind: "paid", amt: 100 }), pay({ id: "e", mrn: "990001", key: k2, kind: "waived", amt: 50 }),
+    pay({ id: "f", mrn: "990001", kind: "reminder", method: "Luma", date: C.isoOf(T - 3) }), pay({ id: "g", mrn: "990002", key: "x", kind: "missed", amt: 20 })]);
+  const L = C.ledger("990001", P);
+  assert.equal(L.balance, 550, "900 missed - 200 paid on the visit - 100 on account - 50 waived");
+  assert.deepEqual(L.open.map(r => r.left), [150, 400], "money on account comes off the oldest first");
+  assert.equal(L.lastReminder.method, "Luma");
+  assert.equal(C.ledger("990002", P).balance, 20);
+  assert.equal(C.dueOf({ copay: "$20", infusion: "450" }).total, 470); assert.equal(C.dueOf({ copay: "N/A", infusion: "0" }).total, 0);
+});
+
+test("payments: a visit answered at check-out isn't asked about again; visits before the log started never are", () => {
+  const x = world(), p = x.patients.find(q => q.mrn === "990001"); p.copay = "20";
+  const k = C.visitKey(T - 14, "990001", 810);
+  assert.equal(C.toConfirm(p, x.appts, [], T, T - 30).length, 1);
+  assert.equal(C.toConfirm(p, x.appts, [], T, T - 1).length, 0, "before PayStart");
+  assert.equal(C.toConfirm(p, x.appts, C.payRows([payH, pay({ id: "a", mrn: "990001", key: k, kind: "collected", amt: 20 })]), T, T - 30).length, 0);
+});
+
+test("availability: the form's four levels round-trip; Preferred and Mostly go to the tracker as 1", () => {
+  const g = C.availGrid("Mon AM:P; Mon PM:S; Wed AM:M; Fri PM:N");
+  assert.deepEqual(g[0], { am: "P", pm: "S" }); assert.deepEqual(g[2], { am: "M", pm: "" });
+  assert.equal(C.availStr(g), "Mon AM:P; Mon PM:S; Wed AM:M; Fri PM:N");
+  const c = C.prefCells(g); assert.equal(c.am, 1); assert.equal(c.pm, 0); assert.equal(c.am4, 1); assert.equal(c.pm9, 0);
+  const away = C.awayList("2026-11-02|2026-11-04|Travel; 2026-12-24||Holiday");
+  assert.equal(away.length, 2); assert.equal(away[1].to, away[1].from); assert.ok(C.awayOn(away, C.fromIso("2026-11-03"))); assert.equal(C.awayOn(away, C.fromIso("2026-11-05")), null);
+});
+
+test("Oakland: index here, OAK tasked at treatment 3, back after 6; not counted when the course predates the list", () => {
+  const A = [0, 3, 7, 10, 14, 17, 21, 28].map(d => ({ mrn: "990006", code: "OAKAVA", date: T - 14 + d, time: 600, event: d ? "IV Ketamine Follow Up" : "IV Ketamine Treatment Start", status: "Kept" }));
+  const p = { mrn: "990006", loc: "Oakland", start: T - 14 }, cfg = C.DEFAULTS;
+  let o = C.oakState(p, null, A, T - 14 + 7, cfg); assert.equal(o.done, 3); assert.equal(o.task, true);
+  o = C.oakState(p, { oak: true, oakTasked: T - 7 }, A, T - 14 + 7, cfg); assert.equal(o.task, false);
+  o = C.oakState(p, null, A, T - 14 + 17, cfg); assert.equal(o.done, 6); assert.equal(o.back, true); assert.equal(o.after.length, 2);
+  assert.equal(C.oakState({ mrn: "990006", loc: "Castro", start: T - 14 }, null, A, T, cfg), null);
+  o = C.oakState({ mrn: "990006", loc: "Oakland", start: T - 200 }, null, A, T, cfg); assert.equal(o.unknown, true); assert.equal(o.task, false);
+  assert.equal(C.txNo(p, A, T - 14 + 7, 600), 3); assert.equal(C.txNo({ mrn: "990006", start: T - 200 }, A, T - 14 + 7, 600), null);
+});
+
+test("waitlist: consult-date order, hand order wins, referral keeps its place, an appeal goes behind the next ready patient", () => {
+  const CS = C.consults([["Location", "Referral Date", "Start Date", "Patient", "Patient MRN", "Consult Date", "Provider", "Patient Journey Stage", "Individual PJ Stage", "Days in current Stage"],
+    ["Castro", T - 60, "", "Park, Uma", "990202", T - 45, "Chen, MD Paul", "3. PA Submitted - Not Yet Approved", "", 35],
+    ["Castro", T - 40, "", "Nguyen, Ora", "990201", T - 30, "Chen, MD Paul", "4. PA Approved - Not Yet Scheduled", "", 12],
+    ["Castro", T - 20, "", "Quinn, Vera", "990203", T - 10, "Chen, MD Paul", "Consult kept - unclear if referred", "", 7],
+    ["Castro", T - 90, T - 30, "Reyes, Will", "990204", T - 70, "Chen, MD Paul", "6. Approved - Scheduled", "", 1]], T);
+  let W = C.waitlist(CS, new Map());
+  assert.deepEqual(W.list.map(w => `${w.code}:${w.on}`), ["PARUMA:auth", "NGUORA:ready", "QUIVER:referral"]);
+  assert.equal(W.next.code, "NGUORA");
+  assert.deepEqual(C.waitMove(W.list, "990201", "top"), ["990201", "990202", "990203"]);
+  assert.deepEqual(C.waitMove(W.list, "990202", "appeal"), ["990201", "990202", "990203"]);
+  W = C.waitlist(CS, new Map([["990203", { rank: 1 }], ["990202", { rank: 2 }], ["990201", { rank: 3 }]]));
+  assert.deepEqual(W.list.map(w => w.code), ["QUIVER", "PARUMA", "NGUORA"]);
+  assert.equal(W.next.code, "NGUORA", "the first ready patient starts next, wherever they are in line");
+});
+
+test("forms: provider and patient names the way the forms print them", () => {
+  assert.equal(C.provFull("Rivera MD, Ana Maria"), "Ana Maria Rivera, MD"); assert.equal(C.provFull("Chen, Paul MD"), "Paul Chen, MD"); assert.equal(C.provFull("Okafor, Grace NP"), "Grace Okafor, NP");
+  assert.equal(C.fullName("Smith, Jane"), "Jane Smith"); assert.equal(C.firstName("Smith, Jane"), "Jane"); assert.equal(C.firstName("Jane Smith"), "Jane");
 });

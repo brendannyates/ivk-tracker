@@ -18,8 +18,14 @@ The hosted files hold no patient data. Patients only ever appear as LASFIR codes
 - **Index planner**: each provider's template, and the index visits for each new start, proposed from it, held, then booked in
   NextGen (below).
 - **Patients**: everyone on the Master Patient Tracker, sorted by what they need: auth ended or ending, visits left on the auth,
-  nothing booked, protocol not confirmed. Each need has the action that clears it.
-- **Consults**: the Consults tab, approved-but-not-scheduled first.
+  nothing booked, protocol not confirmed, a balance, an OAK task, availability expired. Each need has the action that clears it.
+  Every field on the patient's tracker row can be edited here (**Edit tracker fields**; formula cells are shown, never written),
+  so nobody has to go back to the tab. Picking a patient, a visit or a waitlist row selects their row in the workbook behind the
+  add-in (Settings › Appearance › Follow along turns it off).
+- **Waitlist**: everyone on the Consults tab waiting for a treatment start, then the Consults tab itself beneath it.
+  - In line by consult date until someone is moved (↑ ↓, Move to the top). Waiting on: Ready to start, Referral, Authorization.
+  - The first **ready** patient starts next. Waiting on a referral keeps their place. An authorization that needs an appeal moves
+    them behind the next ready patient. Plan index visits sends them to the Index planner.
 - **Settings**: your first name, the NextGen upload, Teams workflows and message wording, the chair map, timing, dark mode,
   workbook setup.
 
@@ -35,6 +41,45 @@ The hosted files hold no patient data. Patients only ever appear as LASFIR codes
 
 A patient needs booking when they're active (Ongoing or Induction), not PRN, and booked less than 6 weeks ahead. The protocol needs
 confirming when Protocol Updated is blank or older than 90 days. Both are in Settings.
+
+## Payments
+
+Each IVK visit owes the tracker's Copay plus Infusion. Check-out asks **Collected** or **Not collected** (as the TMS Tracker does
+for copays); not collected becomes the patient's balance. On the patient: the balance and each missed visit (**Collected**, **Waive**),
+past visits nobody answered (since the payment log started), **Luma card on file** and **Okay to collect**, and **Record a payment
+or reminder**: a payment on account (comes off the oldest balance first) or a balance reminder sent (date, In-person or Luma). A
+balance with no reminder in 14 days is a need.
+
+## Oakland patients
+
+Ticked on the patient (or by an Oakland home clinic): their index, the first 6 treatments, is here at Castro, then they go back to
+Oakland for maintenance. From treatment 3 the need is **Task OAK to book maintenance** until **Mark OAK tasked**; after treatment 6,
+visits still booked here are flagged. Treatments are counted from the Tx Start Date on the Appt List, so a course that started
+before the list begins isn't counted (the card says so).
+
+## Availability
+
+The patient availability form's levels for each weekday morning and afternoon (Preferred, Mostly, Sometimes, Not available),
+effective and expiry dates, a note and dates away. Preferred and Mostly go to the tracker's AM/PM columns and the Index planner;
+dates away are skipped by the planner and a visit booked on one is a need. **Print availability form** prints the form with the
+patient's name and date of birth.
+
+## Printing and the start email
+
+`forms.html` opens over the add-in (pane or full screen). The patient's name and DOB go to it by message and are never saved.
+
+- **Print schedule**: the TMS Tracker's patient schedule (its schedule.html layout and PDF: logo, "As of" the list's run time, the NextGen
+  columns MRN to Status, landscape), for Next 14 days, Next 30 days, Rest of course or From/To. The start email uses the same table.
+  It's on the Index planner card (once a patient has holds), the patient card and the visit card (in the chair or checked out). A new
+  patient who isn't on the Master Patient Tracker yet prints from their MRN; their name is typed for the consent or email, never saved. **Print this week** (Schedule): the clinic's week, codes only.
+- **Print start forms** (start visits, Induction patients): the schedule and the IV ketamine consent with the patient's name, DOB, the
+  clinic location and the clinician filled in. Consent wording is verbatim from `assets/ivk-consent.pdf`.
+- **Start email**: the Castro desk's "Upcoming Appointment(s)" email (Settings › Messages, HTML), subject "SECURE: Upcoming Visit
+  Information | MHS", with the MRN, first name, first visit, clinic address and the schedule table filled in. A checklist (patient's
+  email address, CC Castro help desk, BCC amreed@mymhs.com, template, schedule, consent, BIDF attached in the window) has to be
+  complete before **Outlook draft (.eml)** unlocks; the draft then has To, CC, BCC, the email and every attachment ({code} Appt
+  {code} schedule m.d.pdf, {code} IVK Consent.pdf, the BIDF and any extras). CC, BCC and the clinic address are in Settings › Messages.
+- The date of birth comes from a DOB column on the tracker if there is one; otherwise the desk types it for the forms.
 
 ## Index planning
 
@@ -66,6 +111,12 @@ confirming when Protocol Updated is blank or older than 90 days. Both are in Set
 - **Plan**: the Access week shows every template slot as a faint tile: open index starts, follow-ups, post checks, what's booked
   and held. Pressing an open index start makes it treatment 1 (or the treatment being changed); any visit can also be moved
   from its Change list. The page says how many more patients could start index in the next 4 weeks on what's left.
+- **Who is planned**: a new index patient isn't on the Master Patient Tracker yet, so they're added by **LASFIR and MRN** (New patient);
+  approved consults waiting for a start show too. **Change the visits of a patient in index** lists only patients already in index
+  (Induction, or started within the index weeks), for changing their schedule.
+- **Confirmed by NextGen**: after **Booked in NextGen**, the visits stay "booked: upload to confirm" until a NextGen report uploaded
+  after the booking shows them. Visits that report doesn't have turn red ("not on the NextGen list"), with Release. The Index planner
+  banner and badge carry both, and the upload says how many it confirmed.
 - **Holds**: Hold saves the times straight to the workbook, so everyone sees them on the Schedule, the Access week and the Index
   Planner tab. Book them in NextGen and press Booked in NextGen within 10 minutes; after that the hold turns red. Releasing frees
   the times.
@@ -90,6 +141,8 @@ Index planner gets the newer tables from Update the workbook):
 | tblIvkHolds | Every hold: patient, date, time, provider, treatment, held / booked / released, who and when |
 | tblIvkOther | The providers' other NextGen visits from the wider report: date, time, provider, event, status (no patient) |
 | tblIvkFlags | Patients who require a post-check |
+| tblIvkPatient | Per patient: Luma card on file, okay to collect, Oakland, OAK tasked, availability, dates away, waitlist order and waiting on |
+| tblIvkPay | Payments due at each visit (collected / missed), later payments and waivers, balance reminders |
 
 The provider templates are on two visible tabs: **IVK Template** (the grids) and **Slot Types** (tblIvkSlotTypes).
 
@@ -107,7 +160,7 @@ Download `manifest.xml`, then in Excel on the web: Home › Add-ins › More add
 
 ## Code
 
-`template.js` (provider templates in the Clinic Template Tool's format: parse, lay out, tally; meant to be shared with that tool), `core.js` (rules, no Office.js, tested), `notify.js` (Teams), `excel.js` (workbook reads and writes, task pane only), `app.js` (screens;
+`template.js` (provider templates in the Clinic Template Tool's format: parse, lay out, tally; meant to be shared with that tool), `core.js` (rules, no Office.js, tested), `notify.js` (Teams), `excel.js` (workbook reads and writes, task pane only), `forms.html` (schedule, consent, availability form, start email; jsPDF and pdf-lib from cdnjs), `app.js` (screens;
 full screen is a floating Office dialog that asks the pane for every write), `bayplan.js` (byte-identical copy of the Bay Map Builder's
 `render.js` shared block), `map.css` (the ESK Tracker's map rules).
 
