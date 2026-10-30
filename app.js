@@ -107,10 +107,14 @@
   const QUIET = ["openRow", "readRow"];   // reads: no refresh after them
   const Store = {};
   for (const k of Object.keys(Local)) Store[k] = FULL ? (...a) => callPane(k, a) : async (...a) => { const r = await Local[k](...a); if (!QUIET.includes(k)) await refresh(true); return r; };
+  /* Excel's refusals in plain words: AccessDenied is a protected sheet or a workbook open for viewing only */
+  const whyFailed = e => { const m = String(e?.message || e);
+    return e?.code === "AccessDenied" || /cannot perform the requested operation|can't perform|could not perform/i.test(m) ? `Excel refused the change. Check the workbook is open for Editing (not Viewing) and the sheet isn't protected (Review › Protect), then try again. (${m})`
+      : `${m}. Try again.`; };
   async function write(label, fn, done) {
     S.busy = label; render();
     try { const r = await fn(); if (done) toast(typeof done === "function" ? done(r) : done); return r || true; }
-    catch (e) { console.error(e); toast(`Couldn’t save to the workbook: ${e.message || e}. Try again.`, true); return null; }
+    catch (e) { console.error(e); toast(`Couldn’t save to the workbook (${label.replace(/…$/, "").toLowerCase()}): ${whyFailed(e)}`, true); return null; }
     finally { S.busy = null; render(); }
   }
   async function teams(ev, text, facts, code, chair) {
@@ -233,7 +237,16 @@
     const t = $("#toast"); if (!t) return; t.textContent = msg; t.classList.toggle("bad", !!bad); t.classList.add("show");
     clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove("show"), bad ? 6000 : 3200);
   }
-  const head = (title, sub, clock) => `<div class="top"><div><h1>${title}</h1>${sub ? `<p class="sub">${sub}</p>` : ""}</div>${clock ? `<div class="clock"><div class="t">${hm()}</div><div class="d">${esc(C.fmtDay(todayS()))}</div></div>` : ""}</div>`;
+  /* top right of every screen: read the workbook again (circular arrow), and light or dark (the moon switches to dark, the sun back) */
+  const ICON = {
+    refresh: `<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 12a8 8 0 1 1-2.34-5.66"/><path d="M20 4v5h-5"/></svg>`,
+    moon: `<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 14.5A8 8 0 0 1 9.5 4a8 8 0 1 0 10.5 10.5z"/></svg>`,
+    sun: `<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>`
+  };
+  const tools = () => { const dark = S.theme === "dark", busy = !!S.reading;
+    return `<div class="tools"><button class="ibtn${busy ? " spin" : ""}" data-act="reload" title="Refresh: read the workbook again" aria-label="Refresh from the workbook"${busy ? " disabled" : ""}>${ICON.refresh}</button>
+      <button class="ibtn" data-act="theme" title="${dark ? "Light mode" : "Dark mode"}" aria-label="${dark ? "Switch to light mode" : "Switch to dark mode"}" aria-pressed="${dark}">${dark ? ICON.sun : ICON.moon}</button></div>`; };
+  const head = (title, sub, clock) => `<div class="top"><div><h1>${title}</h1>${sub ? `<p class="sub">${sub}</p>` : ""}</div><div class="topr">${tools()}${clock ? `<div class="clock"><div class="t">${hm()}</div><div class="d">${esc(C.fmtDay(todayS()))}</div></div>` : ""}</div></div>`;
   const TABLE_WHAT = { tblIvkPlans: "index plans", tblIvkHolds: "holds", tblIvkOther: "the providers’ other visits", tblIvkFlags: "post-check flags", tblIvkPatient: "payment flags, Oakland, availability and the waitlist order", tblIvkPay: "payments and balance reminders", tblIvkExceptions: "provider time off and coverage" };
   function setupBanner() {
     const miss = S.raw.missing || [], noTabs = ["mpt", "appt"].filter(k => !S.raw.tables?.[k]);
@@ -1260,7 +1273,7 @@
       if (m.cov && !m.useTpl) return toast(`Say whether ${exLabel(m.cov)} uses ${exLabel(m.provider)}’s template.`, true);
       const row = { Provider: m.provider, From: C.isoOf(from), To: C.isoOf(to), Coverage: m.cov || "", UseTemplate: m.cov && m.useTpl === "yes" ? "TRUE" : "FALSE", Note: C.txt(m.note), Status: "", By: S.name, Updated: new Date().toISOString() };
       const span = `${dshort(from)}${to !== from ? ` to ${dshort(to)}` : ""}`;
-      if (await write("Saving time off…", () => Store.saveException(m.id, row), `${exLabel(m.provider)} off ${span}${m.cov ? `, covered by ${exLabel(m.cov)}${m.useTpl === "yes" ? " on the same template" : ""}` : ": slots closed"}.`)) { closeModal(); await write("Filling the Index Planner tab…", () => Store.fillPlanner()); }
+      if (await write("Saving time off…", () => Store.saveException(m.id, row), `${exLabel(m.provider)} off ${span}${m.cov ? `, covered by ${exLabel(m.cov)}${m.useTpl === "yes" ? " on the same template" : ""}` : ": slots closed"}.`)) closeModal();
     },
     ptoDel: () => { const m = S.m; openModal("confirm", { title: `Remove ${exLabel(m.provider)}’s time off?`, body: "Their template’s slots open again on those days.", yes: "Remove",
       run: () => Store.saveException(m.id, { Status: "removed", By: S.name, Updated: new Date().toISOString() }) }); },
@@ -1328,6 +1341,8 @@
   }
   const ACT = {
     nav: e => { S.view = e.dataset.v; S.bSel = null; render(); },
+    async reload() { S.reading = true; render(); try { await refresh(true); toast("Read the workbook again: up to date."); } finally { S.reading = false; render(); } },
+    theme: () => { S.theme = S.theme === "dark" ? "light" : "dark"; LS.set("ivkTheme", S.theme); document.documentElement.dataset.theme = S.theme; render(); },
     full: () => openFull(),
     sel: e => { S.sel = e.dataset.k; S.bSel = null; render(); const v = visitBy(S.sel); if (v) follow("mpt", v.a.mrn); },
     bSel: e => { const F = floor(), c = F.chairs.find(x => x.id === e.dataset.b); if (c && c.v) { S.sel = c.v.key; S.bSel = null; follow("mpt", c.v.a.mrn); } else S.bSel = e.dataset.b; render(); },

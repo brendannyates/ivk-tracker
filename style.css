@@ -398,3 +398,12 @@ ol.how li+li{margin-top:3px}
 /* the forms window, over the add-in */
 .formwrap{position:fixed;inset:0;z-index:40;background:var(--bg)}
 .formwrap iframe{width:100%;height:100%;border:0;display:block}
+
+/* top right of every screen: refresh and light/dark */
+.topr{display:flex;align-items:flex-start;gap:16px;flex:none}
+.tools{display:flex;gap:4px}
+.ibtn{display:grid;place-items:center;width:38px;height:38px;border-radius:10px;color:var(--muted);transition:background .2s,color .2s}
+.ibtn:hover{background:var(--surface-2);color:var(--ink)}
+.ibtn[aria-pressed="true"]{color:var(--warn)}
+.ibtn.spin svg{animation:ivkspin .9s linear infinite}
+@keyframes ivkspin{to{transform:rotate(360deg)}}

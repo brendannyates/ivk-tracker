@@ -329,6 +329,9 @@
   const openTable = async (ctx, name) => {
     const t = ctx.workbook.tables.getItemOrNullObject(name); t.load("isNullObject"); await ctx.sync();
     if (t.isNullObject) throw new Error(`The ${name} table isn’t in this workbook yet. Use Update the workbook in Settings.`);
+    /* a protected tab refuses every write; say which one */
+    let ws = null; try { ws = t.worksheet; ws.load("name,protection/protected"); await ctx.sync(); } catch (e) { ws = null; }
+    if (ws && ws.protection && ws.protection.protected) throw new Error(`The ${ws.name} tab is protected, so the add-in can't save to it. Unprotect it (Review › Unprotect Sheet; it's a hidden tab, so unhide it first), then try again`);
     const h = t.getHeaderRowRange(), b = t.getDataBodyRange(); h.load("values"); b.load("values"); await ctx.sync();
     return { t, b, cols: h.values[0].map(C.norm) };
   };
