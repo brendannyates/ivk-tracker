@@ -338,6 +338,38 @@
   const OTHER_COLS = ["Date", "Time", "Provider", "Event", "Status"];
   const otherRows = values => byHeader(values).rows.map(x => ({ date: toSerial(x.get("date")), time: toMin(x.get("time")), provider: txt(x.get("provider")), event: txt(x.get("event")), status: txt(x.get("status")) }))
     .filter(o => o.date != null && o.time != null);
+  /* tblIvkExceptions: a provider's time off (PTO) on their template, by date. Id | Provider | From | To | Coverage | UseTemplate |
+     Note | Status | By | Updated. On those days the provider's template slots aren't offered. With Coverage, the covering provider
+     either works the absent provider's template (UseTemplate, a pre-fill that replaces the covering provider's own template that day)
+     or keeps their own template. Status "removed" takes the entry back out. */
+  const EX_COLS = ["Id", "Provider", "From", "To", "Coverage", "UseTemplate", "Note", "Status", "By", "Updated"];
+  function exRows(values) {
+    return byHeader(values).rows.map(x => { const g = x.get, from = toSerial(g("from")), to = toSerial(g("to")) ?? from, cov = txt(g("coverage"));
+      return { id: txt(g("id")), provider: txt(g("provider")), pkey: TM.provKey(g("provider")), from, to: to == null ? null : Math.max(from, to), cov, covKey: cov ? TM.provKey(cov) : "",
+        useTpl: !!cov && /^(true|yes|1)$/i.test(txt(g("usetemplate"))), note: txt(g("note")), status: txt(g("status")).toLowerCase(), by: txt(g("by")) }; })
+      .filter(e => e.id && e.pkey && e.from != null && e.status !== "removed");
+  }
+  const exFor = (EX, pkey, d) => EX.find(e => e.pkey === pkey && e.from <= d && d <= e.to) || null;
+  /* The templates' days (template.onDays) with the time off applied: an absent provider's slots and cells go, or become the covering
+     provider's when they work that template; a covering provider who works the absent one's template doesn't also keep their own. */
+  function withExceptions(D, EX) {
+    if (!EX || !EX.length) return D;
+    const memo = new Map(), on = d => {
+      if (memo.has(d)) return memo.get(d);
+      const conv = list => list.flatMap(s => {
+        if (EX.some(e => e.useTpl && e.covKey === s.pkey && e.from <= d && d <= e.to && !s.covering)) return [];   // replaced by the pre-fill
+        const e = exFor(EX, s.pkey, d); if (!e) return [s];
+        return e.useTpl ? [Object.assign({}, s, { provider: e.cov, pkey: e.covKey, who: provName(e.cov) || e.cov, covering: e.provider })] : [];
+      });
+      const v = { slots: conv(D.slotsOn(d)), cells: conv(D.cellsOn(d)) }; memo.set(d, v); return v;
+    };
+    /* the absent provider's visits and holds those days sit in the covering provider's pre-filled slots */
+    const remap = (pk, d) => { const e = exFor(EX, pk, d); return e && e.useTpl ? e.covKey : pk; };
+    return Object.assign({}, D, { slotsOn: d => on(d).slots, cellsOn: d => on(d).cells, remap });
+  }
+  /* IVK visits still booked with a provider on a day they're off (cancelled ones don't count) */
+  const exClashes = (e, A, H) => A.filter(a => TM.provKey(a.provider) === e.pkey && a.date >= e.from && a.date <= e.to && !isCancelled(a))
+    .concat((H || []).filter(h => h.status !== "released" && TM.provKey(h.provider) === e.pkey && h.date >= e.from && h.date <= e.to && !onList(h, A)).map(h => Object.assign({ hold: true }, h)));
   /* the IVK visits the Appt List tab keeps; everything else in the report goes to tblIvkOther */
   const isIvkVisit = ev => /\b(iv ketamine|ivk)\b/i.test(ev) && !/consult/i.test(ev);
   /* tblIvkFlags: MRN | Patient | RequiresPostCheck | By | Updated. A provider asks for a post check on a patient's follow-ups. */
@@ -386,7 +418,7 @@
      slots: the starts with by (who has it), postBy (who has its post check), full (all chairs in use during its 2 hours).
      cells: every template cell with by, for the tiles. */
   function daySlots(d, X) {
-    const vm = +X.cfg.VisitMin, pm = +X.cfg.PostCheckMin, key = TM.provKey;
+    const vm = +X.cfg.VisitMin, pm = +X.cfg.PostCheckMin, key = X.remap ? n => X.remap(TM.provKey(n), d) : TM.provKey;   // remap: a covering provider works an absent one's template
     const cells = (X.cellsOn ? X.cellsOn(d) : []).map(c => ({ ...c, date: d, by: null }));
     /* the provider's cell a time falls in (a 9:15 visit is in the 9:00 half hour) */
     const cellAt = (pk, t) => cells.find(c => c.pkey === pk && c.time <= t && t < c.time + (c.len || 30));
@@ -716,5 +748,5 @@
     lasfir, provName, mrnKey, pickRow, eventShort, freqDays, byHeader, patients, appts, isCancelled, visitKey, visitRows, phase, isActive, futureOf, asks,
     today, code, chairState, chairStatus, waitMin, isLate, chairList, needs, loud, consults, fill, protoWords, arrivalText, askText,
     parseReport, shrink, week, DAYS5, dayNum, sameProv, OTHER_COLS, otherRows, isIvkVisit, FLAG_COLS, flagRows, PLAN_COLS, planRows, HOLD_COLS, holdRows,
-    onList, holding, holdState, holdConfirm, daySlots, postCheckSlots, availOf, availText, fits, planIndex, altSlots, capacity, plannerLayout, plannerGrid };
+    onList, holding, holdState, holdConfirm, EX_COLS, exRows, exFor, withExceptions, exClashes, daySlots, postCheckSlots, availOf, availText, fits, planIndex, altSlots, capacity, plannerLayout, plannerGrid };
 });

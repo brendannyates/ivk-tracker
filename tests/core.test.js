@@ -245,3 +245,18 @@ test("forms: provider and patient names the way the forms print them", () => {
   assert.equal(C.provFull("Rivera MD, Ana Maria"), "Ana Maria Rivera, MD"); assert.equal(C.provFull("Chen, Paul MD"), "Paul Chen, MD"); assert.equal(C.provFull("Okafor, Grace NP"), "Grace Okafor, NP");
   assert.equal(C.fullName("Smith, Jane"), "Jane Smith"); assert.equal(C.firstName("Smith, Jane"), "Jane"); assert.equal(C.firstName("Jane Smith"), "Jane");
 });
+
+test("time off: an absent provider's slots close; coverage either takes their template (pre-fill) or keeps its own", () => {
+  const sl = (pkey, provider, time) => ({ pkey, provider, who: provider, time, len: 30 });
+  const D = { slotsOn: () => [sl("chen", "Chen", 750), sl("rivera", "Rivera", 540)], cellsOn: () => [sl("chen", "Chen", 750), sl("rivera", "Rivera", 540)], providers: 2 };
+  const ex = o => C.exRows([C.EX_COLS, C.EX_COLS.map(h => ({ Id: "x1", Provider: "Paul Chen, MD", From: C.isoOf(T), To: C.isoOf(T + 1), Coverage: o.cov || "", UseTemplate: o.use ? "TRUE" : "FALSE", Status: o.status || "" }[h] ?? ""))]);
+  let X = C.withExceptions(D, ex({}));
+  assert.deepEqual(X.slotsOn(T).map(s => s.pkey), ["rivera"], "not covered: Chen's slots close");
+  assert.deepEqual(X.slotsOn(T + 2).map(s => s.pkey), ["chen", "rivera"], "the day after, back to normal");
+  X = C.withExceptions(D, ex({ cov: "Rivera MD, Ana Maria", use: true }));
+  assert.deepEqual(X.slotsOn(T).map(s => `${s.pkey}@${s.time}`), ["rivera@750"], "pre-fill: Rivera works Chen's template instead of her own");
+  assert.equal(X.remap("chen", T), "rivera"); assert.equal(X.remap("chen", T + 2), "chen");
+  X = C.withExceptions(D, ex({ cov: "Rivera MD, Ana Maria", use: false }));
+  assert.deepEqual(X.slotsOn(T).map(s => `${s.pkey}@${s.time}`), ["rivera@540"], "own template: Chen's slots close, Rivera keeps hers");
+  assert.equal(C.exRows([C.EX_COLS, C.EX_COLS.map(h => ({ Id: "x1", Provider: "Chen", From: C.isoOf(T), Status: "removed" }[h] ?? ""))]).length, 0, "removed entries don't apply");
+});

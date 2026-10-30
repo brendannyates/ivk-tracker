@@ -58,7 +58,9 @@
     S.WL = C.waitlist(S.CS, S.PT);
     /* a visit takes its post check when it's an index visit (a treatment start, an Induction patient) or the patient requires one */
     const needsPost = (mrn, ev) => { const p = S.PM.get(mrn); return /start/i.test(ev) || !!p?.reqPost || /induction/i.test(p?.status || ""); };
-    S.X = Object.assign({ appts: S.A, holds: S.holds, others: S.others, cfg, chairs: S.chairs.length, listAt: r.apptUpdated, needsPost }, TM.onDays(S.grids, S.types, +cfg.PostCheckMin));
+    /* provider time off: their template slots go on those days, or become the covering provider's */
+    S.EX = C.exRows(r.tblIvkExceptions);
+    S.X = Object.assign({ appts: S.A, holds: S.holds, others: S.others, cfg, chairs: S.chairs.length, listAt: r.apptUpdated, needsPost }, C.withExceptions(TM.onDays(S.grids, S.types, +cfg.PostCheckMin), S.EX));
     const pv = new Map(), addPv = n => { const k = TM.provKey(n); if (n && k && !pv.has(k)) pv.set(k, n); };
     S.A.forEach(a => addPv(a.provider)); S.others.forEach(o => addPv(o.provider));
     S.providers = [...pv.values()].sort((a, b) => TM.provKey(a).localeCompare(TM.provKey(b)));
@@ -96,7 +98,7 @@
     saveKeyed: (t, p) => X.saveKeyed(t, p), saveRoutes: r => X.saveRoutes(r), appendLog: r => X.appendLog(r), openRow: (k, m) => X.openRow(k, m),
     setup: () => X.setup(), setDoc: (k, v) => X.setDoc(k, v),
     savePlan: (m, p) => X.savePlan(m, p), saveFlag: (m, p) => X.saveFlag(m, p), placeHolds: (r, by) => X.placeHolds(r, by), setHolds: (ids, st, by) => X.setHolds(ids, st, by),
-    readRow: (k, m) => X.readRow(k, m), saveRow: (k, m, p) => X.saveRow(k, m, p), savePt: (m, p) => X.savePt(m, p), addPays: r => X.addPays(r), saveRanks: (o, by) => X.saveRanks(o, by),
+    readRow: (k, m) => X.readRow(k, m), saveRow: (k, m, p) => X.saveRow(k, m, p), savePt: (m, p) => X.savePt(m, p), addPays: r => X.addPays(r), saveRanks: (o, by) => X.saveRanks(o, by), saveException: (i, p) => X.saveException(i, p),
     setupTemplate: () => X.setupTemplate(), addGrid: (o, t) => X.addGrid(o, t), setCells: (a, r, c, v, m, s) => X.setCells(a, r, c, v, m, s),
     saveTypes: (t, g) => X.saveTypes(t, g), replaceOther: r => X.replaceOther(r),
     /* the pane reads first so the tab gets every hold anyone has placed, not just this screen's copy */
@@ -232,11 +234,11 @@
     clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove("show"), bad ? 6000 : 3200);
   }
   const head = (title, sub, clock) => `<div class="top"><div><h1>${title}</h1>${sub ? `<p class="sub">${sub}</p>` : ""}</div>${clock ? `<div class="clock"><div class="t">${hm()}</div><div class="d">${esc(C.fmtDay(todayS()))}</div></div>` : ""}</div>`;
-  const TABLE_WHAT = { tblIvkPlans: "index plans", tblIvkHolds: "holds", tblIvkOther: "the providers’ other visits", tblIvkFlags: "post-check flags", tblIvkPatient: "payment flags, Oakland, availability and the waitlist order", tblIvkPay: "payments and balance reminders" };
+  const TABLE_WHAT = { tblIvkPlans: "index plans", tblIvkHolds: "holds", tblIvkOther: "the providers’ other visits", tblIvkFlags: "post-check flags", tblIvkPatient: "payment flags, Oakland, availability and the waitlist order", tblIvkPay: "payments and balance reminders", tblIvkExceptions: "provider time off and coverage" };
   function setupBanner() {
     const miss = S.raw.missing || [], noTabs = ["mpt", "appt"].filter(k => !S.raw.tables?.[k]);
     if (noTabs.length) return `<div class="msg warn"><b>This workbook has no ${noTabs.map(k => k === "mpt" ? "Master Patient Tracker" : "Appt List").join(" or ")} table.</b> Open the IVK Patient Tracker workbook, then the add-in.</div>`;
-    const NEW = ["tblIvkPlans", "tblIvkHolds", "tblIvkOther", "tblIvkFlags", "tblIvkPatient", "tblIvkPay"];
+    const NEW = ["tblIvkPlans", "tblIvkHolds", "tblIvkOther", "tblIvkFlags", "tblIvkPatient", "tblIvkPay", "tblIvkExceptions"];
     if (miss.length && miss.every(n => NEW.includes(n))) return `<div class="msg warn"><b>This version needs ${miss.length === 1 ? "one more table" : `${miss.length} more tables`}.</b> Updating adds them to the hidden ${esc(X.DATA_SHEET)} tab (${miss.map(n => TABLE_WHAT[n]).join(", ")}); nothing else changes. <div class="actions"><button class="btn primary inl" data-act="setup">Update the workbook</button></div></div>`;
     if (miss.length) return `<div class="msg warn"><b>This workbook isn’t set up for the add-in yet.</b> Setting up adds a hidden IVK Tracker Data tab for check-ins and Teams settings; nothing else changes. <div class="actions"><button class="btn primary inl" data-act="setup">Set up this workbook</button></div></div>`;
     return "";
@@ -558,6 +560,7 @@
     return `<section class="card access"><div class="lh"><h2>Access</h2><span>${plural(nIdx, "open index start")}</span></div>
       <div class="wkbar"><span class="lbl">${C.fmtD(start)} to ${C.fmtD(start + 6)}</span><button class="btn ghost sm" data-act="ipWk" data-v="-1"${S.ipWk <= 0 ? " disabled" : ""}>Previous week</button><button class="btn ghost sm" data-act="ipWk" data-v="0"${S.ipWk === 0 ? " disabled" : ""}>This week</button><button class="btn ghost sm" data-act="ipWk" data-v="1">Next week</button></div>
       <div class="agrid"><div></div>${days.map(d => `<div class="ch${d === T ? " today" : ""}">${DAYW[C.weekday(d) - 1]}<small>${C.fmtD(d)}</small></div>`).join("")}${rows}</div>
+      ${(() => { const off = S.EX.filter(e => e.from <= start + 6 && e.to >= start); return off.length ? `<p class="note warn">Time off this week: ${off.map(e => `${esc(exLabel(e.provider))} ${exDates(e)}${e.cov ? ` (covered by ${esc(exLabel(e.cov))}${e.useTpl ? ", same template" : ""})` : ""}`).join("; ")}.</p>` : ""; })()}
       <ul class="key">${sw("start", "Start/index")}${sw("followup", "Follow-up")}${sw("post", "IVK post check")}${sw("flexpost", "Flex post check")}<li><span class="tsw gen"></span>Not IVK</li></ul>
       <p class="note">${model ? (S.ipAlt != null ? `Pick an open index start for treatment ${S.ipAlt + 1}.` : "Pick an open index start to make it treatment 1.") : "Open index starts have a free post check at their end and a chair for the 2 hours."}</p></section>`;
   }
@@ -647,7 +650,22 @@
       <tbody>${T.rows.filter(x => x.slots).map(x => trow(S.types.find(t => t.type === x.type), x)).join("")}${trow(null, Object.assign({ label: "Clinical" }, T.clinical), "sum")}${trow(null, Object.assign({ label: "Total" }, T.total), "sum")}</tbody></table>
       <p class="note">Index starts by day: ${idx.map((n, i) => `${C.DAYS5[i]} ${n}`).join(", ")}. A start counts when a post check or flex post check is ${cfg.PostCheckMin} min after it.</p>
       ${warn.map(w => `<p class="note warn">${esc(w)}</p>`).join("")}</section>`;
-    return `${chips}<div class="cols"><div class="stack">${editor}</div><div class="stack">${tally}${typesHTML()}</div></div>`;
+    return `${chips}<div class="cols"><div class="stack">${editor}${ptoHTML()}</div><div class="stack">${tally}${typesHTML()}</div></div>`;
+  }
+  /* Time off and coverage: a provider's PTO takes their template out on those days (an exception by date); a covering provider can
+     work the absent provider's template (pre-filled) or their own */
+  const exLabel = n => { const g = S.grids.find(x => x.key === TM.provKey(n)); return g ? TM.nameOf(g) : C.provFull(n) || n; };
+  const exDates = e => `${dshort(e.from)}${e.to !== e.from ? ` to ${dshort(e.to)}` : ""}`;
+  function ptoHTML() {
+    const T = todayS(), L = S.EX.filter(e => e.to >= T).sort((a, b) => a.from - b.from), ok = !!S.raw.tables?.own?.tblIvkExceptions;
+    const row = e => { const cl = C.exClashes(e, S.A, S.holds);
+      return `<li class="step ${cl.length ? "late" : e.cov ? "done" : "soon"}"><span class="k"></span><span><span class="t">${esc(exLabel(e.provider))}: ${exDates(e)}</span>
+        <span class="m">${e.cov ? `Covered by ${esc(exLabel(e.cov))}, ${e.useTpl ? `working ${esc(exLabel(e.provider))}’s template` : "on their own template"}` : "Not covered: their slots are closed"}${e.note ? `, ${esc(e.note)}` : ""}${cl.length ? `. <b>${plural(cl.length, "visit or hold", "visits or holds")} still with them${e.useTpl ? `: move them to ${esc(exLabel(e.cov))} in NextGen` : ": move or cancel them"}</b> (${cl.slice(0, 4).map(a => `${esc(a.code)} ${dshort(a.date)}${a.hold ? " hold" : ""}`).join(", ")})` : ""}</span></span>
+        <span class="w"><button class="btn mute sm" data-act="ptoEdit" data-v="${esc(e.id)}">Edit</button></span></li>`; };
+    return `<section class="card tpto"><div class="lh"><h2>Time off and coverage</h2><span>${L.length ? plural(L.length, "upcoming") : "none upcoming"}</span></div>
+      ${needTable("tblIvkExceptions", "Time off")}
+      ${L.length ? `<ul class="steps">${L.map(row).join("")}</ul>` : `<p class="note">When a provider is off, add it here: their template’s slots close on those days, on the Access week, the Schedule and in every plan.</p>`}
+      <div class="actions"><button class="btn ghost sm line" data-act="ptoAdd"${ok && S.grids.length ? "" : " disabled"}>Add time off</button></div></section>`;
   }
   /* Slot types: colour, IVK use, Clinical or Blocked, and the NextGen events each takes (a multi-select of the events on the
      appointment list and the wider report). Drafted here; Save writes the Slot Types tab and repaints every grid. */
@@ -1016,6 +1034,23 @@
         <div class="section"><div class="h"><h2>Dates away</h2></div>${away || `<p class="note">None.</p>`}<div class="actions"><button class="btn ghost sm line" data-act="avAddAway">Add dates away</button></div></div>
         <div class="foot"><button class="btn mute" data-act="close">Cancel</button><button class="btn ghost" data-act="printAvail" data-m="${esc(m.mrn)}">Print the form</button><button class="btn primary inl" data-act="doAvail"${S.busy ? " disabled" : ""}>Save availability</button></div>`;
     },
+    /* a provider's time off: dates, who covers, and whether the covering provider works the absent provider's template (pre-fill) */
+    pto() {
+      const m = S.m, absent = S.grids.find(g => g.key === TM.provKey(m.provider)), aName = absent ? TM.nameOf(absent) : m.provider;
+      const covs = [...new Map(S.grids.map(g => [g.key, TM.nameOf(g)]).concat(S.providers.map(p => [TM.provKey(p), C.provFull(p)]))).entries()].filter(([k]) => k !== TM.provKey(m.provider));
+      const cKey = m.cov ? TM.provKey(m.cov) : "", cName = m.cov ? exLabel(m.cov) : "", from = C.toSerial(m.from), to = C.toSerial(m.to) ?? from;
+      /* does the covering provider have a template of their own on any of those weekdays? */
+      const cg = S.grids.find(g => g.key === cKey), ownDays = cg && from != null ? [...Array(Math.min(31, (to ?? from) - from + 1)).keys()].filter(i => cg.dayCols?.some(x => x.d === C.weekday(from + i))).length : 0;
+      const pk = (v, l, s) => `<button data-act="ptoTpl" data-v="${v}" aria-pressed="${m.useTpl === v}">${l}<small>${s}</small></button>`;
+      return `<h2 id="mh">${m.id && !m.isNew ? "Change time off" : "Add time off"}</h2><p class="sub muted">An exception on the template: the provider’s slots close on these days. Nothing changes in NextGen.</p>
+        <label class="fld">Provider<select id="ptProv">${S.grids.map(g => `<option value="${esc(TM.nameOf(g))}"${g.key === TM.provKey(m.provider) ? " selected" : ""}>${esc(TM.nameOf(g))}</option>`).join("")}</select></label>
+        <div class="two"><label class="fld">First day off<input id="ptFrom" type="date" value="${esc(m.from)}"></label><label class="fld">Last day off<input id="ptTo" type="date" value="${esc(m.to)}"><span class="hint">Blank: one day</span></label></div>
+        <label class="fld">Covered by<select id="ptCov"><option value="">Nobody: close their slots</option>${covs.map(([k, n]) => `<option value="${esc(n)}"${k === cKey ? " selected" : ""}>${esc(n)}</option>`).join("")}</select></label>
+        ${m.cov ? `<div class="fld">Use ${esc(aName)}’s template for ${esc(cName)} on these days?<div class="pick">${pk("yes", `Yes, pre-fill it`, `${esc(cName)} takes ${esc(aName)}’s slots`)}${pk("no", "No", `${esc(cName)}’s own template`)}</div>
+          ${m.useTpl === "no" && !ownDays ? `<p class="note warn">${esc(cName)} has no template on those days, so no slots will be offered. Pre-fill to keep ${esc(aName)}’s slots open.</p>` : ""}</div>` : ""}
+        <label class="fld">Note<input id="ptNote" value="${esc(m.note || "")}" autocomplete="off" placeholder="PTO, conference…"></label>
+        <div class="foot">${m.id && !m.isNew ? `<button class="btn mute" data-act="ptoDel">Remove</button>` : ""}<button class="btn mute" data-act="close">Cancel</button><button class="btn primary inl" data-act="doPto"${m.cov && !m.useTpl || S.busy ? " disabled" : ""}>${m.cov && !m.useTpl ? "Answer the template question" : "Save time off"}</button></div>`;
+    },
     /* the forms printed (or emailed) for a patient: their schedule, the IVK consent, the availability form */
     forms() {
       const m = S.m, p = formsPatient(m.mrn), email = m.mode === "email";
@@ -1097,6 +1132,9 @@
     try { const row = await Store.readRow(kind, mrn); if (S.modal === "edit" && S.m.mrn === mrn) { S.m.row = row; render(); } }
     catch (e) { closeModal(); toast(String(e.message || e), true); }
   }
+  /* the time-off form's fields, kept across re-renders */
+  const keepPto = () => { if (S.modal !== "pto") return; const m = S.m, v = id => $(id)?.value;
+    if ($("#ptProv")) m.provider = v("#ptProv"); if ($("#ptFrom")) m.from = v("#ptFrom"); if ($("#ptTo")) m.to = v("#ptTo"); if ($("#ptNote")) m.note = v("#ptNote"); };
   /* the availability form's state, kept across re-renders */
   const keepAvail = () => { if (S.modal !== "avail") return; const m = S.m, v = id => $(id)?.value ?? "";
     m.eff = v("#avEff"); m.exp = v("#avExp"); m.note = v("#avNote"); m.away = m.away.map((w, j) => ({ from: v(`#awF${j}`), to: v(`#awT${j}`), note: v(`#awN${j}`) })); };
@@ -1210,6 +1248,22 @@
       openModal("avail", { mrn: p.mrn, grid: g.map(x => Object.assign({}, x)), eff: t?.availEff != null ? C.isoOf(t.availEff) : "", exp: t?.availExp != null ? C.isoOf(t.availExp) : "", note: t?.availNote || "",
         away: (t?.away || []).map(w => ({ from: C.isoOf(w.from), to: C.isoOf(w.to), note: w.note })) });
     },
+    /* provider time off */
+    ptoAdd: () => { const g = S.grids[Math.min(S.tg || 0, S.grids.length - 1)]; openModal("pto", { id: `x${Date.now().toString(36)}`, isNew: true, provider: g ? TM.nameOf(g) : "", from: C.isoOf(todayS() + 1), to: "", cov: "", useTpl: "", note: "" }); },
+    ptoEdit: e => { const x = S.EX.find(y => y.id === e.dataset.v); if (!x) return;
+      openModal("pto", { id: x.id, provider: x.provider, from: C.isoOf(x.from), to: x.to !== x.from ? C.isoOf(x.to) : "", cov: x.cov, useTpl: x.cov ? (x.useTpl ? "yes" : "no") : "", note: x.note }); },
+    ptoTpl: e => { keepPto(); S.m.useTpl = e.dataset.v; render(); },
+    async doPto() {
+      keepPto(); const m = S.m, from = C.toSerial(m.from), to = m.to ? C.toSerial(m.to) : from;
+      if (from == null) return toast("Pick the first day off.", true); if (to == null || to < from) return toast("The last day off is before the first.", true);
+      if (m.cov && TM.provKey(m.cov) === TM.provKey(m.provider)) return toast("Pick someone else to cover.", true);
+      if (m.cov && !m.useTpl) return toast(`Say whether ${exLabel(m.cov)} uses ${exLabel(m.provider)}’s template.`, true);
+      const row = { Provider: m.provider, From: C.isoOf(from), To: C.isoOf(to), Coverage: m.cov || "", UseTemplate: m.cov && m.useTpl === "yes" ? "TRUE" : "FALSE", Note: C.txt(m.note), Status: "", By: S.name, Updated: new Date().toISOString() };
+      const span = `${dshort(from)}${to !== from ? ` to ${dshort(to)}` : ""}`;
+      if (await write("Saving time off…", () => Store.saveException(m.id, row), `${exLabel(m.provider)} off ${span}${m.cov ? `, covered by ${exLabel(m.cov)}${m.useTpl === "yes" ? " on the same template" : ""}` : ": slots closed"}.`)) { closeModal(); await write("Filling the Index Planner tab…", () => Store.fillPlanner()); }
+    },
+    ptoDel: () => { const m = S.m; openModal("confirm", { title: `Remove ${exLabel(m.provider)}’s time off?`, body: "Their template’s slots open again on those days.", yes: "Remove",
+      run: () => Store.saveException(m.id, { Status: "removed", By: S.name, Updated: new Date().toISOString() }) }); },
     avSet: e => { keepAvail(); const g = S.m.grid[+e.dataset.d], h = e.dataset.h; g[h] = g[h] === e.dataset.v ? "" : e.dataset.v; render(); },
     avAddAway: () => { keepAvail(); S.m.away.push({ from: C.isoOf(todayS()), to: "", note: "" }); render(); },
     avDelAway: e => { keepAvail(); S.m.away.splice(+e.dataset.v, 1); render(); },
@@ -1578,6 +1632,7 @@
     else if (t.dataset && t.dataset.wappeal) wAppeal(t);
     else if (t.id === "wNote") { const w = S.WL.list.find(x => x.mrn === t.dataset.m); if (w) write("Saving…", () => Store.savePt(w.mrn, ptPatch({ code: w.code }, { WaitNote: t.value.trim() })), "Note saved."); }
     else if (S.modal === "forms" && ["fmFrom", "fmTo", "fp_sched", "fp_consent", "fp_avail"].includes(t.id)) { keepForms(); render(); }
+    else if (S.modal === "pto" && (t.id === "ptCov" || t.id === "ptProv" || t.id === "ptFrom" || t.id === "ptTo")) { const was = S.m.cov; keepPto(); if (t.id === "ptCov") { S.m.cov = t.value; if (t.value !== was) S.m.useTpl = ""; } render(); }
     else if (t.id === "followOn") { LS.set("ivkFollow", t.checked ? "1" : "0"); followed = ""; }
     else if (["ipStart", "ipPer", "ipWeeks"].includes(t.id)) {
       const o = ipList().find(x => x.mrn === S.ipSel); if (!o) return; delete S.ipPins[o.mrn];

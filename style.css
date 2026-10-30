@@ -331,8 +331,8 @@ ol.how li+li{margin-top:3px}
 
 /* template configurator: the grid in the template's own colours */
 .tedit{padding:18px 20px}
-.tedit .lh,.ttally .lh,.ttypes .lh{display:flex;justify-content:space-between;align-items:baseline;gap:12px;margin-bottom:6px}
-.tedit .lh span,.ttally .lh span,.ttypes .lh span{font-size:13px;color:var(--muted)}
+.tedit .lh,.ttally .lh,.ttypes .lh,.tpto .lh{display:flex;justify-content:space-between;align-items:baseline;gap:12px;margin-bottom:6px}
+.tedit .lh span,.ttally .lh span,.ttypes .lh span,.tpto .lh span{font-size:13px;color:var(--muted)}
 .tg{display:grid;gap:2px;margin-top:10px;user-select:none;touch-action:none}
 .tgh{font-size:12px;font-weight:600;color:var(--muted);padding:0 0 4px;text-align:center}
 .tgt{font-size:11.5px;color:var(--muted);text-align:right;padding:0 6px 0 0;align-self:center}
@@ -340,7 +340,7 @@ ol.how li+li{margin-top:3px}
 .tc.sel{box-shadow:inset 0 0 0 2px var(--surface),inset 0 0 0 4px var(--ink)}
 .tbar{position:sticky;top:0;z-index:2;display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:8px 0 0;padding:10px;border-radius:12px;background:var(--surface);box-shadow:var(--shadow)}
 .tchip{min-height:36px;padding:4px 10px;border-radius:8px;font-size:12px;font-weight:500}
-.ttally,.ttypes{padding:18px 20px}
+.ttally,.ttypes,.tpto{padding:18px 20px}
 .tt{width:100%;border-collapse:collapse;font-size:12.5px;margin-top:4px}
 .tt th{font-weight:600;color:var(--muted);text-align:right;padding:4px 4px}.tt th:first-child,.tt td:first-child{text-align:left}
 .tt td{text-align:right;padding:4px;box-shadow:0 -1px 0 var(--surface-2)}

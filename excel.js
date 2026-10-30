@@ -13,6 +13,7 @@
      tblIvkPatient    BZ1  MRN | Patient | CardOnFile | OkToCollect | Oakland | OakTasked | Avail | AvailEffective | AvailExpires | AvailNote | Away |
                           WaitRank | WaitingOn | Appeal | WaitNote | By | Updated   (per patient: payment flags, Oakland, availability, waitlist)
      tblIvkPay        CR1  Id | Date | MRN | Patient | Key | Kind | Amount | Method | Note | By | At   (payments due, collected, missed, reminders)
+     tblIvkExceptions DD1  Id | Provider | From | To | Coverage | UseTemplate | Note | Status | By | Updated   (provider time off and coverage)
    (AK1 held tblIvkSlots, the first template; it is no longer read.)
    Text cells only on that sheet ("1:22 PM" stays text). The chair map is a document setting (a map file can be larger than a cell holds).
    Two visible tabs hold the provider templates, in the Clinic Template Tool's format so that tool can read them (template.js):
@@ -42,7 +43,8 @@
     { name: "tblIvkOther", anchor: "BN", columns: C.OTHER_COLS, rows: [C.OTHER_COLS.map(() => "")] },
     { name: "tblIvkFlags", anchor: "BT", columns: C.FLAG_COLS, rows: [C.FLAG_COLS.map(() => "")] },
     { name: "tblIvkPatient", anchor: "BZ", columns: C.PT_COLS, rows: [C.PT_COLS.map(() => "")] },
-    { name: "tblIvkPay", anchor: "CR", columns: C.PAY_COLS, rows: [C.PAY_COLS.map(() => "")] }
+    { name: "tblIvkPay", anchor: "CR", columns: C.PAY_COLS, rows: [C.PAY_COLS.map(() => "")] },
+    { name: "tblIvkExceptions", anchor: "DD", columns: C.EX_COLS, rows: [C.EX_COLS.map(() => "")] }
   ];
   const BIG = ["tblIvkVisits", "tblIvkLog", "tblIvkHolds", "tblIvkOther", "tblIvkPay"];
   const IP_RANGE = "A1:AZ60";   // the Index Planner tab: 9 weeks of Mon-Fri across, half hours down, the slot list below
@@ -128,7 +130,7 @@
         t.getDataBodyRange().values = s.rows.map(r => r.map(String));
         made.push(s.name);
       }
-      if (made.length) { ws.getRange("A:DB").format.autofitColumns(); ws.visibility = Excel.SheetVisibility.hidden; }
+      if (made.length) { ws.getRange("A:DM").format.autofitColumns(); ws.visibility = Excel.SheetVisibility.hidden; }
       await ctx.sync();
       return { made, blocked };
     });
@@ -468,6 +470,16 @@
   const savePlan = (mrn, patch) => upsertMrn("tblIvkPlans", mrn, patch);
   const saveFlag = (mrn, patch) => upsertMrn("tblIvkFlags", mrn, patch);
   const savePt = (mrn, patch) => upsertMrn("tblIvkPatient", mrn, patch);
+  /* a time-off entry, by Id (a new Id adds one; Status "removed" takes it out) */
+  async function saveException(id, patch) {
+    return Excel.run(async ctx => {
+      const { t, b, cols } = await openTable(ctx, "tblIvkExceptions"), cI = cols.indexOf("id"), i = b.values.findIndex(r => String(r[cI]) === id);
+      if (i < 0) { addRows(t, cols, b, [Object.assign({ Id: id }, patch)]); await ctx.sync(); return true; }
+      const row = b.values[i].map(v => v == null ? "" : String(v));
+      for (const [k, v] of Object.entries(patch)) { const c = cols.indexOf(C.norm(k)); if (c >= 0) row[c] = v == null ? "" : String(v); }
+      b.getRow(i).values = [row]; await ctx.sync(); return true;
+    });
+  }
   async function upsertMrn(table, mrn, patch) {
     return Excel.run(async ctx => {
       const { t, b, cols } = await openTable(ctx, table), cM = cols.indexOf("mrn");
@@ -535,5 +547,5 @@
 
   return { DATA_SHEET, SHEETS, PLANNER, TPL_SHEET, TYPES_SHEET, SPEC, load, setup, saveVisit, confirmProtocol, replaceAppts, saveKeyed, saveRoutes, appendLog, openRow,
     setupTemplate, addGrid, setCells, saveTypes, replaceOther, savePlan, saveFlag, placeHolds, setHolds, fillPlanner, getDoc, setDoc, refreshDoc,
-    readRow, saveRow, savePt, addPays, saveRanks };
+    readRow, saveRow, savePt, addPays, saveRanks, saveException };
 });

@@ -89,6 +89,10 @@ patient's name and date of birth.
   dropdown, so the tab can be edited in Excel as well. In the add-in: Index planner › Template, drag across half hours, pick a type.
   Add a provider from the NextGen report's providers, for the days they're in clinic, empty or copied from another grid; a later
   Effective From records a revision.
+- **Time off and coverage** (Index planner › Template): a provider's PTO by date is an exception on their template: their slots close on
+  those days (Access week, Schedule, every plan). Pick who covers, and the add-in asks whether the covering provider works the absent
+  provider's template (pre-filled, replacing their own that day, and the absent provider's visits and holds sit in it) or keeps
+  their own. Visits or holds still with the absent provider are listed to move in NextGen. Saved on tblIvkExceptions.
 - **Slot types** (the **Slot Types** tab, the Clinic Template Tool's columns plus IVK use and colours): what each type is for in
   IVK, and the NextGen events it takes (chosen from the events on the report).
   - *IV Ketamine Start/Index*: an infusion start. It's an **index start** only when an IVK Post Check or Flex Post Check sits
@@ -142,6 +146,7 @@ Index planner gets the newer tables from Update the workbook):
 | tblIvkOther | The providers' other NextGen visits from the wider report: date, time, provider, event, status (no patient) |
 | tblIvkFlags | Patients who require a post-check |
 | tblIvkPatient | Per patient: Luma card on file, okay to collect, Oakland, OAK tasked, availability, dates away, waitlist order and waiting on |
+| tblIvkExceptions | Provider time off: provider, dates, who covers, whether they work the absent provider's template |
 | tblIvkPay | Payments due at each visit (collected / missed), later payments and waivers, balance reminders |
 
 The provider templates are on two visible tabs: **IVK Template** (the grids) and **Slot Types** (tblIvkSlotTypes).
