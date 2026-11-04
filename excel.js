@@ -16,6 +16,8 @@
      tblIvkExceptions DD1  Id | Provider | From | To | Coverage | UseTemplate | Note | Status | By | Updated   (provider time off and coverage)
      tblIvkProfile    DP1  MRN | Patient | ProvCover | ProvPayer | InfCover | InfPayer | Sohar benefits ... | BidfPrinted | Note | By | Updated
                           (per patient: who pays the provider visit and the infusion, the latest Sohar benefits, when the BIDF was printed)
+     tblIvkTransfers  EO1  MRN | Patient | To | Date | Status | Note | Confirmed | By | Updated   (transfers to another clinic)
+     tblIvkElsewhere  EY1  MRN | Patient | Date | Time | Provider | Event | Status | Location   (IVK visits at other clinics, wider report)
    (AK1 held tblIvkSlots, the first template; it is no longer read.)
    Text cells only on that sheet ("1:22 PM" stays text). The chair map is a document setting (a map file can be larger than a cell holds).
    Two visible tabs hold the provider templates, in the Clinic Template Tool's format so that tool can read them (template.js):
@@ -47,9 +49,11 @@
     { name: "tblIvkPatient", anchor: "BZ", columns: C.PT_COLS, rows: [C.PT_COLS.map(() => "")] },
     { name: "tblIvkPay", anchor: "CR", columns: C.PAY_COLS, rows: [C.PAY_COLS.map(() => "")] },
     { name: "tblIvkExceptions", anchor: "DD", columns: C.EX_COLS, rows: [C.EX_COLS.map(() => "")] },
-    { name: "tblIvkProfile", anchor: "DP", columns: C.PROFILE_COLS, rows: [C.PROFILE_COLS.map(() => "")] }
+    { name: "tblIvkProfile", anchor: "DP", columns: C.PROFILE_COLS, rows: [C.PROFILE_COLS.map(() => "")] },
+    { name: "tblIvkTransfers", anchor: "EO", columns: C.XFER_COLS, rows: [C.XFER_COLS.map(() => "")] },
+    { name: "tblIvkElsewhere", anchor: "EY", columns: C.ELSE_COLS, rows: [C.ELSE_COLS.map(() => "")] }
   ];
-  const BIG = ["tblIvkVisits", "tblIvkLog", "tblIvkHolds", "tblIvkOther", "tblIvkPay"];
+  const BIG = ["tblIvkVisits", "tblIvkLog", "tblIvkHolds", "tblIvkOther", "tblIvkPay", "tblIvkElsewhere"];
   const IP_RANGE = "A1:AZ60";   // the Index Planner tab: 9 weeks of Mon-Fri across, half hours down, the slot list below
   const colIdx = l => l.split("").reduce((n, c) => n * 26 + c.charCodeAt(0) - 64, 0) - 1;
   const colL = i => { let s = ""; for (let n = i + 1; n > 0; n = Math.floor((n - 1) / 26)) s = String.fromCharCode(65 + (n - 1) % 26) + s; return s; };
@@ -133,7 +137,7 @@
         t.getDataBodyRange().values = s.rows.map(r => r.map(String));
         made.push(s.name);
       }
-      if (made.length) { ws.getRange("A:EN").format.autofitColumns(); ws.visibility = Excel.SheetVisibility.hidden; }
+      if (made.length) { ws.getRange("A:FF").format.autofitColumns(); ws.visibility = Excel.SheetVisibility.hidden; }
       await ctx.sync();
       return { made, blocked };
     });
@@ -278,14 +282,14 @@
       return { head, values: r.values[0], formulas: r.formulas[0].map(f => isF(f) ? f : ""), formats: r.numberFormat[0] };
     });
   }
-  /* patch = { header: { v, date } }: a date goes in as a serial with m/d/yyyy. Formula cells are skipped and named in the result,
-     so nothing the clinic built is overwritten. The row is found again by MRN inside the same run. */
+  /* patch = { header: { v, date } }: a date goes in as a serial with m/d/yyyy. "@12" names a column by position (the tracker's
+     AM/PM columns). Formula cells are skipped and named in the result, so nothing the clinic built is overwritten. The row is found again by MRN inside the same run. */
   async function saveRow(kind, mrn, patch) {
     return Excel.run(async ctx => {
       const { b, i, head } = await findRow(ctx, kind, mrn), r = b.getRow(i); r.load("formulas"); await ctx.sync();
       const cols = head.map(C.norm), wrote = [], skipped = [];
       for (const [k, x] of Object.entries(patch)) {
-        const c = cols.indexOf(C.norm(k)); if (c < 0) { skipped.push(k); continue; }
+        const c = /^@\d+$/.test(k) ? +k.slice(1) : cols.indexOf(C.norm(k)); if (c < 0 || c >= cols.length) { skipped.push(k); continue; }
         if (isF(r.formulas[0][c])) { skipped.push(head[c]); continue; }
         const cell = b.getCell(i, c), o = x && typeof x === "object" ? x : { v: x };
         if (o.date) cell.numberFormat = [["m/d/yyyy"]];
@@ -496,10 +500,13 @@
       return { types: types.length, grids: grids.length };
     });
   }
-  /* the wider report's non-IVK visits: [Date iso, Time, Provider, Event, Status], replacing what was there */
-  async function replaceOther(rows) {
+  /* one of the add-in's tables replaced whole, as text: the wider report's non-IVK visits (tblIvkOther: Date iso, Time, Provider,
+     Event, Status) and the IVK visits at other clinics (tblIvkElsewhere) */
+  const replaceOther = rows => replaceRows("tblIvkOther", C.OTHER_COLS.length, rows);
+  const replaceElse = rows => replaceRows("tblIvkElsewhere", C.ELSE_COLS.length, rows);
+  async function replaceRows(name, W, rows) {
     return Excel.run(async ctx => {
-      const { t, b } = await openTable(ctx, "tblIvkOther"), had = b.values.length, W = C.OTHER_COLS.length, n = Math.max(rows.length, 1);
+      const { t, b } = await openTable(ctx, name), had = b.values.length, n = Math.max(rows.length, 1);
       if (n > had) { t.resize(t.getRange().getResizedRange(n - had, 0)); await ctx.sync(); }
       const body = t.getDataBodyRange();
       for (let s = 0; s < rows.length; s += CH) { const part = rows.slice(s, s + CH); body.getCell(s, 0).getResizedRange(part.length - 1, W - 1).values = part.map(r => r.map(v => String(v ?? ""))); await ctx.sync(); }
@@ -512,6 +519,7 @@
   const saveFlag = (mrn, patch) => upsertMrn("tblIvkFlags", mrn, patch);
   const savePt = (mrn, patch) => upsertMrn("tblIvkPatient", mrn, patch);
   const saveProfile = (mrn, patch) => upsertMrn("tblIvkProfile", mrn, patch);
+  const saveXfer = (mrn, patch) => upsertMrn("tblIvkTransfers", mrn, patch);
   /* a time-off entry, by Id (a new Id adds one; Status "removed" takes it out) */
   async function saveException(id, patch) {
     return Excel.run(async ctx => {
@@ -588,6 +596,6 @@
   }
 
   return { DATA_SHEET, SHEETS, PLANNER, TPL_SHEET, TYPES_SHEET, SPEC, load, setup, saveVisit, confirmProtocol, replaceAppts, saveKeyed, saveRoutes, appendLog, openRow,
-    setupTemplate, addGrid, setCells, saveTypes, replaceOther, savePlan, saveFlag, placeHolds, setHolds, fillPlanner, getDoc, setDoc, refreshDoc,
-    readRow, saveRow, savePt, addPays, saveRanks, saveException, saveProfile, addMpt };
+    setupTemplate, addGrid, setCells, saveTypes, replaceOther, replaceElse, savePlan, saveFlag, placeHolds, setHolds, fillPlanner, getDoc, setDoc, refreshDoc,
+    readRow, saveRow, savePt, addPays, saveRanks, saveException, saveProfile, saveXfer, addMpt };
 });

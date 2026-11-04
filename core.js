@@ -18,6 +18,9 @@
     /* Oakland patients: index (the first 6) at Castro, OAK tasked to book maintenance at treatment 3. Balance reminders every 14 days.
        PayStart: the day the payment log started (visits before it are never asked about) */
     OakIndex: 6, OakRemindAt: 3, ReminderDays: 14, PayStart: "",
+    /* Locations: this clinic's NextGen location names ("SF Castro; Castro IVK"), so a wider report's other clinics are kept apart.
+       Blank = any location naming the clinic. ElsewhereAt: when the other clinics' visits were last uploaded */
+    Locations: "", ElsewhereAt: "",
     /* the start email: the clinic's address for "your first treatment at", and who is copied on every one */
     ClinicAddress: "45 Castro Street Suite 318, San Francisco, CA 94114", StartCc: "helpcastro@mindfulhealthsolutions.com", StartBcc: "amreed@mymhs.com" };
   const ACTIVE = ["ongoing", "induction"];
@@ -92,6 +95,9 @@
     return { rows, cols };
   }
   const PREF_DAYS = [["Mon", "am", "pm"], ["Tue", "am2", "pm3"], ["Wed", "am4", "pm5"], ["Thu", "am6", "pm7"], ["Fri", "am8", "pm9"]];
+  /* the tracker's AM/PM columns by position, not name: the first ten headers that read AM or PM (any number after it), in order,
+     Mon AM to Fri PM. So a mistyped header ("PM2" where "PM9" belongs) still reads as Friday afternoon. */
+  const prefCols = head => (head || []).map((h, i) => /^(am|pm)\d*$/.test(norm(h)) ? i : -1).filter(i => i >= 0).slice(0, 10);
   /* A patient listed twice: the active row (Ongoing, Induction) wins, else the later row. excel.js picks the same row to write. */
   function pickRow(rows, mrnOf, statusOf, mrn) {
     let best = -1;
@@ -100,7 +106,7 @@
   }
   /* Master Patient Tracker rows, one per MRN (pickRow). i = the row's index in the table body (for writes back). */
   function patients(values) {
-    const { rows } = byHeader(values), keep = new Set();
+    const { rows } = byHeader(values), keep = new Set(), pc = prefCols(values && values[0]), on = (r, j) => pc[j] != null && num(r[pc[j]]) === 1;
     const live = rows.filter(x => txt(x.get("mrn")));
     live.forEach(x => keep.add(pickRow(live, y => y.get("mrn"), y => y.get("status"), x.get("mrn"))));
     return live.filter((x, j) => keep.has(j)).map(x => {
@@ -113,7 +119,7 @@
         copay: txt(g("copay")), infusion: txt(g("infusion")), protoAt: toSerial(g(["protocolupdated", "protocolexpdate"])),
         freq: txt(g(["frequency", "txfrequency"])), loc: txt(g("primarylocation")),
         ins1: txt(g(["primaryencounterinsurance", "primaryinsurance"])), ins2: txt(g(["infusioninsurance", "secondaryinsurance"])),
-        prefs: PREF_DAYS.map(([d, a, p]) => ({ d, am: num(g(a)) === 1, pm: num(g(p)) === 1 })),
+        prefs: PREF_DAYS.map(([d], j) => ({ d, am: on(x.r, 2 * j), pm: on(x.r, 2 * j + 1) })),
         start: toSerial(g("txstartdate")), bidf: txt(g("2026bidf")), authNo: txt(g("authnumber")), authStart: toSerial(g("authstart")),
         pcn: txt(g("pcn")), task: txt(g("taskstatus")), pcnNotes: txt(g("pcnnotes")), notes: txt(g("clinicnotes")),
         reqPost: /^(y|yes|true|1|x)$/i.test(txt(g(["requirespostcheck", "postcheckrequired", "requirespostcheckyn"])))
@@ -242,13 +248,29 @@
     if (A && !p.freq) add("freq", "No frequency on the tracker", ["Ask the group chat", "ask"]);
     if (A && a.proto) add("proto", p.protoAt == null ? "Protocol not confirmed" : `Protocol last confirmed ${fmtD(p.protoAt)}`, ["Confirm protocol", "proto"]);
     if (A && p.encAuth != null && p.authStart == null) add("authstart", "No auth start date", ED);
+    /* a treatment start without the rest of index booked behind it */
+    const sv = A ? nextStart(p, x.appts, T) : null, short = sv ? indexShort(p, x.appts, sv, c) : null;
+    if (short) add("idxbook", `Index not fully booked: ${short.booked} of ${short.need} visits after the ${fmtD(sv.date)} start`, ["Plan index visits", "pvPlan"]);
+    /* a transfer to another clinic: confirmed at the last visit here; visits booked here after it need moving */
+    const xs = xferState(x.XF ? x.XF.get(p.mrn) : null, x.appts, T, x.E);
+    if (xs && xs.after.length) add("xferafter", `Transfer to ${xs.to} ${fmtD(xs.date)}: ${xs.after.length} visit${xs.after.length === 1 ? "" : "s"} still booked here after it`, ["Transfer", "xfer"]);
+    if (xs && xs.due) add("xferdue", `Confirm the transfer to ${xs.to}${xs.last ? ` (last visit here ${fmtD(xs.last.date)})` : ""}`, ["Confirm transfer", "xfer"]);
+    else if (xs) add("xferq", `Transfer to ${xs.to}${xs.date != null ? ` ${fmtD(xs.date)}` : ""}`, null, { quiet: true });
+    /* the hand-off, from the wider report: nothing booked at the new clinic yet; once booked, a quiet tag */
+    if (xs && xs.there === null) add("xfernone", `Transfer to ${xs.to}: nothing booked there yet`, ["Transfer", "xfer"]);
+    else if (xs && xs.there) add("xferthere", `Booked at ${xs.there.loc || xs.to} ${fmtD(xs.there.date)}`, null, { quiet: true });
+    /* Oakland: OAK tasked, but no visit at Oakland on the wider report once the index here is done or one visit from it */
+    const oakThere = oak && x.E ? bookedAt(x.E, p.mrn, "Oakland", T) : undefined;
+    if (oak && A && oak.tasked != null && oakThere === null && oak.done != null && oak.done >= oak.idx - 1) add("oakbook", `OAK tasked ${fmtD(oak.tasked)}: nothing booked at Oakland yet`, null);
+    else if (oakThere) add("oakthere", `Booked at ${oakThere.loc || "Oakland"} ${fmtD(oakThere.date)}`, null, { quiet: true });
+    else if (!oak && !xs && x.E && A) { const e = bookedAt(x.E, p.mrn, "", T); if (e) add("elsewhere", `Also booked at ${e.loc || "another clinic"} ${fmtD(e.date)}`, null, { quiet: true }); }
     /* index done: an Induction patient who has kept their 6th visit moves to Ongoing on the protocol the provider sets */
     const ix = indexState(p, x.appts, T, c);
     if (ix && ix.complete) add("indexdone", `Index done (${ix.done} kept): move to Ongoing and confirm the protocol`, ["Move to Ongoing", "idxDone"]);
     if (/induction/i.test(p.status)) add("induction", "Induction", null, { quiet: true });
     if (/paused/i.test(p.status)) add("paused", "Paused", null, { quiet: true });
     if (oak) add("oakq", oak.unknown ? "Oakland patient" : `Oakland: index here, ${oak.done} of ${oak.idx} done`, null, { quiet: true });
-    else if (p.loc && x.clinic && norm(p.loc) !== norm(x.clinic)) add("home", `Home clinic ${p.loc}`, null, { quiet: true });
+    else if (elsewhere(p, x.clinic)) add("home", `Home clinic ${p.loc}`, null, { quiet: true });
     if (/self ?pay/i.test(p.ins2)) add("selfpay", "Self-pay infusion", null, { quiet: true });
     if (p.reqPost) add("post", "Requires post-check", null, { quiet: true });
     const rank = y => y.quiet ? 2 : y.bad ? 0 : 1;
@@ -633,7 +655,10 @@
   const availStr = a => (a || []).flatMap((x, i) => ["am", "pm"].filter(h => x[h]).map(h => `${DAYS5[i]} ${h.toUpperCase()}:${x[h]}`)).join("; ");
   const canCome = k => k === "P" || k === "M";
   /* the tracker's preference columns (AM, PM, AM2, PM3, ...) from a grid: 1 for Preferred or Mostly, 0 otherwise */
-  const prefCells = a => Object.fromEntries(PREF_DAYS.flatMap(([, am, pm], i) => [[am, canCome(a[i].am) ? 1 : 0], [pm, canCome(a[i].pm) ? 1 : 0]]));
+  /* with the tracker's header row, the cells go by position ("@12" = the 13th column, see excel.js saveRow); without it, by name */
+  const prefCells = (a, head) => { const v = (i, h) => canCome(a[i][h]) ? 1 : 0;
+    if (head) return Object.fromEntries(prefCols(head).map((c, k) => [`@${c}`, v(k >> 1, k % 2 ? "pm" : "am")]));
+    return Object.fromEntries(PREF_DAYS.flatMap(([, am, pm], i) => [[am, v(i, "am")], [pm, v(i, "pm")]])); };
   /* dates away: "2026-11-02|2026-11-06|Vacation; ..." */
   const awayList = v => txt(v).split(";").map(w => { const [f, t, ...n] = w.split("|"); const from = fromIso(f), to = fromIso(t) ?? from; return from == null ? null : { from, to: Math.max(from, to), note: n.join("|").trim() }; }).filter(Boolean).sort((a, b) => a.from - b.from);
   const awayStr = L => (L || []).filter(w => w.from != null).map(w => `${isoOf(w.from)}|${isoOf(w.to ?? w.from)}|${txt(w.note).replace(/[;|]/g, ",")}`).join("; ");
@@ -674,8 +699,9 @@
     let loose = mine.filter(r => r.kind === "paid" && !r.key).reduce((n, r) => n + r.amount, 0);
     for (const r of missed.sort((a, b) => (a.date ?? 0) - (b.date ?? 0))) { const x = Math.min(loose, r.left); r.left -= x; loose -= x; }
     const open = missed.filter(r => r.left > 0.004), reminders = mine.filter(r => r.kind === "reminder").sort((a, b) => (a.date ?? 0) - (b.date ?? 0));
+    /* a visit's answer can be changed after check-out (a new row for the same key), so only its latest answer counts as collected */
     return { open, balance: Math.round(open.reduce((n, r) => n + r.left, 0) * 100) / 100, lastReminder: reminders[reminders.length - 1] || null, reminders,
-      collected: mine.filter(r => r.kind === "collected" || r.kind === "paid").reduce((n, r) => n + r.amount, 0) };
+      collected: mine.filter(r => (r.kind === "collected" && payOf(mine, r.key) === r) || r.kind === "paid").reduce((n, r) => n + r.amount, 0) };
   }
   /* past IVK visits with something due and no answer yet (since the payment log started, PayStart), newest first */
   function toConfirm(p, A, pays, today, from) {
@@ -808,6 +834,60 @@
     const done = L.filter(a => a.date < today || (a.date === today && keptToday && keptToday(a))).length;
     return { N, done, complete: countable(p, A) && done >= N, sixth: L[N - 1] || null, countable: countable(p, A) };
   }
+  /* A treatment start for an Induction patient still on the index protocol (IndexPerWeek x a week, 2x; or none set yet) should have
+     the rest of index booked behind it: N - 1 (5) visits after the start. Null when it does; else how many are on the list. */
+  function indexShort(p, A, a, cfg) {
+    if (!p || !a || !/start/i.test(a.event || "") || !/induction/i.test(p.status || "")) return null;
+    if (p.freq && !new RegExp(`^\\s*${+cfg.IndexPerWeek}x per week`, "i").test(p.freq)) return null;
+    const need = Math.max(1, Math.round(+cfg.IndexPerWeek * +cfg.IndexWeeks)) - 1;
+    const booked = A.filter(x => x.mrn === p.mrn && !isCancelled(x) && !/no ?show/i.test(x.status) && (x.date > a.date || (x.date === a.date && (x.time ?? 0) > (a.time ?? 0)))).length;
+    return booked < need ? { booked, need, start: a } : null;
+  }
+  /* the patient's treatment start from today on (today's first), for the index-booking flag */
+  const nextStart = (p, A, today) => A.filter(a => a.mrn === p.mrn && a.date >= today && /start/i.test(a.event) && !isCancelled(a)).sort((x, y) => x.date - y.date || (x.time ?? 0) - (y.time ?? 0))[0] || null;
+
+  /* ---------- transfers (tblIvkTransfers) ---------- */
+  /* MRN | Patient | To | Date | Status | Note | Confirmed | By | Updated. One row per patient going to another clinic (Oakland
+     maintenance after index here, or a move). Status: scheduled (a future date; confirmed at their last visit here), done (Status
+     Discontinued and a note on the Master Patient Tracker), cancelled. */
+  const XFER_COLS = ["MRN", "Patient", "To", "Date", "Status", "Note", "Confirmed", "By", "Updated"];
+  function xferRows(values) {
+    const m = new Map();
+    byHeader(values).rows.forEach(x => { const g = x.get, mrn = mrnKey(g("mrn")); if (!mrn) return;
+      m.set(mrn, { mrn, code: txt(g("patient")), to: txt(g("to")), date: toSerial(g("date")), status: txt(g("status")).toLowerCase(), note: txt(g("note")), confirmed: toSerial(g("confirmed")), by: txt(g("by")) }); });
+    return m;
+  }
+  /* a scheduled transfer: the last visit here before the date (where it's confirmed), visits still booked here on or after it, and
+     whether it's time to confirm (that last visit is today or past, or the date has come) */
+  function xferState(xf, A, today, E) {
+    if (!xf || xf.status !== "scheduled") return null;
+    const L = A.filter(a => a.mrn === xf.mrn && !isCancelled(a) && !/no ?show/i.test(a.status)).sort((a, b) => a.date - b.date || (a.time ?? 0) - (b.time ?? 0));
+    const before = xf.date == null ? L : L.filter(a => a.date < xf.date), last = before[before.length - 1] || null;
+    const after = xf.date == null ? [] : L.filter(a => a.date >= xf.date && a.date >= today);
+    const due = (xf.date != null && today >= xf.date) || !last || last.date <= today;
+    /* there: their first visit at the new clinic from the wider report (null when none; E null = no wider report uploaded) */
+    const there = E ? bookedAt(E, xf.mrn, xf.to, Math.max(today, xf.date ?? today)) : undefined;
+    return { to: xf.to, date: xf.date, last, after, due, there };
+  }
+  /* ---------- other clinics (the wider report) ---------- */
+  /* tblIvkElsewhere: IVK visits at the neighbouring clinics, from a wider NextGen report. LASFIR only, no names. */
+  const ELSE_COLS = ["MRN", "Patient", "Date", "Time", "Provider", "Event", "Status", "Location"];
+  const elseRows = values => byHeader(values).rows.map(x => ({ mrn: mrnKey(x.get("mrn")), code: txt(x.get("patient")), date: toSerial(x.get("date")), time: toMin(x.get("time")),
+    provider: txt(x.get("provider")), event: txt(x.get("event")), status: txt(x.get("status")), loc: txt(x.get("location")) })).filter(a => a.mrn && a.date != null);
+  /* one place names the other ("Oakland" and "MHS Oakland IVK") */
+  const sameLoc = (a, b) => { const x = norm(a), y = norm(b); return !!x && !!y && (x.includes(y) || y.includes(x)); };
+  /* is a report location this clinic's? the Locations setting when set, else blank or naming the clinic */
+  function isOurs(loc, cfg) {
+    if (!txt(loc)) return true;
+    const L = txt(cfg.Locations).split(/[;\n]/).map(norm).filter(Boolean);
+    return L.length ? L.includes(norm(loc)) : sameLoc(loc, cfg.Clinic);
+  }
+  /* their first visit at another clinic (one named like "to", or any when "to" is blank) on or after "from", not cancelled */
+  const bookedAt = (E, mrn, to, from) => (E || []).filter(a => a.mrn === mrn && a.date >= from && !isCancelled(a) && !/no ?show/i.test(a.status) && (!txt(to) || sameLoc(a.loc, to)))
+    .sort((a, b) => a.date - b.date || (a.time ?? 0) - (b.time ?? 0))[0] || null;
+  /* home clinic isn't this one (by Primary Location) */
+  const elsewhere = (p, clinic) => !!(p && p.loc && clinic && norm(p.loc) !== norm(clinic));
+
   /* ---------- treatment numbers, Oakland ---------- */
   /* the patient's IVK treatments in order, from the treatment start (Tx Start Date, else the first "start" visit on the list) */
   function treatments(p, A) {
@@ -907,7 +987,7 @@
   return { DEFAULTS, VISIT_COLS, TEMPLATES, norm, txt, num, serialOf, dateOf, isoOf, fromIso, toSerial, toMin, fmtT, fmtD, fmtDay, weekday, weekStart,
     PT_COLS, ptRows, AV_LEVELS, avName, availGrid, availStr, canCome, prefCells, awayList, awayStr, awayOn, PAY_COLS, REMIND_METHODS, money, amt, payRows, dueOf, payOf, ledger, toConfirm,
     PARTS, partKey, dueParts, visitAnswered, PROFILE_COLS, COVER_MODES, modeOf, modeParts, isSelf, SOHAR_KEYS, profileRows, coverage, profileGaps, parseSohar, demand,
-    fullPlan, eligibleStarts, memoX, indexState, indexN: cfg => Math.max(1, Math.round(+cfg.IndexPerWeek * +cfg.IndexWeeks)),
+    fullPlan, eligibleStarts, memoX, indexState, indexShort, nextStart, XFER_COLS, xferRows, xferState, elsewhere, ELSE_COLS, elseRows, sameLoc, isOurs, bookedAt, prefCols, indexN: cfg => Math.max(1, Math.round(+cfg.IndexPerWeek * +cfg.IndexWeeks)),
     treatments, txNo, isOak, oakState, WAIT_ON, waitlist, waitMove, provFull, fullName, firstName, scheduleOf, START_TPL, longWhen,
     lasfir, provName, mrnKey, pickRow, eventShort, freqDays, byHeader, patients, appts, isCancelled, visitKey, visitRows, phase, isActive, futureOf, asks,
     today, code, chairState, chairStatus, waitMin, isLate, chairList, needs, loud, consults, fill, protoWords, arrivalText, askText,
