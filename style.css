@@ -428,7 +428,7 @@ ol.how li+li{margin-top:3px}
 .tile.noidx{color:var(--muted);font-weight:400}
 .skey{margin:0 0 12px}
 /* (i): booked off the template slot */
-.blkw{position:relative}
+.blkw{position:relative}.blkw>.blk,.blkw>.tile{padding-right:24px}
 .miss{position:absolute;top:3px;right:3px;width:16px;height:16px;border-radius:50%;background:var(--warn-soft);color:var(--warn);box-shadow:inset 0 0 0 1px var(--warn);font:italic 600 10.5px/16px Georgia,serif;text-align:center;cursor:help;z-index:2}
 .miss.sm{position:static;display:inline-block;margin-right:6px}
 .step .miss{position:relative;display:inline-block;margin-left:6px;vertical-align:1px;top:0;right:0}

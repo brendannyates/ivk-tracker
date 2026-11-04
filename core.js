@@ -736,10 +736,12 @@
   /* each part of the visit for one patient: insurance or self pay, the payer, and what's due. The tracker's insurance columns
      and amounts win; the profile fills in what the tracker doesn't say. */
   function coverage(p, prof) {
-    const part = (ins, pf, due) => { const cover = pf?.cover || (isSelf(ins) ? "selfpay" : txt(ins) ? "insurance" : ""), payer = cover === "selfpay" ? "" : (txt(ins) && !isSelf(ins) ? txt(ins) : pf?.payer || "");
+    /* "N/A", "none" or a dash on the tracker means no payer for that part */
+    const named = v => { const s = txt(v); return /^(n\/?a|none|-+|—)$/i.test(s) ? "" : s; };
+    const part = (ins0, pf, due) => { const ins = named(ins0), cover = pf?.cover || (isSelf(ins) ? "selfpay" : ins ? "insurance" : ""), payer = cover === "selfpay" ? "" : (ins && !isSelf(ins) ? ins : pf?.payer || "");
       return { cover, payer, due }; };
     const d = dueOf(p), prov = part(p?.ins1, prof?.prov, d.copay), inf = part(p?.ins2, prof?.inf, d.infusion);
-    return { prov, inf, mode: prov.cover || inf.cover ? modeOf(prov.cover || "insurance", inf.cover || "insurance") : "", total: d.total };
+    return { prov, inf, mode: prov.cover && inf.cover ? modeOf(prov.cover, inf.cover) : "", total: d.total };
   }
   /* New patients: on the appointment list (today on, within days) with no row on the Master Patient Tracker. A patient on the
      tracker already has their profile in its columns. Treatment starts first, then by first visit. */
@@ -816,11 +818,13 @@
     });
     const groups = new Map();
     for (const r of rows) { const g = groups.get(r.freq) || { freq: r.freq, rate: r.rate, n: 0, unsched: 0, paused: 0, perWeek: 0, rows: [] }; g.n++; g.rows.push(r); if (r.unsched) g.unsched++; if (r.paused) g.paused++; g.perWeek += r.expect.length ? (r.idx ? perIdx : r.rate) : 0; groups.set(r.freq, g); }
-    const G = [...groups.values()].map(g => Object.assign(g, { d4: sum(g.rows, r => win(r.expect, 4)), b4: sum(g.rows, r => win(r.booked, 4)), d8: sum(g.rows, r => win(r.expect, 8)), b8: sum(g.rows, r => win(r.booked, 8)),
+    /* still to book over a window: each patient's need over it less what they have booked in it (never below 0), added up */
+    const tb = (L, n) => sum(L, r => Math.max(0, win(r.expect, n) - win(r.booked, n)));
+    const G = [...groups.values()].map(g => Object.assign(g, { d4: sum(g.rows, r => win(r.expect, 4)), b4: sum(g.rows, r => win(r.booked, 4)), t4: tb(g.rows, 4), d8: sum(g.rows, r => win(r.expect, 8)), b8: sum(g.rows, r => win(r.booked, 8)), t8: tb(g.rows, 8),
       d12: sum(g.rows, r => win(r.expect, 12)), b12: sum(g.rows, r => win(r.booked, 12)) }))
       .sort((a, b) => (a.freq === "Index" ? -1 : b.freq === "Index" ? 1 : 0) || (b.rate - a.rate) || a.freq.localeCompare(b.freq));
     const perWeek = sum(rows, r => r.idx ? perIdx : r.rate);
-    return { rows, groups: G, weeks, N, perIdx, after, perWeek, avg: rows.length ? perWeek / rows.length : 0,
+    return { rows, groups: G, weeks, N, perIdx, after, perWeek, avg: rows.length ? perWeek / rows.length : 0, toBook4: tb(rows, 4), toBook8: tb(rows, 8),
       transitions: rows.filter(r => r.idx).sort((a, b) => a.idxEnd - b.idxEnd) };
   }
 
