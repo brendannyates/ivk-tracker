@@ -1,0 +1,14 @@
+{
+  "updates": [
+    {
+      "id": "2026-11-04-desk-payments-transfers",
+      "date": "2026-11-04",
+      "bullets": [
+        "New: You can record today's copay at check-in, and change it any time afterward from the visit card, even after check-out. At check-out you can also edit what the patient owes.",
+        "New: Click a visit on the Schedule to put the patient on a waitlist for a sooner date. After each appointment list upload, you'll be told when an opening fits.",
+        "New: Transfers are on the patient's Protocol page: discontinue them now, or schedule the transfer and confirm it at their last visit here. Upload a NextGen report that includes other clinics to see whether they're booked there.",
+        "Fixed: Schedule tiles now show the patient code and MRN instead of just a time. Start visits are flagged when the rest of the index isn't booked. Older NextGen files now upload, and Friday PM availability on the tracker reads correctly."
+      ]
+    }
+  ]
+}

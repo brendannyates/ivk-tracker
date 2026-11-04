@@ -164,6 +164,7 @@
   const PANE = Object.fromEntries(Object.keys(Local).map(k => [k, async (...a) => { const r = await Local[k](...a); if (!QUIET.includes(k)) await refresh(true); return r; }]));
   function onChild(arg) {
     reassemble(arg.message, async m => {
+      if (window.DevUpdates && DevUpdates.receive(m)) return;   // a Dev Update dismissed in full screen
       if (m.k === "ready") return toChild({ k: "snap", raw: S.raw });
       if (m.k === "close") return closeFull();
       if (m.k === "refresh") { await refresh(true); return; }
@@ -176,6 +177,7 @@
     });
   }
   function onPane(m) {
+    if (window.DevUpdates && DevUpdates.receive(m)) return;
     if (m.k === "snap") { S.raw = m.raw; S.live = true; derive(); if (!S.modal && !typing()) render(); }
     else if (m.k === "wait") rpc.wait.get(m.id)?.alive();
     else if (m.k === "ack") { const w = rpc.wait.get(m.id); if (!w) return; rpc.wait.delete(m.id); if (m.ok) w.res(m.result); else w.rej(new Error(m.err || "the task pane couldn’t do that")); }
@@ -185,14 +187,15 @@
     if (pop.dlg) return toast("Full screen is already open.");
     if (!Office.context.requirements.isSetSupported("DialogApi", "1.2")) return toast("This version of Excel can’t open full screen.", true);
     const url = new URL(location.href); url.search = "?full=1"; url.hash = "";
-    Office.context.ui.displayDialogAsync(url.href, { height: 95, width: 95, displayInIframe: true }, res => {
+    /* the Dev Updates already dismissed here go along, so full screen doesn't show them again */
+    Office.context.ui.displayDialogAsync(window.DevUpdates ? DevUpdates.dialogUrl(url.href) : url.href, { height: 95, width: 95, displayInIframe: true }, res => {
       if (res.status !== Office.AsyncResultStatus.Succeeded) return toast(res.error.code === 12007 ? "Close the other add-in window first." : "Full screen couldn’t open. Try again.", true);
-      pop.dlg = res.value; render();
+      pop.dlg = res.value; render(); if (window.DevUpdates) DevUpdates.setSend(m => toChild(m));
       pop.dlg.addEventHandler(Office.EventType.DialogMessageReceived, onChild);
-      pop.dlg.addEventHandler(Office.EventType.DialogEventReceived, () => { pop.dlg = null; render(); });
+      pop.dlg.addEventHandler(Office.EventType.DialogEventReceived, () => { pop.dlg = null; if (window.DevUpdates) DevUpdates.setSend(null); render(); });
     });
   }
-  function closeFull() { if (pop.dlg) { try { pop.dlg.close(); } catch (e) { /* closed */ } pop.dlg = null; } render(); }
+  function closeFull() { if (pop.dlg) { try { pop.dlg.close(); } catch (e) { /* closed */ } pop.dlg = null; } if (window.DevUpdates) DevUpdates.setSend(null); render(); }
 
   /* ---------- reading ---------- */
   const hash = s => { let h = 0; for (let i = 0; i < s.length; i++) h = (h * 31 + s.charCodeAt(i)) | 0; return s.length + ":" + h; };
@@ -2420,6 +2423,8 @@
     }
     setInterval(() => { if (S.raw && !S.modal && !typing()) { derive(); render(); } }, TICK_MS);
     render();
+    /* Dev Update notices: the bell top right; full screen passes what it dismisses back to the pane */
+    if (window.DevUpdates) DevUpdates.init({ app: "ivk", send: FULL ? m => toPane(m) : null });
   }
   window.addEventListener("error", e => console.error(e.message));
   if (window.Office && Office.onReady) Office.onReady(start); else landing();

@@ -1,0 +1,19 @@
+/* Dev Update notices (dev-updates.js). Colours come from the add-in's tokens, with the light tracker values as fallbacks. */
+.devupd{position:fixed;top:14px;right:16px;z-index:40;font-family:var(--font,"IBM Plex Sans",system-ui,"Segoe UI",sans-serif);color:var(--ink,#1B211F)}
+.du-bell{position:relative;display:grid;place-items:center;width:44px;height:44px;border-radius:50%;background:var(--surface,#FFFFFF);color:var(--muted,#66706B);box-shadow:var(--shadow,0 1px 2px rgba(16,24,20,.05),0 12px 32px -14px rgba(16,24,20,.14));border:0;cursor:pointer;margin-left:auto}
+.du-bell:hover,.du-bell[aria-expanded="true"]{color:var(--accent,#1E6B59)}
+.du-dot{position:absolute;top:10px;right:11px;width:9px;height:9px;border-radius:50%;background:var(--accent,#1E6B59);box-shadow:0 0 0 2px var(--surface,#FFFFFF)}
+.du-card,.du-panel{position:absolute;top:52px;right:0;width:min(360px,calc(100vw - 48px));box-sizing:border-box;background:var(--surface,#FFFFFF);border-radius:16px;box-shadow:var(--shadow,0 1px 2px rgba(16,24,20,.05),0 12px 32px -14px rgba(16,24,20,.14));font-size:14px;line-height:1.45}
+.du-card{padding:14px 16px 10px;border-left:4px solid var(--accent,#1E6B59)}
+.du-card b,.du-head b{font-weight:600}
+.devupd ul{margin:6px 0 0;padding-left:18px}
+.devupd li+li{margin-top:3px}
+.du-act{display:flex;justify-content:flex-end;gap:4px;margin-top:8px}
+.du-act button,.du-head button{min-height:44px;padding:0 12px;border-radius:10px;border:0;background:none;color:var(--accent,#1E6B59);font:inherit;font-weight:600;cursor:pointer}
+.du-act button:hover,.du-head button:hover{background:var(--accent-soft,#DDEDE6)}
+.du-panel{max-height:min(70vh,560px);overflow:auto;padding:6px 16px 14px}
+.du-head{position:sticky;top:0;display:flex;justify-content:space-between;align-items:center;padding:8px 0;background:var(--surface,#FFFFFF)}
+.du-panel section{padding:10px 0;border-top:1px solid var(--surface-2,#E9EBE6)}
+.du-panel h3{margin:0;font-size:13px;font-weight:600;color:var(--muted,#66706B)}
+.devupd [hidden]{display:none!important}
+.devupd :focus-visible{outline:2px solid var(--accent,#1E6B59);outline-offset:3px}
