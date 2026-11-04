@@ -11,23 +11,66 @@ The hosted files hold no patient data. Patients only ever appear as LASFIR codes
 
 ## Screens
 
-- **Today**: the chair map (a file from the [Bay Map Builder](https://brendannyates.github.io/bay-map-builder/), or chair tiles
-  until one is loaded), who's checked in and waiting, who's still to come, and one visit card with the next step. Red only means
-  a patient has waited 10+ minutes for a chair.
+The rail: Today, Schedule, Access, Patients, Availability, then Settings at the bottom (above Exit full screen in full screen). In
+the task pane, full screen sits at the top right of every page with refresh and dark mode.
+
+- **Today**: the chair map (a file from the [Bay Map Builder](https://brendannyates.github.io/bay-map-builder/)), who's checked
+  in and waiting, who's still to come, and one visit card with the next step. Until a map is loaded the chairs are one folded line
+  that opens to tiles. Red only means a patient has waited 10+ minutes for a chair. **New patients to add** lists everyone on the
+  appointment list in the next 4 weeks with no row on the Master Patient Tracker, treatment starts first.
 - **Schedule**: the week (Sunday to Saturday) by day and time, from the Appt List tab, with open template slots and holds.
-- **Index planner**: each provider's template, and the index visits for each new start, proposed from it, held, then booked in
-  NextGen (below).
-- **Patients**: everyone on the Master Patient Tracker, sorted by what they need: auth ended or ending, visits left on the auth,
-  nothing booked, protocol not confirmed, a balance, an OAK task, availability expired. Each need has the action that clears it.
-  Every field on the patient's tracker row can be edited here (**Edit tracker fields**; formula cells are shown, never written),
-  so nobody has to go back to the tab. Picking a patient, a visit or a waitlist row selects their row in the workbook behind the
-  add-in (Settings › Appearance › Follow along turns it off).
-- **Waitlist**: everyone on the Consults tab waiting for a treatment start, then the Consults tab itself beneath it.
-  - In line by consult date until someone is moved (↑ ↓, Move to the top). Waiting on: Ready to start, Referral, Authorization.
-  - The first **ready** patient starts next. Waiting on a referral keeps their place. An authorization that needs an appeal moves
-    them behind the next ready patient. Plan index visits sends them to the Index planner.
+  Treatment starts carry a blue tab and index visits (Induction patients' visits, and holds) a lavender one; **PC** marks a patient
+  who requires a post-check, and a shaded tile shows where each post check lands (hover a visit and its post check lights up). A
+  visit booked off its template slot (a start in a follow-up-only slot, or a time with no IVK slot) has a small **(i)**: hover or
+  press it for "This visit does not match the templated slot-type". Pressing a booked visit opens the patient view; pressing an
+  open slot holds it for a patient (an open index start can plan all 6 index visits from there instead).
+- **Access**: four pages, picked with the chips at the top.
+  - **Demand**: what the schedule has to hold at everyone's current protocol (the tracker's Frequency), by protocol: patients,
+    visits a week each and in all, and for the next 4 and 8 weeks what's needed, booked (NextGen visits and holds) and still to
+    book; then week by week against the template's IVK slots and how many are open. Include paused patients, or exclude or show
+    only unscheduled ones (nothing booked). Induction patients count at 2 a week until treatment 6, then at the after-index
+    protocol (Settings, 1x per week); **When index creates access** lists each one with the week they step down and the visits a
+    week that frees.
+  - **Waitlist** (below), **Index planner** (below) and **Templates** (the provider grids; the providers are toggled at the top
+    right of the template card).
+- **Patients**: a table of everyone on the Master Patient Tracker that sorts by any column, ascending or descending (press the
+  header again): patient, protocol, status, protocol last confirmed, booked through, needs. Chips: Needs attention, New patients
+  (on the list, not on the tracker), Active, Paused, Discontinued, All. Pressing a patient opens the **patient view**, laid out as
+  the TMS Tracker's: the lead need and
+  its action, today's visit if they're here, then one section at a time: **Schedule** (visits with start and index tabs, holds,
+  printouts, availability), **Protocol** (frequency, last confirmed and every confirmation since, index progress, post check,
+  Oakland), **Benefits** (who covers the provider visit and the infusion, the latest Sohar benefits, the authorization, the BIDF)
+  and **Financial** (below). Every field on the tracker row can still be edited (**Edit tracker fields**). Picking a patient
+  selects their row in the workbook behind the add-in (Settings › Appearance › Follow along turns it off).
+- **Availability**: every patient's availability as the IVK Patient Availability Form asks it (each weekday AM and PM: Preferred,
+  Mostly, Sometimes, Not available; effective and expiry dates), with how many patients can come each half day above. Needs
+  updating: no form on file, expired, only the tracker's AM/PM columns, or fewer than the 3 days the form asks for.
 - **Settings**: your first name, the NextGen upload, Teams workflows and message wording, the chair map, timing, dark mode,
   workbook setup.
+
+## Patient profiles
+
+A patient on the Master Patient Tracker has their profile in its columns. New patients (on the appointment list, especially a
+treatment start, with no row on the tracker) are prompted on Today, Patients and their visit card. **Create profile** asks for the
+LASFIR code, status (Induction for a new start), protocol, who covers what
+(insurance for both, self pay for both, or one of each), the payer and what the patient pays each visit for the **provider visit
+(99214/99215)** and for the **infusion**, and the latest Sohar benefits (payer, plan, network, coverage dates, copay, coinsurance,
+deductible and OOP max with what's left, status, verified date, reference). The Sohar fields can be typed or filled from the Sohar
+Eligibility add-in's benefits CSV by MRN. Saving adds the patient to the Master Patient Tracker (Patient Name is the code; Copay,
+Infusion, Primary Encounter Insurance, Infusion Insurance, Status, Frequency, Primary Location, Tx Start Date; the table's formula
+columns fill themselves) and the rest to tblIvkProfile. For a patient already on the tracker, Benefits › **Edit coverage and
+benefits** opens the same form.
+
+## Index and after
+
+A patient whose status is **Induction** is an index patient: their visits carry the lavender tab, they count at 2 a week in
+Demand, and they're the ones listed to change in the Index planner. Once they've kept their 6th visit (cancelled visits and
+no-shows don't count), check-out of that visit offers **Move to Ongoing** with the protocol after index (usually 1x per week; the
+provider sets it by acuity), and until it's done the patient has the need "Index done: move to Ongoing and confirm the protocol".
+Moving writes Status Ongoing, Frequency and Protocol Updated on the Master Patient Tracker.
+
+**Start paperwork** (schedule and consent) prompts for the BIDF: it's completed by the benefits team and printed from NextGen, so
+the add-in asks the desk to print it and saves the day they tick it. The start email still needs the BIDF uploaded as a PDF.
 
 ## The visit, at the desk
 
@@ -44,9 +87,11 @@ confirming when Protocol Updated is blank or older than 90 days. Both are in Set
 
 ## Payments
 
-Each IVK visit owes the tracker's Copay plus Infusion. Check-out asks **Collected** or **Not collected** (as the TMS Tracker does
-for copays); not collected becomes the patient's balance. On the patient: the balance and each missed visit (**Collected**, **Waive**),
-past visits nobody answered (since the payment log started), **Luma card on file** and **Okay to collect**, and **Record a payment
+Each IVK visit owes the provider visit (the tracker's Copay) and the infusion (Infusion), collected separately. Check-out asks
+**Collected** or **Not collected** for each part that owes something; what isn't collected becomes the patient's balance. Payment
+rows are kept per part (the visit's key with |prov or |inf); rows saved for the whole visit before the split still count. On the
+patient's Financial page: the balance and each missed part (**Collected**, **Waive**), past visits nobody answered (since the
+payment log started), **Luma card on file** and **Okay to charge at time of service**, and **Record a payment
 or reminder**: a payment on account (comes off the oldest balance first) or a balance reminder sent (date, In-person or Luma). A
 balance with no reminder in 14 days is a need.
 
@@ -107,6 +152,12 @@ patient's name and date of birth.
   start when its post check is free too. Index visits (treatment starts, Induction patients), holds and patients who require a
   post check use the post check. The wider NextGen report's other visits (telehealth, TMS, consults) take the half hour they
   start in, so a flex post check already booked for tele isn't offered for index. NextGen post check holds don't count.
+- **Index-eligible**: an open index start only counts (on the Schedule, the Access week and in "room to start") when all 6 index
+  visits still fit after it in their windows: 2 in each of the 3 weeks, 2 to 5 days apart. **Next index-eligible starts** stand on
+  the right of the planner. Pressing one makes it treatment 1 for the patient picked, or, with nobody picked, starts a draft plan
+  that can be explored and changed and is held for whoever it's for (someone on the waitlist or the planner, a treatment start
+  on the list, or a new LASFIR and MRN). Pressing the picked patient again plans without one. Hovering a start on the Access week
+  shades its post check.
 - **Protocol**: 2 visits in each 7 days for 3 weeks unless the patient's own protocol is set. Week 1 starts on treatment 1's day
   (a Wednesday start makes week 1 Wednesday to Tuesday). Visits are never back to back, no more than 5 days apart when the open
   slots allow it, and as evenly spaced as they can be; treatment 1 moves a day or two later if starting on the first open day
@@ -147,6 +198,7 @@ Index planner gets the newer tables from Update the workbook):
 | tblIvkFlags | Patients who require a post-check |
 | tblIvkPatient | Per patient: Luma card on file, okay to collect, Oakland, OAK tasked, availability, dates away, waitlist order and waiting on |
 | tblIvkExceptions | Provider time off: provider, dates, who covers, whether they work the absent provider's template |
+| tblIvkProfile | Per patient: insurance or self pay and the payer for the provider visit and the infusion, the latest Sohar benefits, BIDF printed |
 | tblIvkPay | Payments due at each visit (collected / missed), later payments and waivers, balance reminders |
 
 The provider templates are on two visible tabs: **IVK Template** (the grids) and **Slot Types** (tblIvkSlotTypes).

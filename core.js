@@ -242,6 +242,9 @@
     if (A && !p.freq) add("freq", "No frequency on the tracker", ["Ask the group chat", "ask"]);
     if (A && a.proto) add("proto", p.protoAt == null ? "Protocol not confirmed" : `Protocol last confirmed ${fmtD(p.protoAt)}`, ["Confirm protocol", "proto"]);
     if (A && p.encAuth != null && p.authStart == null) add("authstart", "No auth start date", ED);
+    /* index done: an Induction patient who has kept their 6th visit moves to Ongoing on the protocol the provider sets */
+    const ix = indexState(p, x.appts, T, c);
+    if (ix && ix.complete) add("indexdone", `Index done (${ix.done} kept): move to Ongoing and confirm the protocol`, ["Move to Ongoing", "idxDone"]);
     if (/induction/i.test(p.status)) add("induction", "Induction", null, { quiet: true });
     if (/paused/i.test(p.status)) add("paused", "Paused", null, { quiet: true });
     if (oak) add("oakq", oak.unknown ? "Oakland patient" : `Oakland: index here, ${oak.done} of ${oak.idx} done`, null, { quiet: true });
@@ -418,6 +421,12 @@
      slots: the starts with by (who has it), postBy (who has its post check), full (all chairs in use during its 2 hours).
      cells: every template cell with by, for the tiles. */
   function daySlots(d, X) {
+    if (X._memo && X._memo.has(d)) return X._memo.get(d);
+    const out = daySlots0(d, X); if (X._memo) X._memo.set(d, out); return out;
+  }
+  /* X with a per-day cache, for the long scans (eligible starts, capacity); holds must not change while it's used */
+  const memoX = X => Object.assign({}, X, { _memo: new Map() });
+  function daySlots0(d, X) {
     const vm = +X.cfg.VisitMin, pm = +X.cfg.PostCheckMin, key = X.remap ? n => X.remap(TM.provKey(n), d) : TM.provKey;   // remap: a covering provider works an absent one's template
     const cells = (X.cellsOn ? X.cellsOn(d) : []).map(c => ({ ...c, date: d, by: null }));
     /* the provider's cell a time falls in (a 9:15 visit is in the 9:00 half hour) */
@@ -431,7 +440,11 @@
     for (const b of B) {
       const s = slots.find(x => !x.by && x.pkey === b.pkey && x.time <= b.time && b.time < x.time + (x.len || 30)); if (s) s.by = b;
       const c = cellAt(b.pkey, b.time); if (c && !c.by) c.by = b;
-      if (b.post) { const pc = cellAt(b.pkey, (s ? s.time : b.time) + pm); if (pc && !pc.by && (pc.use === "post" || pc.use === "flexpost")) pc.by = Object.assign({}, b, { kind: b.kind === "hold" ? "holdpost" : "post" }); }
+      /* where its post check lands (the shaded tile on the Schedule and the Access week) */
+      if (b.post) { b.postAt = (s ? s.time : b.time) + pm; const pc = cellAt(b.pkey, b.postAt); if (pc && !pc.by && (pc.use === "post" || pc.use === "flexpost")) pc.by = Object.assign({}, b, { kind: b.kind === "hold" ? "holdpost" : "post" }); }
+      /* booked off the template: the provider has a template but no IVK slot at that time, or a treatment start sits in a
+         follow-up-only slot (follow-ups may take a start/index slot) */
+      if (b.kind === "appt" && X.hasGrid && X.hasGrid(b.pkey)) b.miss = !c || !(c.use === "start" || c.use === "followup") || (/start/i.test(b.event) && c.use === "followup");
     }
     for (const o of (X.others || []).filter(o => o.date === d && !isCancelled(o) && !/no ?show/i.test(o.status) && !/\bhold\b/i.test(o.event))) {
       const pk = key(o.provider), c = cells.find(x => x.pkey === pk && !x.by && o.time >= x.time && o.time < x.time + (x.len || 30));
@@ -537,12 +550,29 @@
   }
   /* How many more patients could start index: plan one patient free any time, take their visits, and repeat while a full plan
      still starts within weeks. o = planIndex's options without the patient. Also counts the open index starts in that window. */
+  /* A full index fits: all N visits, perWeek in each of the weeks, none past the protocol's weeks, no gap over maxGap */
+  const fullPlan = r => r.items.length === r.N && !r.items.some(x => x.long) && !r.notes.length;
+  /* Index-eligible starts: open index starts from a day on where a full plan (the first 6 visits, in the protocol's windows) can
+     still be made from them on what's left. o = planIndex's options without the patient. Up to n, within days. */
+  function eligibleStarts(o, from, n, days) {
+    const X = o.X._memo ? o.X : memoX(o.X), out = [];
+    for (let d = from; d < from + days && out.length < n; d++) {
+      const wd = weekday(d); if (wd < 1 || wd > 5) continue;
+      for (const s of daySlots(d, X).slots.filter(x => x.openIndex)) {
+        const r = planIndex(Object.assign({}, o, { start: d, avail: null, fixed: [], pins: { 0: s }, X }));
+        if (fullPlan(r)) { out.push({ slot: s, plan: r }); if (out.length >= n) break; }
+      }
+    }
+    return out;
+  }
   function capacity(o, weeks) {
-    const until = o.today + 7 * weeks; let n = 0, holds = (o.X.holds || []).slice(), open = 0;
-    for (let d = o.today + 1; d <= until; d++) { const wd = weekday(d); if (wd >= 1 && wd <= 5) open += daySlots(d, o.X).slots.filter(s => s.openIndex).length; }
+    const until = o.today + 7 * weeks; let n = 0, holds = (o.X.holds || []).slice();
+    /* open counts only starts a full index can still be planned from */
+    const open = eligibleStarts(o, o.today + 1, 500, 7 * weeks).length;
     for (; n < 25; n++) {
-      const r = planIndex(Object.assign({}, o, { start: o.today + 1, avail: null, fixed: [], pins: {}, X: Object.assign({}, o.X, { holds }) }));
-      if (r.items.length < r.N || r.items[0].date > until) break;
+      /* the first start a full index fits from, with the patients counted so far taking their visits */
+      const e = eligibleStarts(Object.assign({}, o, { X: memoX(Object.assign({}, o.X, { holds, _memo: null })) }), o.today + 1, 1, 7 * weeks)[0], r = e && e.plan;
+      if (!r || r.items[0].date > until) break;
       holds = holds.concat(r.items.map((x, i) => ({ id: `cap${n}.${i}`, mrn: "cap" + n, code: "", date: x.date, time: x.time, provider: x.provider, status: "held" })));
     }
     return { starts: n, open };
@@ -624,10 +654,18 @@
         amount: amt(g("amount")), method: txt(g("method")), note: txt(g("note")), by: txt(g("by")), at: txt(g("at")) }; })
       .filter(r => r.mrn && r.kind);
   }
-  /* what an IVK visit costs the patient: the tracker's copay plus the infusion (self-pay) amount */
+  /* what an IVK visit costs the patient: the provider visit's copay (99214/99215, the tracker's Copay) plus the infusion
+     responsibility (the tracker's Infusion), each collected on its own */
   const dueOf = p => p ? { copay: amt(p.copay), infusion: amt(p.infusion), total: amt(p.copay) + amt(p.infusion) } : { copay: 0, infusion: 0, total: 0 };
-  /* the visit's own answer: the last collected or missed row for its key */
-  const payOf = (pays, key) => pays.filter(r => r.key === key && (r.kind === "collected" || r.kind === "missed")).pop() || null;
+  const PARTS = [["prov", "Provider visit"], ["inf", "Infusion"]];
+  const partKey = (key, part) => `${key}|${part}`;
+  /* the parts of a visit with something due: [["prov", 40], ["inf", 300]] */
+  const dueParts = p => { const d = dueOf(p); return [["prov", d.copay], ["inf", d.infusion]].filter(x => x[1] > 0); };
+  /* the visit's own answer: the last collected or missed row for its key. With a part, that part's row, or a row for the whole
+     visit (saved before the parts were split) */
+  const payOf = (pays, key, part) => pays.filter(r => (r.key === key || (part && r.key === partKey(key, part))) && (r.kind === "collected" || r.kind === "missed")).pop() || null;
+  /* every part due at this visit answered */
+  const visitAnswered = (pays, key, p) => dueParts(p).every(([part]) => !!payOf(pays, key, part));
   /* A patient's money: every missed visit with what's been paid or waived against it, the balance, the last reminder. */
   function ledger(mrn, pays) {
     const mine = pays.filter(r => r.mrn === mrn), settled = k => mine.filter(r => r.key === k && (r.kind === "paid" || r.kind === "waived")).reduce((n, r) => n + r.amount, 0);
@@ -643,9 +681,133 @@
   function toConfirm(p, A, pays, today, from) {
     if (!p || dueOf(p).total <= 0) return [];
     return A.filter(a => a.mrn === p.mrn && a.date < today && a.date >= (from ?? today) && !isCancelled(a) && !/no ?show/i.test(a.status))
-      .filter(a => !payOf(pays, visitKey(a.date, a.mrn, a.time))).sort((a, b) => b.date - a.date);
+      .filter(a => !visitAnswered(pays, visitKey(a.date, a.mrn, a.time), p)).sort((a, b) => b.date - a.date);
   }
 
+  /* ---------- patient profile (tblIvkProfile) ---------- */
+  /* One row per patient: who pays each part of the visit (insurance or self pay, and the payer) and the latest Sohar benefits.
+     The amounts due and the payer names also go to the Master Patient Tracker (Copay, Infusion, Primary Encounter Insurance,
+     Infusion Insurance), which stays the record the clinic reads. BidfPrinted: the day the desk printed the BIDF from NextGen. */
+  const PROFILE_COLS = ["MRN", "Patient", "ProvCover", "ProvPayer", "InfCover", "InfPayer", "SoharPayer", "Plan", "Network", "CovStart", "CovEnd",
+    "Copay", "Coinsurance", "Deductible", "DedRemaining", "OopMax", "OopRemaining", "SoharStatus", "SoharDate", "SoharRef", "BidfPrinted", "Note", "By", "Updated"];
+  /* who covers what: insurance for both, self pay for both, or one of each */
+  const COVER_MODES = [["both", "Insurance covers both"], ["self", "Self pay for both"], ["provins", "Insurance for the provider visit, self-pay infusion"], ["infins", "Self-pay provider visit, insurance for the infusion"]];
+  const isSelf = v => /self/i.test(txt(v));
+  const modeOf = (prov, inf) => prov === "selfpay" && inf === "selfpay" ? "self" : prov === "selfpay" ? "infins" : inf === "selfpay" ? "provins" : "both";
+  const modeParts = m => ({ prov: m === "self" || m === "infins" ? "selfpay" : "insurance", inf: m === "self" || m === "provins" ? "selfpay" : "insurance" });
+  const SOHAR_KEYS = ["payer", "plan", "network", "covStart", "covEnd", "copay", "coins", "ded", "dedRem", "oop", "oopRem", "status", "date", "ref"];
+  function profileRows(values) {
+    const m = new Map();
+    byHeader(values).rows.forEach(x => { const g = x.get, mrn = mrnKey(g("mrn")); if (!mrn) return;
+      const cov = v => txt(v) ? (isSelf(v) ? "selfpay" : "insurance") : "";
+      m.set(mrn, { mrn, code: txt(g("patient")), prov: { cover: cov(g("provcover")), payer: txt(g("provpayer")) }, inf: { cover: cov(g("infcover")), payer: txt(g("infpayer")) },
+        sohar: { payer: txt(g("soharpayer")), plan: txt(g("plan")), network: txt(g("network")), covStart: toSerial(g("covstart")), covEnd: toSerial(g("covend")),
+          copay: txt(g("copay")), coins: txt(g("coinsurance")), ded: txt(g("deductible")), dedRem: txt(g("dedremaining")), oop: txt(g("oopmax")), oopRem: txt(g("oopremaining")),
+          status: txt(g("soharstatus")), date: toSerial(g("sohardate")), ref: txt(g("soharref")) },
+        bidfPrinted: toSerial(g("bidfprinted")), note: txt(g("note")), by: txt(g("by")), updated: txt(g("updated")) }); });
+    return m;
+  }
+  /* each part of the visit for one patient: insurance or self pay, the payer, and what's due. The tracker's insurance columns
+     and amounts win; the profile fills in what the tracker doesn't say. */
+  function coverage(p, prof) {
+    const part = (ins, pf, due) => { const cover = pf?.cover || (isSelf(ins) ? "selfpay" : txt(ins) ? "insurance" : ""), payer = cover === "selfpay" ? "" : (txt(ins) && !isSelf(ins) ? txt(ins) : pf?.payer || "");
+      return { cover, payer, due }; };
+    const d = dueOf(p), prov = part(p?.ins1, prof?.prov, d.copay), inf = part(p?.ins2, prof?.inf, d.infusion);
+    return { prov, inf, mode: prov.cover || inf.cover ? modeOf(prov.cover || "insurance", inf.cover || "insurance") : "", total: d.total };
+  }
+  /* New patients: on the appointment list (today on, within days) with no row on the Master Patient Tracker. A patient on the
+     tracker already has their profile in its columns. Treatment starts first, then by first visit. */
+  function profileGaps(A, PM, PF, today, days) {
+    const by = new Map();
+    for (const a of A) { if (a.date < today || a.date > today + days || isCancelled(a)) continue; const o = by.get(a.mrn); if (!o || a.date < o.first.date || (a.date === o.first.date && (a.time ?? 0) < (o.first.time ?? 0))) by.set(a.mrn, { first: a, start: (o && o.start) || /start/i.test(a.event) }); else if (/start/i.test(a.event)) o.start = true; }
+    return [...by.entries()].filter(([mrn]) => !PM.has(mrn)).map(([mrn, o]) => ({ mrn, code: o.first.code || "", first: o.first, start: o.start, onMpt: false }))
+      .sort((a, b) => (b.start - a.start) || a.first.date - b.first.date || (a.first.time ?? 0) - (b.first.time ?? 0));
+  }
+  /* The Sohar Eligibility add-in's benefits CSV ("Per Nbr", "MRN", "LASFIR", "Sohar Payer", ... "Sohar Ref"; the tracker file adds
+     Service and more at the end). The header row is the first with MRN and Deductible Remaining or OOP Remaining. Discovery rows
+     (Sent As) are skipped. Out: Map MRN -> the latest verification, in the profile's Sohar fields. */
+  const SOHAR_CSV = { mrn: "MRN", lasfir: "LASFIR", payer: "Sohar Payer", plan: "Plan", network: "Network", covStart: "Coverage Start", covEnd: "Coverage End",
+    copay: "Copay", coins: "Coinsurance", ded: "Deductible", dedRem: "Deductible Remaining", oop: "OOP Max", oopRem: "OOP Remaining", status: "Sohar Status", date: "Sohar Date", ref: "Sohar Ref", sentAs: "Sent As" };
+  function parseSohar(rows) {
+    const hi = (rows || []).slice(0, 30).findIndex(r => { const h = (r || []).map(norm); return h.includes("mrn") && (h.includes("deductibleremaining") || h.includes("oopremaining")); });
+    if (hi < 0) return null;
+    const hn = rows[hi].map(norm), idx = Object.fromEntries(Object.entries(SOHAR_CSV).map(([k, h]) => [k, hn.indexOf(norm(h))]));
+    const out = new Map();
+    for (const r of rows.slice(hi + 1)) {
+      const get = k => idx[k] < 0 ? "" : txt(r[idx[k]]), mrn = mrnKey(get("mrn")); if (!mrn) continue;
+      if (get("sentAs") && !/^verification$/i.test(get("sentAs"))) continue;
+      const rec = { mrn, code: get("lasfir"), payer: get("payer"), plan: get("plan"), network: get("network"), covStart: toSerial(get("covStart")), covEnd: toSerial(get("covEnd")),
+        copay: get("copay"), coins: get("coins"), ded: get("ded"), dedRem: get("dedRem"), oop: get("oop"), oopRem: get("oopRem"), status: get("status"), date: toSerial(get("date")), ref: get("ref") };
+      const prev = out.get(mrn); if (!prev || (rec.date ?? 0) >= (prev.date ?? 0)) out.set(mrn, rec);
+    }
+    return out;
+  }
+
+  /* ---------- access: demand by protocol ---------- */
+  /* What the IVK schedule has to hold, from each patient's protocol (the tracker's Frequency), against how they're booked.
+     o = { patients, appts, holds, today, cfg, weeks, paused (include Paused patients), sched ("all" | "exclude" unscheduled | "only"
+     unscheduled), X (the templates, for the slots each week offers) }.
+     Index patients (Induction, or a course started within the index weeks with fewer than the index's visits done) come at
+     IndexPerWeek until treatment N (IndexPerWeek x IndexWeeks, 6), then at least AfterIndex (once a week): that step down is the
+     access they free. Weeks run Sunday to Saturday from this week. */
+  function demand(o) {
+    const c = o.cfg, T = o.today, W = o.weeks || 12, N = Math.max(1, Math.round(+c.IndexPerWeek * +c.IndexWeeks)), w0 = weekStart(T);
+    const after = 7 / (freqDays(c.AfterIndex) || 7), perIdx = +c.IndexPerWeek;
+    const held = (o.holds || []).filter(h => holding(h, o.appts, o.listAt));
+    const rows = [];
+    for (const p of o.patients || []) {
+      const st = txt(p.status).toLowerCase(), paused = /paused/.test(st);
+      if (!(isActive(p) || (o.paused && paused))) continue;
+      const fut = futureOf(o.appts, p.mrn, T - 1).concat(held.filter(h => h.mrn === p.mrn && h.date >= T).map(h => ({ date: h.date, time: h.time, hold: true })));
+      const unsched = !fut.length;
+      if (o.sched === "exclude" && unsched) continue;
+      if (o.sched === "only" && !unsched) continue;
+      const fd = freqDays(p.freq), prn = /prn/i.test(p.freq || ""), rate = fd ? 7 / fd : 0;
+      /* index: treatment N's day, booked, or projected at IndexPerWeek from the visits left */
+      const L = countable(p, o.appts) ? treatments(p, o.appts) : null, done = L ? L.filter(a => a.date < T).length : null;
+      /* an index patient is one whose status is Induction */
+      const idx = /induction/.test(st);
+      let idxEnd = null;
+      if (idx) { const left = Math.max(0, N - (done ?? 0)), bookedN = L && L[N - 1] ? L[N - 1].date : null; idxEnd = bookedN ?? T + Math.ceil(left / perIdx) * 7; }
+      const afterRate = Math.max(after, prn ? 0 : rate && rate < perIdx ? rate : after);
+      const expect = Array.from({ length: W }, (_, w) => { const a = w0 + 7 * w, b = a + 7, from = Math.max(a, T), days = b - from; if (days <= 0) return 0;
+        if (!idx) return rate * days / 7;
+        if (idxEnd >= b) return perIdx * days / 7;
+        if (idxEnd < from) return afterRate * days / 7;
+        return (perIdx * (idxEnd - from + 1) + afterRate * (b - idxEnd - 1)) / 7; });
+      const booked = Array.from({ length: W }, (_, w) => fut.filter(f => f.date >= w0 + 7 * w && f.date < w0 + 7 * w + 7).length);
+      rows.push({ p, mrn: p.mrn, code: p.code, freq: idx ? "Index" : p.freq || "No frequency", proto: p.freq || "", rate: idx ? perIdx : rate, prn, unsched, paused, idx, idxEnd,
+        afterRate: idx ? afterRate : null, expect, booked, next: fut.sort((x, y) => x.date - y.date)[0] || null });
+    }
+    const sum = (L, f) => L.reduce((n, x) => n + f(x), 0), win = (arr, n) => arr.slice(0, n).reduce((a, b) => a + b, 0);
+    const weeks = Array.from({ length: W }, (_, w) => {
+      const a = w0 + 7 * w, exp = sum(rows, r => r.expect[w]), bk = sum(rows, r => r.booked[w]), gap = sum(rows, r => Math.max(0, r.expect[w] - r.booked[w]));
+      let slots = 0, open = 0;
+      if (o.X) for (let d = Math.max(a, T); d < a + 7; d++) { const wd = weekday(d); if (wd < 1 || wd > 5) continue; const S = daySlots(d, o.X).slots; slots += S.length; open += S.filter(s => s.open).length; }
+      /* the step down from index to after-index visits that lands in this week */
+      const steps = rows.filter(r => r.idx && r.idxEnd >= a && r.idxEnd < a + 7);
+      return { w, start: a, expect: exp, booked: bk, toBook: gap, slots, open, freed: sum(rows.filter(r => r.idx && r.idxEnd < a + 7), r => Math.max(0, perIdx - r.afterRate) * Math.min(7, a + 7 - Math.max(a, r.idxEnd + 1)) / 7), steps };
+    });
+    const groups = new Map();
+    for (const r of rows) { const g = groups.get(r.freq) || { freq: r.freq, rate: r.rate, n: 0, unsched: 0, paused: 0, perWeek: 0, rows: [] }; g.n++; g.rows.push(r); if (r.unsched) g.unsched++; if (r.paused) g.paused++; g.perWeek += r.expect.length ? (r.idx ? perIdx : r.rate) : 0; groups.set(r.freq, g); }
+    const G = [...groups.values()].map(g => Object.assign(g, { d4: sum(g.rows, r => win(r.expect, 4)), b4: sum(g.rows, r => win(r.booked, 4)), d8: sum(g.rows, r => win(r.expect, 8)), b8: sum(g.rows, r => win(r.booked, 8)),
+      d12: sum(g.rows, r => win(r.expect, 12)), b12: sum(g.rows, r => win(r.booked, 12)) }))
+      .sort((a, b) => (a.freq === "Index" ? -1 : b.freq === "Index" ? 1 : 0) || (b.rate - a.rate) || a.freq.localeCompare(b.freq));
+    const perWeek = sum(rows, r => r.idx ? perIdx : r.rate);
+    return { rows, groups: G, weeks, N, perIdx, after, perWeek, avg: rows.length ? perWeek / rows.length : 0,
+      transitions: rows.filter(r => r.idx).sort((a, b) => a.idxEnd - b.idxEnd) };
+  }
+
+  /* ---------- index: Induction patients ---------- */
+  /* An Induction patient is in index. Their kept visits (not cancelled, not no-shows) are counted from the treatment start; once
+     the Nth (IndexPerWeek x IndexWeeks, 6) is kept, index is complete: the desk moves them to Ongoing and confirms the protocol
+     (usually 1x per week, set by the provider by acuity). Kept = before today, or today once checked out (keptToday). */
+  function indexState(p, A, today, cfg, keptToday) {
+    if (!p || !/induction/i.test(p.status || "")) return null;
+    const N = Math.max(1, Math.round(+cfg.IndexPerWeek * +cfg.IndexWeeks)), L = treatments(p, A);
+    const done = L.filter(a => a.date < today || (a.date === today && keptToday && keptToday(a))).length;
+    return { N, done, complete: countable(p, A) && done >= N, sixth: L[N - 1] || null, countable: countable(p, A) };
+  }
   /* ---------- treatment numbers, Oakland ---------- */
   /* the patient's IVK treatments in order, from the treatment start (Tx Start Date, else the first "start" visit on the list) */
   function treatments(p, A) {
@@ -744,6 +906,8 @@
 
   return { DEFAULTS, VISIT_COLS, TEMPLATES, norm, txt, num, serialOf, dateOf, isoOf, fromIso, toSerial, toMin, fmtT, fmtD, fmtDay, weekday, weekStart,
     PT_COLS, ptRows, AV_LEVELS, avName, availGrid, availStr, canCome, prefCells, awayList, awayStr, awayOn, PAY_COLS, REMIND_METHODS, money, amt, payRows, dueOf, payOf, ledger, toConfirm,
+    PARTS, partKey, dueParts, visitAnswered, PROFILE_COLS, COVER_MODES, modeOf, modeParts, isSelf, SOHAR_KEYS, profileRows, coverage, profileGaps, parseSohar, demand,
+    fullPlan, eligibleStarts, memoX, indexState, indexN: cfg => Math.max(1, Math.round(+cfg.IndexPerWeek * +cfg.IndexWeeks)),
     treatments, txNo, isOak, oakState, WAIT_ON, waitlist, waitMove, provFull, fullName, firstName, scheduleOf, START_TPL, longWhen,
     lasfir, provName, mrnKey, pickRow, eventShort, freqDays, byHeader, patients, appts, isCancelled, visitKey, visitRows, phase, isActive, futureOf, asks,
     today, code, chairState, chairStatus, waitMin, isLate, chairList, needs, loud, consults, fill, protoWords, arrivalText, askText,
