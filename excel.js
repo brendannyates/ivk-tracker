@@ -14,6 +14,8 @@
                           WaitRank | WaitingOn | Appeal | WaitNote | By | Updated   (per patient: payment flags, Oakland, availability, waitlist)
      tblIvkPay        CR1  Id | Date | MRN | Patient | Key | Kind | Amount | Method | Note | By | At   (payments due, collected, missed, reminders)
      tblIvkExceptions DD1  Id | Provider | From | To | Coverage | UseTemplate | Note | Status | By | Updated   (provider time off and coverage)
+     tblIvkProfile    DP1  MRN | Patient | ProvCover | ProvPayer | InfCover | InfPayer | Sohar benefits ... | BidfPrinted | Note | By | Updated
+                          (per patient: who pays the provider visit and the infusion, the latest Sohar benefits, when the BIDF was printed)
    (AK1 held tblIvkSlots, the first template; it is no longer read.)
    Text cells only on that sheet ("1:22 PM" stays text). The chair map is a document setting (a map file can be larger than a cell holds).
    Two visible tabs hold the provider templates, in the Clinic Template Tool's format so that tool can read them (template.js):
@@ -44,7 +46,8 @@
     { name: "tblIvkFlags", anchor: "BT", columns: C.FLAG_COLS, rows: [C.FLAG_COLS.map(() => "")] },
     { name: "tblIvkPatient", anchor: "BZ", columns: C.PT_COLS, rows: [C.PT_COLS.map(() => "")] },
     { name: "tblIvkPay", anchor: "CR", columns: C.PAY_COLS, rows: [C.PAY_COLS.map(() => "")] },
-    { name: "tblIvkExceptions", anchor: "DD", columns: C.EX_COLS, rows: [C.EX_COLS.map(() => "")] }
+    { name: "tblIvkExceptions", anchor: "DD", columns: C.EX_COLS, rows: [C.EX_COLS.map(() => "")] },
+    { name: "tblIvkProfile", anchor: "DP", columns: C.PROFILE_COLS, rows: [C.PROFILE_COLS.map(() => "")] }
   ];
   const BIG = ["tblIvkVisits", "tblIvkLog", "tblIvkHolds", "tblIvkOther", "tblIvkPay"];
   const IP_RANGE = "A1:AZ60";   // the Index Planner tab: 9 weeks of Mon-Fri across, half hours down, the slot list below
@@ -130,7 +133,7 @@
         t.getDataBodyRange().values = s.rows.map(r => r.map(String));
         made.push(s.name);
       }
-      if (made.length) { ws.getRange("A:DM").format.autofitColumns(); ws.visibility = Excel.SheetVisibility.hidden; }
+      if (made.length) { ws.getRange("A:EN").format.autofitColumns(); ws.visibility = Excel.SheetVisibility.hidden; }
       await ctx.sync();
       return { made, blocked };
     });
@@ -291,6 +294,41 @@
       }
       await ctx.sync();
       return { wrote, skipped };
+    });
+  }
+  /* A new patient on the Master Patient Tracker (a profile made for someone on the appointment list). fields = { header: value }
+     by the tracker's own header names (any spelling the reads accept); a date is { v: serial, date: true }. The table grows by one
+     row, so its calculated columns fill themselves; formula cells and columns the tab doesn't have are left alone and named.
+     If the MRN is already on the tracker nothing is added. */
+  async function addMpt(fields) {
+    return Excel.run(async ctx => {
+      const tm = await tableMap(ctx); if (!tm.mpt) throw new Error("No Master Patient Tracker table in this workbook.");
+      const t = ctx.workbook.tables.getItem(tm.mpt), h = t.getHeaderRowRange(); h.load("values");
+      let b = t.getDataBodyRange(); b.load("values,rowCount"); await ctx.sync();
+      const head = h.values[0], cols = head.map(C.norm), cM = cols.indexOf("mrn"); if (cM < 0) throw new Error("The Master Patient Tracker needs an MRN column.");
+      const mrn = C.mrnKey(fields.MRN?.v ?? fields.MRN);
+      if (b.values.some(r => C.mrnKey(r[cM]) === mrn)) throw new Error(`MRN ${mrn} is already on the Master Patient Tracker`);
+      /* the starter blank row of an empty table is used; otherwise one row is added at the bottom */
+      const had = b.rowCount, blank = had === 1 && b.values[0].every(v => v === "" || v == null);
+      let i = blank ? 0 : had;
+      if (!blank) {
+        const last = b.getRow(had - 1); last.load("formulasR1C1"); await ctx.sync();
+        t.resize(t.getRange().getResizedRange(1, 0)); await ctx.sync();
+        b = t.getDataBodyRange(); await ctx.sync();
+        last.formulasR1C1[0].forEach((f, c) => { if (isF(f)) b.getCell(i, c).formulasR1C1 = [[f]]; });
+        await ctx.sync();
+      }
+      const r = b.getRow(i); r.load("formulas"); await ctx.sync();
+      const wrote = [], skipped = [];
+      for (const [k, x] of Object.entries(fields)) {
+        const keys = k.split("|").map(C.norm), c = cols.findIndex(h2 => keys.includes(h2)); if (c < 0) { skipped.push(k.split("|")[0]); continue; }
+        if (isF(r.formulas[0][c])) { skipped.push(head[c]); continue; }
+        const o = x && typeof x === "object" ? x : { v: x }, cell = b.getCell(i, c);
+        if (o.date) cell.numberFormat = [["m/d/yyyy"]];
+        cell.values = [[o.v == null ? "" : o.v]]; wrote.push(head[c]);
+      }
+      await ctx.sync();
+      return { row: i, wrote, skipped };
     });
   }
   /* payments: rows by column name, appended (Id and At filled in) */
@@ -473,6 +511,7 @@
   const savePlan = (mrn, patch) => upsertMrn("tblIvkPlans", mrn, patch);
   const saveFlag = (mrn, patch) => upsertMrn("tblIvkFlags", mrn, patch);
   const savePt = (mrn, patch) => upsertMrn("tblIvkPatient", mrn, patch);
+  const saveProfile = (mrn, patch) => upsertMrn("tblIvkProfile", mrn, patch);
   /* a time-off entry, by Id (a new Id adds one; Status "removed" takes it out) */
   async function saveException(id, patch) {
     return Excel.run(async ctx => {
@@ -550,5 +589,5 @@
 
   return { DATA_SHEET, SHEETS, PLANNER, TPL_SHEET, TYPES_SHEET, SPEC, load, setup, saveVisit, confirmProtocol, replaceAppts, saveKeyed, saveRoutes, appendLog, openRow,
     setupTemplate, addGrid, setCells, saveTypes, replaceOther, savePlan, saveFlag, placeHolds, setHolds, fillPlanner, getDoc, setDoc, refreshDoc,
-    readRow, saveRow, savePt, addPays, saveRanks, saveException };
+    readRow, saveRow, savePt, addPays, saveRanks, saveException, saveProfile, addMpt };
 });
