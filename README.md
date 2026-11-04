@@ -16,10 +16,10 @@ the task pane, full screen sits at the top right of every page with refresh and 
 
 - **Today**: the chair map (a file from the [Bay Map Builder](https://brendannyates.github.io/bay-map-builder/)), who's checked
   in and waiting, who's still to come, and one visit card with the next step. Until a map is loaded the chairs are one folded line
-  that opens to tiles. Red only means a patient has waited 10+ minutes for a chair. **Patient profiles to create** lists everyone
-  on the appointment list in the next 4 weeks without a profile, treatment starts first.
+  that opens to tiles. Red only means a patient has waited 10+ minutes for a chair. **New patients to add** lists everyone on the
+  appointment list in the next 4 weeks with no row on the Master Patient Tracker, treatment starts first.
 - **Schedule**: the week (Sunday to Saturday) by day and time, from the Appt List tab, with open template slots and holds.
-  Treatment starts carry a blue tab and index visits (treatments 1 to 6, holds, Induction) a lavender one; **PC** marks a patient
+  Treatment starts carry a blue tab and index visits (Induction patients' visits, and holds) a lavender one; **PC** marks a patient
   who requires a post-check, and a shaded tile shows where each post check lands (hover a visit and its post check lights up). A
   visit booked off its template slot (a start in a follow-up-only slot, or a time with no IVK slot) has a small **(i)**: hover or
   press it for "This visit does not match the templated slot-type". Pressing a booked visit opens the patient view; pressing an
@@ -28,13 +28,15 @@ the task pane, full screen sits at the top right of every page with refresh and 
   - **Demand**: what the schedule has to hold at everyone's current protocol (the tracker's Frequency), by protocol: patients,
     visits a week each and in all, and for the next 4 and 8 weeks what's needed, booked (NextGen visits and holds) and still to
     book; then week by week against the template's IVK slots and how many are open. Include paused patients, or exclude or show
-    only unscheduled ones (nothing booked). Index patients count at 2 a week until treatment 6, then once a week; **When index
-    creates access** lists each one with the week they step down and the visits a week that frees.
+    only unscheduled ones (nothing booked). Induction patients count at 2 a week until treatment 6, then at the after-index
+    protocol (Settings, 1x per week); **When index creates access** lists each one with the week they step down and the visits a
+    week that frees.
   - **Waitlist** (below), **Index planner** (below) and **Templates** (the provider grids; the providers are toggled at the top
     right of the template card).
 - **Patients**: a table of everyone on the Master Patient Tracker that sorts by any column, ascending or descending (press the
-  header again): patient, protocol, status, protocol last confirmed, booked through, needs. Chips: Needs attention, No profile,
-  Active, Paused, Discontinued, All. Pressing a patient opens the **patient view**, laid out as the TMS Tracker's: the lead need and
+  header again): patient, protocol, status, protocol last confirmed, booked through, needs. Chips: Needs attention, New patients
+  (on the list, not on the tracker), Active, Paused, Discontinued, All. Pressing a patient opens the **patient view**, laid out as
+  the TMS Tracker's: the lead need and
   its action, today's visit if they're here, then one section at a time: **Schedule** (visits with start and index tabs, holds,
   printouts, availability), **Protocol** (frequency, last confirmed and every confirmation since, index progress, post check,
   Oakland), **Benefits** (who covers the provider visit and the infusion, the latest Sohar benefits, the authorization, the BIDF)
@@ -48,14 +50,24 @@ the task pane, full screen sits at the top right of every page with refresh and 
 
 ## Patient profiles
 
-Anyone on the appointment list (especially a treatment start) who isn't on the Master Patient Tracker, or has no profile, is
-prompted on Today, Patients and their visit card. **Create profile** asks for the LASFIR code, status, protocol, who covers what
+A patient on the Master Patient Tracker has their profile in its columns. New patients (on the appointment list, especially a
+treatment start, with no row on the tracker) are prompted on Today, Patients and their visit card. **Create profile** asks for the
+LASFIR code, status (Induction for a new start), protocol, who covers what
 (insurance for both, self pay for both, or one of each), the payer and what the patient pays each visit for the **provider visit
 (99214/99215)** and for the **infusion**, and the latest Sohar benefits (payer, plan, network, coverage dates, copay, coinsurance,
 deductible and OOP max with what's left, status, verified date, reference). The Sohar fields can be typed or filled from the Sohar
 Eligibility add-in's benefits CSV by MRN. Saving adds the patient to the Master Patient Tracker (Patient Name is the code; Copay,
 Infusion, Primary Encounter Insurance, Infusion Insurance, Status, Frequency, Primary Location, Tx Start Date; the table's formula
-columns fill themselves) and the rest to tblIvkProfile.
+columns fill themselves) and the rest to tblIvkProfile. For a patient already on the tracker, Benefits › **Edit coverage and
+benefits** opens the same form.
+
+## Index and after
+
+A patient whose status is **Induction** is an index patient: their visits carry the lavender tab, they count at 2 a week in
+Demand, and they're the ones listed to change in the Index planner. Once they've kept their 6th visit (cancelled visits and
+no-shows don't count), check-out of that visit offers **Move to Ongoing** with the protocol after index (usually 1x per week; the
+provider sets it by acuity), and until it's done the patient has the need "Index done: move to Ongoing and confirm the protocol".
+Moving writes Status Ongoing, Frequency and Protocol Updated on the Master Patient Tracker.
 
 **Start paperwork** (schedule and consent) prompts for the BIDF: it's completed by the benefits team and printed from NextGen, so
 the add-in asks the desk to print it and saves the day they tick it. The start email still needs the BIDF uploaded as a PDF.
