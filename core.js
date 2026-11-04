@@ -270,7 +270,7 @@
     if (/induction/i.test(p.status)) add("induction", "Induction", null, { quiet: true });
     if (/paused/i.test(p.status)) add("paused", "Paused", null, { quiet: true });
     if (oak) add("oakq", oak.unknown ? "Oakland patient" : `Oakland: index here, ${oak.done} of ${oak.idx} done`, null, { quiet: true });
-    else if (elsewhere(p, x.clinic)) add("home", `Home clinic ${p.loc}`, null, { quiet: true });
+    else if (elsewhere(p, c)) add("home", `Home clinic ${p.loc}`, null, { quiet: true });
     if (/self ?pay/i.test(p.ins2)) add("selfpay", "Self-pay infusion", null, { quiet: true });
     if (p.reqPost) add("post", "Requires post-check", null, { quiet: true });
     const rank = y => y.quiet ? 2 : y.bad ? 0 : 1;
@@ -889,8 +889,14 @@
   /* their first visit at another clinic (one named like "to", or any when "to" is blank) on or after "from", not cancelled */
   const bookedAt = (E, mrn, to, from) => (E || []).filter(a => a.mrn === mrn && a.date >= from && !isCancelled(a) && !/no ?show/i.test(a.status) && (!txt(to) || sameLoc(a.loc, to)))
     .sort((a, b) => a.date - b.date || (a.time ?? 0) - (b.time ?? 0))[0] || null;
-  /* home clinic isn't this one (by Primary Location) */
-  const elsewhere = (p, clinic) => !!(p && p.loc && clinic && norm(p.loc) !== norm(clinic));
+  /* home clinic isn't this one: Primary Location isn't one of this clinic's locations (cfg, or just the clinic's name) */
+  const elsewhere = (p, cfg) => { const c = typeof cfg === "string" ? { Clinic: cfg } : cfg || {}; return !!(p && p.loc && c.Clinic && !isOurs(p.loc, c)); };
+  /* a patient's IVK appointments: kept and booked here (the Appt List), and booked at each other clinic (the wider report) */
+  function visitCounts(mrn, A, E, today) {
+    const live = a => a.mrn === mrn && !isCancelled(a), L = A.filter(live), away = new Map();
+    (E || []).filter(a => live(a) && a.date >= today && !/no ?show/i.test(a.status)).forEach(a => away.set(a.loc, (away.get(a.loc) || 0) + 1));
+    return { kept: L.filter(a => a.date < today && !/no ?show/i.test(a.status)).length, booked: L.filter(a => a.date >= today).length, away: [...away].map(([loc, n]) => ({ loc, n })) };
+  }
 
   /* ---------- treatment numbers, Oakland ---------- */
   /* the patient's IVK treatments in order, from the treatment start (Tx Start Date, else the first "start" visit on the list) */
@@ -991,7 +997,7 @@
   return { DEFAULTS, VISIT_COLS, TEMPLATES, norm, txt, num, serialOf, dateOf, isoOf, fromIso, toSerial, toMin, fmtT, fmtD, fmtDay, weekday, weekStart,
     PT_COLS, ptRows, AV_LEVELS, avName, availGrid, availStr, canCome, prefCells, awayList, awayStr, awayOn, PAY_COLS, REMIND_METHODS, money, amt, payRows, dueOf, payOf, ledger, toConfirm,
     PARTS, partKey, dueParts, visitAnswered, PROFILE_COLS, COVER_MODES, modeOf, modeParts, isSelf, SOHAR_KEYS, profileRows, coverage, profileGaps, parseSohar, demand,
-    fullPlan, eligibleStarts, memoX, indexState, indexShort, nextStart, XFER_COLS, xferRows, xferState, elsewhere, ELSE_COLS, elseRows, sameLoc, isOurs, bookedAt, prefCols, indexN: cfg => Math.max(1, Math.round(+cfg.IndexPerWeek * +cfg.IndexWeeks)),
+    fullPlan, eligibleStarts, memoX, indexState, indexShort, nextStart, XFER_COLS, xferRows, xferState, elsewhere, visitCounts, ELSE_COLS, elseRows, sameLoc, isOurs, bookedAt, prefCols, indexN: cfg => Math.max(1, Math.round(+cfg.IndexPerWeek * +cfg.IndexWeeks)),
     treatments, txNo, isOak, oakState, WAIT_ON, waitlist, waitMove, provFull, fullName, firstName, scheduleOf, START_TPL, longWhen,
     lasfir, provName, mrnKey, pickRow, eventShort, freqDays, byHeader, patients, appts, isCancelled, visitKey, visitRows, phase, isActive, futureOf, asks,
     today, code, chairState, chairStatus, waitMin, isLate, chairList, needs, loud, consults, fill, protoWords, arrivalText, askText,

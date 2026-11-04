@@ -953,12 +953,15 @@
     const T = todayS(), m = esc(p.mrn), fut = C.scheduleOf(p, S.A, T), past = S.A.filter(a => a.mrn === p.mrn && a.date < T && !C.isCancelled(a)).sort((a, b) => b.date - a.date).slice(0, 5);
     const miss = (d, t) => !!C.daySlots(d, S.X).bookings.find(b => b.kind === "appt" && b.mrn === p.mrn && b.time === t)?.miss;
     const row = x => { const a = { event: x.type === "Treatment start" ? "start" : "", mrn: p.mrn, date: x.date, time: x.time }, k = visitKind(a), mi = S.grids.length && miss(x.date, x.time);
-      return `<li class="step now${k ? ` k-${k}` : ""}"><span class="k">${x.n || ""}</span><span><span class="t">${esc(x.day)}, ${esc(x.at)}${mi ? missTag() : ""}</span><span class="m">${esc(x.provider)}, ${k === "st" ? "treatment start" : k === "ix" ? "index visit" : "infusion"}${p.reqPost || k ? `, post check ${C.fmtT(x.time + +S.cfg.PostCheckMin)}` : ""}${x.status && !/expected/i.test(x.status) ? `, ${esc(x.status)}` : ""}</span></span><span class="w">${x.n ? `Treatment ${x.n}` : ""}</span></li>`; };
+      return `<li class="step now${k ? ` k-${k}` : ""}"><span class="k">${x.n || ""}</span><span><span class="t">${esc(x.day)}, ${esc(x.at)}${mi ? missTag() : ""}</span><span class="m">${x.loc ? `${esc(x.loc)}, ` : ""}${esc(x.provider)}, ${k === "st" ? "treatment start" : k === "ix" ? "index visit" : "infusion"}${p.reqPost || k ? `, post check ${C.fmtT(x.time + +S.cfg.PostCheckMin)}` : ""}${x.status && !/expected/i.test(x.status) ? `, ${esc(x.status)}` : ""}</span></span><span class="w">${x.n ? `Treatment ${x.n}` : ""}</span></li>`; };
     const hs = holdsOf(p.mrn).filter(h => h.state !== "booked" || h.conf !== "onlist");
     /* start paperwork and the start email only for a treatment start on the list (the email only before its day), never follow-ups */
-    const st = C.nextStart(p, S.A, T);
+    const st = C.nextStart(p, S.A, T), vc = C.visitCounts(p.mrn, S.A, S.x.E, T);
+    const away = (S.x.E || []).filter(a => a.mrn === p.mrn && a.date >= T && !C.isCancelled(a)).sort((a, b) => a.date - b.date || (a.time ?? 0) - (b.time ?? 0));
     return `<div class="h"><h2>Schedule</h2><span>${fut.length ? `${plural(fut.length, "visit")} from today` : "nothing booked"}</span></div>
+      <dl class="facts"><dt>At ${esc(S.cfg.Clinic)}</dt><dd>${plural(vc.kept + vc.booked, "appointment")}: ${vc.kept} kept, ${vc.booked} booked</dd>${vc.away.map(x => `<dt>${esc(x.loc || "Another clinic")}</dt><dd>${plural(x.n, "appointment")} booked</dd>`).join("")}</dl>
       ${fut.length ? `<ul class="steps">${fut.slice(0, 12).map(row).join("")}</ul>${fut.length > 12 ? `<p class="note">And ${plural(fut.length - 12, "more")}.</p>` : ""}` : `<p class="note${C.isActive(p) && !/prn/i.test(p.freq) ? " warn" : ""}">No IVK visit booked from today.</p>`}
+      ${away.length ? `<div class="section"><div class="h"><h2>At other clinics</h2><span>as of ${C.fmtD(S.elseAt)}</span></div><ul class="steps">${away.slice(0, 8).map(a => `<li class="step soon"><span class="k"></span><span><span class="t">${dshort(a.date)}, ${C.fmtT(a.time)}</span><span class="m">${esc(a.loc)}, ${esc(C.provName(a.provider))}${a.status && !/expected/i.test(a.status) ? `, ${esc(a.status)}` : ""}</span></span><span class="w"></span></li>`).join("")}</ul></div>` : ""}
       ${hs.length ? `<div class="section"><div class="h"><h2>Holds</h2><span>${hs.length}</span></div><ul class="steps">${hs.map(h => `<li class="step soon k-ix"><span class="k">${h.n || ""}</span><span><span class="t">${dshort(h.date)}, ${C.fmtT(h.time)}</span><span class="m">${esc(provLabel(h.provider))}, ${h.status === "booked" ? "booked: upload to confirm" : h.state === "late" ? "not confirmed booked" : "held"}</span></span><span class="w"></span></li>`).join("")}</ul><div class="actions"><button class="btn ghost sm line" data-act="ipPick" data-m="${m}">Open in the Index planner</button></div></div>` : ""}
       <div class="actions"><button class="btn ghost sm line" data-act="printSched" data-m="${m}">Print schedule</button>${st ? `<button class="btn mute sm" data-act="startForms" data-m="${m}">Start paperwork</button>` : ""}${st && st.date > T ? `<button class="btn mute sm" data-act="startEmail" data-m="${m}">Start email</button>` : ""}<button class="btn mute sm" data-act="pvPlan" data-m="${m}">Plan index visits</button></div>
       ${past.length ? `<div class="section"><div class="h"><h2>Recent visits</h2></div><dl class="facts">${past.map(a => `<dt>${dshort(a.date)}</dt><dd>${C.fmtT(a.time)}, ${esc(C.provName(a.provider))}${/no ?show/i.test(a.status) ? ", no-show" : ""}</dd>`).join("")}</dl></div>` : ""}
@@ -985,7 +988,7 @@
   const thereTxt = (e, to) => S.x.E == null ? "" : e ? ` Booked at ${esc(e.loc || to)} ${C.fmtD(e.date)}.` : ` Nothing booked at ${esc(to)} yet (other clinics’ visits as of ${C.fmtD(S.elseAt)}).`;
   function xferHTML(p) {
     const xf = S.XF.get(p.mrn), xs = C.xferState(xf, S.A, todayS(), S.x.E), m = esc(p.mrn);
-    if (!xf && !C.elsewhere(p, S.cfg.Clinic) && !C.oakState(p, ptOf(p.mrn), S.A, todayS(), S.cfg)) return "";
+    if (!xf && !C.elsewhere(p, S.cfg) && !C.oakState(p, ptOf(p.mrn), S.A, todayS(), S.cfg)) return "";
     const st = xs ? `to ${esc(xs.to)}${xs.date != null ? ` ${C.fmtD(xs.date)}` : ""}` : xf?.status === "done" ? `done${xf.confirmed != null ? ` ${C.fmtD(xf.confirmed)}` : ""}` : "none scheduled";
     return `<div class="section"><div class="h"><h2>Transfer</h2><span>${st}</span></div>
       ${needTable("tblIvkTransfers", "Transfers")}
@@ -1288,6 +1291,8 @@
     return !!ok;
   }
   /* the edit form's fields from the row: label, current value as the input shows it, type, and suggestions from the column */
+  /* the locations in the appointment list's scope, as NextGen names them: this clinic's and the other clinics' (wider report) */
+  const locOpts = () => [...new Set(S.A.map(a => a.loc).concat(S.E.map(a => a.loc)).map(C.txt).filter(Boolean))].sort();
   /* the AM/PM columns are edited under Availability (found by position, C.prefCols) */
   const SKIP_EDIT = { mpt: ["mrn", "patientname"], consults: ["patientmrn", "patient"] };
   function editFields(m) {
@@ -1299,7 +1304,7 @@
       const type = dateLike ? "date" : typeof v === "number" ? "num" : "text";
       const cur = type === "date" ? (C.toSerial(v) != null ? C.isoOf(C.toSerial(v)) : "") : C.txt(v);
       const col = hdr.indexOf(k), seen = col < 0 || !src ? [] : [...new Set(src.slice(1).map(r => C.txt(r[col])).filter(x => x && !/^\d+(\.\d+)?$/.test(x)))];
-      const opts = k === "frequency" ? S.freqs : seen.length <= 40 && type === "text" ? seen.sort() : [];
+      const opts = k === "frequency" ? S.freqs : k === "primarylocation" ? locOpts() : seen.length <= 40 && type === "text" ? seen.sort() : [];
       return { i, h, label: h.replace(/\s+/g, " ").trim(), type, cur, formula: !!f, shown: type === "date" && C.toSerial(v) != null ? C.fmtD(C.toSerial(v)) : C.txt(v), opts, long: /notes?\b/i.test(h) };
     }).filter(Boolean);
   }
@@ -1359,7 +1364,7 @@
       const oak = /oak/i.test(m.to), tasked = ptOf(p.mrn)?.oakTasked;
       return `<h2 id="mh">Transfer ${esc(p.code)} <span class="mrn">MRN ${esc(p.mrn)}</span></h2><p class="sub muted">Home clinic ${esc(p.loc || "not set")}. ${xs ? `Scheduled to ${esc(xs.to)}${xs.date != null ? ` ${C.fmtD(xs.date)}` : ""}.` : ""}</p>
         <div class="fld">What<div class="pick">${pk("now", "Discontinue now", "transferred, from today")}${pk("later", "Schedule a transfer", "a future date, confirmed at the last visit here")}</div></div>
-        <div class="two"><label class="fld">Transferring to<input id="xfTo" value="${esc(m.to)}" autocomplete="off" list="xfClin"><datalist id="xfClin">${[...new Set(S.P.map(x => x.loc).filter(Boolean))].map(x => `<option value="${esc(x)}">`).join("")}</datalist></label>
+        <div class="two"><label class="fld">Transferring to<input id="xfTo" value="${esc(m.to)}" autocomplete="off" list="xfClin"><datalist id="xfClin">${locOpts().filter(l => !C.isOurs(l, S.cfg)).map(x => `<option value="${esc(x)}">`).join("")}</datalist></label>
           ${m.mode === "later" ? `<label class="fld">Transfer date<input id="xfDate" type="date" value="${esc(m.date)}" min="${C.isoOf(T + 1)}"><span class="hint">Their first visit at the new clinic, or when it takes over</span></label>` : ""}</div>
         <label class="fld">Note<input id="xfNote" value="${esc(m.note)}" autocomplete="off" placeholder="Index here, maintenance at Oakland"></label>
         ${m.mode === "later" && d != null ? `<p class="note">${L.length ? `Last visit here before then: ${dshort(L[L.length - 1].date)} at ${C.fmtT(L[L.length - 1].time)}. Check-out of it asks to confirm the transfer.` : "No visits booked here before then: confirm the transfer from the patient view when it happens."}${after.length ? ` <b>${plural(after.length, "visit")} booked here on or after ${C.fmtD(d)}</b>: cancel in NextGen.` : ""}</p>` : ""}
@@ -1659,7 +1664,7 @@
     /* transfers */
     xfer: e => { const p = S.PM.get(e.dataset.m); if (!p) return; if (!S.xferOn) return toast("Transfers need the newer table. Use Update the workbook in Settings.", true);
       const xf = S.XF.get(p.mrn), xs = C.xferState(xf, S.A, todayS(), S.x.E), oak = C.oakState(p, ptOf(p.mrn), S.A, todayS(), S.cfg);
-      const to = xs?.to || (C.elsewhere(p, S.cfg.Clinic) ? p.loc : oak ? "Oakland" : "");
+      const to = xs?.to || (C.elsewhere(p, S.cfg) ? p.loc : oak ? "Oakland" : "");
       openModal("xfer", { mrn: p.mrn, mode: xs ? (xs.due ? "now" : "later") : "later", to, date: xs?.date != null ? C.isoOf(xs.date) : "", note: xf?.status === "scheduled" ? xf.note : "", oak: !!oak && ptOf(p.mrn)?.oakTasked == null }); },
     xfMode: e => { keepXfer(); S.m.mode = e.dataset.v; render(); },
     async doXfer() {

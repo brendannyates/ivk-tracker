@@ -191,6 +191,8 @@ patient's name and date of birth.
   the Locations setting); only those go on the Appt List tab. The other clinics' IVK visits go to tblIvkElsewhere (LASFIR, no
   names) and are used only to check a transfer or Oakland hand-off is booked there: "nothing booked there yet" is a need, a
   booked visit a quiet tag. Nothing is said about other clinics until a report with them has been uploaded.
+  Primary Location (Edit) and Transfer to offer the report's locations as NextGen names them. The patient view's Schedule page shows
+  each visit's location, their appointments here (kept and booked) and any booked at other clinics.
 
 ## Where things are kept
 

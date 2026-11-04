@@ -69,3 +69,12 @@ test("a wider report: other clinics' visits kept apart and used to check the han
   assert.ok(C.needs(pt, Object.assign({ E }, x)).find(y => y.k === "xferthere"));
   assert.ok(!C.needs(pt, x).find(y => /^xfer(none|there)$/.test(y.k)));
 });
+
+test("NextGen location names: home clinic and appointment counts here and at other clinics", () => {
+  const c2 = Object.assign({}, cfg, { Locations: "MHS SF Castro IVK" });
+  assert.equal(C.elsewhere({ loc: "MHS SF Castro IVK" }, c2), false); assert.equal(C.elsewhere({ loc: "MHS Oakland IVK" }, c2), true);
+  assert.equal(C.elsewhere({ loc: "MHS Castro" }, cfg), false);                 // no Locations set: names the clinic
+  const A = C.appts([AP_H, ap("990101", T - 7, 600), ap("990101", T - 3, 600, undefined, "No Show"), ap("990101", T + 2, 600), ap("990101", T + 4, 600, undefined, "Cancelled")]);
+  const E = C.elseRows([C.ELSE_COLS, ["990101", "TESANN", C.isoOf(T + 9), "10:00 AM", "Chen MD, Paul", "IV Ketamine Follow Up", "Expected", "MHS Oakland IVK"]]);
+  assert.deepEqual(C.visitCounts("990101", A, E, T), { kept: 1, booked: 1, away: [{ loc: "MHS Oakland IVK", n: 1 }] });
+});
