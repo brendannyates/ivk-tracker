@@ -777,17 +777,17 @@
     const bar = `<div class="dmbar"><button class="chip" data-act="dmPaused" aria-pressed="${o.paused}">Include paused</button>
       <div class="pick seg" role="group" aria-label="Unscheduled patients">${seg("all", "Everyone")}${seg("exclude", "Exclude unscheduled")}${seg("only", "Unscheduled only")}</div></div>`;
     const tile = (l, v, s, cls) => `<div class="stat${cls ? ` ${cls}` : ""}"><small>${l}</small><b>${v}</b>${s ? `<span>${s}</span>` : ""}</div>`;
-    const tb4 = sumW("toBook", 4), tb8 = sumW("toBook", 8), open4 = sumW("open", 4), open8 = sumW("open", 8);
+    const tb4 = D.toBook4, tb8 = D.toBook8, open4 = sumW("open", 4), open8 = sumW("open", 8);
     const stats = `<div class="stats">${tile("Visits a week needed", n1(D.perWeek), `${n1(D.avg)} per patient`)}${tile("Next 4 weeks", n1(sumW("expect", 4)), `${sumW("booked", 4)} booked, ${n1(tb4)} to book`, tb4 > open4 && S.grids.length ? "warn" : "")}
       ${tile("Next 8 weeks", n1(sumW("expect", 8)), `${sumW("booked", 8)} booked, ${n1(tb8)} to book`, tb8 > open8 && S.grids.length ? "warn" : "")}${S.grids.length ? tile("Open IVK slots, 4 weeks", String(open4), `${open8} in 8 weeks`) : tile("Open IVK slots", "—", "no template yet")}</div>`;
     const G = D.groups, gRow = g => `<tr${g.freq === "Index" ? ' class="ix"' : ""}><td>${esc(g.freq)}${g.freq === "Index" ? `<small>${c.IndexPerWeek} a week to treatment ${D.N}</small>` : ""}</td><td>${g.n}</td><td>${n1(g.rate)}</td><td>${n1(g.perWeek)}</td>
-      <td>${n1(g.d4)}</td><td>${g.b4}</td><td${g.d4 - g.b4 > 0.5 ? ' class="flag"' : ""}>${n1(Math.max(0, g.d4 - g.b4))}</td><td>${n1(g.d8)}</td><td>${g.b8}</td><td${g.d8 - g.b8 > 0.5 ? ' class="flag"' : ""}>${n1(Math.max(0, g.d8 - g.b8))}</td><td>${g.unsched || ""}</td></tr>`;
-    const tot = G.reduce((a, g) => ({ n: a.n + g.n, perWeek: a.perWeek + g.perWeek, d4: a.d4 + g.d4, b4: a.b4 + g.b4, d8: a.d8 + g.d8, b8: a.b8 + g.b8, unsched: a.unsched + g.unsched }), { n: 0, perWeek: 0, d4: 0, b4: 0, d8: 0, b8: 0, unsched: 0 });
+      <td>${n1(g.d4)}</td><td>${g.b4}</td><td${g.t4 > 0.5 ? ' class="flag"' : ""}>${n1(g.t4)}</td><td>${n1(g.d8)}</td><td>${g.b8}</td><td${g.t8 > 0.5 ? ' class="flag"' : ""}>${n1(g.t8)}</td><td>${g.unsched || ""}</td></tr>`;
+    const tot = G.reduce((a, g) => ({ n: a.n + g.n, perWeek: a.perWeek + g.perWeek, d4: a.d4 + g.d4, b4: a.b4 + g.b4, t4: a.t4 + g.t4, d8: a.d8 + g.d8, b8: a.b8 + g.b8, t8: a.t8 + g.t8, unsched: a.unsched + g.unsched }), { n: 0, perWeek: 0, d4: 0, b4: 0, t4: 0, d8: 0, b8: 0, t8: 0, unsched: 0 });
     const byProto = `<section class="card dmt"><div class="lh"><h2>By protocol</h2><span>needed at the protocol, booked, still to book</span></div><div class="tscroll"><table class="tt dm">
       <thead><tr><th rowspan="2">Protocol</th><th rowspan="2">Patients</th><th rowspan="2">A week each</th><th rowspan="2">A week, all</th><th colspan="3">Next 4 weeks</th><th colspan="3">Next 8 weeks</th><th rowspan="2">Nothing booked</th></tr>
       <tr><th>Needed</th><th>Booked</th><th>To book</th><th>Needed</th><th>Booked</th><th>To book</th></tr></thead>
-      <tbody>${G.map(gRow).join("") || `<tr><td colspan="11" class="muted">No patients in this view.</td></tr>`}${G.length ? `<tr class="sum"><td>Total</td><td>${tot.n}</td><td>${n1(D.avg)}</td><td>${n1(tot.perWeek)}</td><td>${n1(tot.d4)}</td><td>${tot.b4}</td><td>${n1(Math.max(0, tot.d4 - tot.b4))}</td><td>${n1(tot.d8)}</td><td>${tot.b8}</td><td>${n1(Math.max(0, tot.d8 - tot.b8))}</td><td>${tot.unsched || ""}</td></tr>` : ""}</tbody></table></div>
-      <p class="note">Needed is each patient’s protocol (the tracker’s Frequency) over the weeks; PRN and blank frequencies need none. Index patients count at ${c.IndexPerWeek} a week until treatment ${D.N}, then ${esc(c.AfterIndex)}. Booked counts NextGen visits and holds.</p></section>`;
+      <tbody>${G.map(gRow).join("") || `<tr><td colspan="11" class="muted">No patients in this view.</td></tr>`}${G.length ? `<tr class="sum"><td>Total</td><td>${tot.n}</td><td>${n1(D.avg)}</td><td>${n1(tot.perWeek)}</td><td>${n1(tot.d4)}</td><td>${tot.b4}</td><td>${n1(tot.t4)}</td><td>${n1(tot.d8)}</td><td>${tot.b8}</td><td>${n1(tot.t8)}</td><td>${tot.unsched || ""}</td></tr>` : ""}</tbody></table></div>
+      <p class="note">Needed is each patient’s protocol (the tracker’s Frequency) over the weeks; PRN and blank frequencies need none. To book is each patient’s need less what they have booked in the window, so one patient booked far ahead doesn’t cover another. Index patients count at ${c.IndexPerWeek} a week until treatment ${D.N}, then ${esc(c.AfterIndex)}. Booked counts NextGen visits and holds.</p></section>`;
     const wRow = w => `<tr><td>${w.w === 0 ? "This week" : `Week of ${C.fmtD(w.start)}`}</td><td>${n1(w.expect)}</td><td>${w.booked}</td><td${w.toBook > 0.5 ? ' class="flag"' : ""}>${n1(w.toBook)}</td>${S.grids.length ? `<td>${w.slots}</td><td${w.open < w.toBook ? ' class="bad"' : ""}>${w.open}</td>` : ""}<td>${w.freed > 0.05 ? `+${n1(w.freed)}` : ""}${w.steps.length ? `<small>${esc(w.steps.map(r => r.code).join(", "))}</small>` : ""}</td></tr>`;
     const weeks = `<section class="card dmt"><div class="lh"><h2>Week by week</h2><span>Sunday to Saturday</span></div><div class="tscroll"><table class="tt dm">
       <thead><tr><th>Week</th><th>Needed</th><th>Booked</th><th>To book</th>${S.grids.length ? "<th>IVK slots</th><th>Open</th>" : ""}<th>Freed by index step-down</th></tr></thead><tbody>${W.map(wRow).join("")}</tbody></table></div>
@@ -795,7 +795,7 @@
     const T = D.transitions, tRow = r => { const proj = !(r.p && C.treatments(r.p, S.A)[D.N - 1]); const fr = Math.max(0, D.perIdx - r.afterRate);
       return `<li class="step ${proj ? "soon" : "now"}"><span class="k"></span><span><span class="t">${esc(r.code)}: treatment ${D.N} ${proj ? "around" : "on"} ${dshort(r.idxEnd)}</span><span class="m">Then ${esc(c.AfterIndex)}${fr ? `, frees about ${n1(fr)} visit${fr === 1 ? "" : "s"} a week from ${dshort(r.idxEnd + 1)}` : ""}${proj ? " (not booked yet: projected)" : ""}</span></span><span class="w"><button class="btn mute sm" data-act="openPt" data-m="${esc(r.mrn)}">Open</button></span></li>`; };
     const firstFree = W.find(w => w.freed > 0.05);
-    const steps = `<section class="card"><div class="lh"><h2>When index creates access</h2><span>${T.length ? plural(T.length, "patient") + " in index" : "nobody in index"}</span></div>
+    const steps = `<section class="card dmt"><div class="lh"><h2>When index creates access</h2><span>${T.length ? plural(T.length, "patient") + " in index" : "nobody in index"}</span></div>
       ${T.length ? `<p class="note">${firstFree ? `Access starts opening ${firstFree.w === 0 ? "this week" : `the week of ${C.fmtD(firstFree.start)}`}; by the week of ${C.fmtD(W[W.length - 1].start)}, about ${n1(W[W.length - 1].freed)} visits a week are free from index step-downs.` : ""}</p><ul class="steps">${T.map(tRow).join("")}</ul>` : `<p class="note">Index patients (Induction, or started within the index weeks) show here with the week they step down.</p>`}</section>`;
     const uRow = r => `<div class="row"><span class="p">${esc(r.code)}</span><span class="w">${esc(r.proto || "—")}</span><span class="i">${r.paused ? "Paused, " : ""}${n1(r.idx ? D.perIdx : r.rate)} a week needed, nothing booked</span><button class="btn ghost sm" data-act="openPt" data-m="${esc(r.mrn)}">Open</button></div>`;
     const ul = o.sched === "only" ? `<section class="card list"><div class="lh"><h2>Unscheduled patients</h2><span>${unsched.length}</span></div>${unsched.map(uRow).join("") || `<p class="empty">Everyone in this view has a visit booked.</p>`}</section>` : "";
@@ -804,11 +804,11 @@
   /* Access › Templates: the provider grids, their tally, time off and the slot types */
   function templatePageHTML() {
     const n = S.grids.length, idx = S.grids.reduce((k, g) => k + [1, 2, 3, 4, 5].reduce((a, d) => a + TM.startsOn(g, d, S.types, +S.cfg.PostCheckMin).filter(s => s.index).length, 0), 0);
-    return `${setupBanner()}${head("Templates", n ? `${plural(n, "provider")}, ${plural(idx, "index start")} a week on the templates` : "No provider template yet", false)}${accessChips()}${templateHTML()}`;
+    return `${setupBanner()}${head("Templates", n ? `${plural(n, "provider")}, ${plural(idx, "index start")} a week across all their templates` : "No provider template yet", false)}${accessChips()}${templateHTML()}`;
   }
   /* the four Access pages */
   const accessChips = () => { const B = badges(); return `<div class="chips achips" role="group" aria-label="Access">${ACCESS.map(([k, l]) => { const b = B[k];
-    return `<button class="chip" data-act="nav" data-v="${k}" aria-pressed="${S.view === k}">${l}${k === "template" ? `<span class="n">${S.grids.length}</span>` : b ? `<span class="n">${b.n}</span>` : ""}</button>`; }).join("")}</div>`; };
+    return `<button class="chip" data-act="nav" data-v="${k}" aria-pressed="${S.view === k}">${l}${k === "template" ? `<span class="n">${S.grids.length}</span>` : b && k !== "access" ? `<span class="n">${b.n}</span>` : ""}</button>`; }).join("")}</div>`; };
   /* Time off and coverage: a provider's PTO takes their template out on those days (an exception by date); a covering provider can
      work the absent provider's template (pre-filled) or their own */
   const exLabel = n => { const g = S.grids.find(x => x.key === TM.provKey(n)); return g ? TM.nameOf(g) : C.provFull(n) || n; };
@@ -956,7 +956,7 @@
   /* Benefits: who pays each part of the visit, the latest Sohar benefits, the authorization, the BIDF */
   function pvBen(p) {
     const m = esc(p.mrn), pf = S.PF.get(p.mrn) || null, cv = C.coverage(p, pf), sh = pf?.sohar || {}, T = todayS();
-    const modeTxt = cv.mode ? (C.COVER_MODES.find(x => x[0] === cv.mode) || [])[1] : "Not set";
+    const modeTxt = cv.mode ? (C.COVER_MODES.find(x => x[0] === cv.mode) || [])[1] : !cv.prov.cover && !cv.inf.cover ? "Coverage not set" : !cv.inf.cover ? "Infusion coverage not set" : "Provider visit coverage not set";
     const part = (l, x) => `<dt>${l}</dt><dd>${x.cover === "selfpay" ? "Self pay" : esc(x.payer || (x.cover ? "Insurance, payer not named" : "—"))}${x.due ? `, patient pays ${C.money(x.due)}` : x.cover ? ", nothing due" : ""}</dd>`;
     const v = (l, x) => x ? `<dt>${l}</dt><dd>${esc(x)}</dd>` : "";
     const both = (a, b) => [a, b].filter(Boolean).join(", ");
@@ -1036,7 +1036,7 @@
       return `<button class="avrow" data-act="avail" data-m="${esc(r.p.mrn)}"><span class="p">${esc(r.p.code)}</span>${half.map(([i, h]) => lv(r.a.g ? r.a.g[i][h] : "")).join("")}
         <span class="small${r.exp ? " flagt" : ""}">${t?.availEff != null ? C.fmtD(t.availEff) : r.a.src === "tracker" ? "Tracker" : "—"}${t?.availExp != null ? ` to ${C.fmtD(t.availExp)}` : ""}</span>
         <span class="small">${!r.a.g ? `<span class="f">No form on file</span>` : r.exp ? `<span class="f">Expired</span>` : r.days < 3 ? `<span class="f">${plural(r.days, "day")}, form asks for 3</span>` : r.a.src === "tracker" ? "AM/PM from the tracker" : ""}${away.length ? ` Away ${away.map(w => C.fmtD(w.from)).join(", ")}` : ""}</span></button>`; };
-    return `${setupBanner()}${head("Availability", `${plural(n.update, "active patient")} to update, ${plural(n.active, "active patient")}`, false)}
+    return `${setupBanner()}${head("Availability", n.active ? `${n.update} of ${plural(n.active, "active patient")} need${n.update === 1 ? "s" : ""} their availability updated` : "No active patients", false)}
       <div class="chips">${AVCH.map(([c, l]) => `<button class="chip" data-act="avChip" data-v="${c}" aria-pressed="${k === c}">${l}<span class="n">${n[c]}</span></button>`).join("")}</div>
       ${needTable("tblIvkPatient", "Availability forms")}
       <section class="card avtable"><div class="avrow head"><span>Patient</span>${C.DAYS5.map(d => `<span class="dh2">${d}<small>AM</small></span><span class="dh2">${d}<small>PM</small></span>`).join("")}<span>Effective</span><span>Notes</span></div>

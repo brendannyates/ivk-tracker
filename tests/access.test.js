@@ -49,6 +49,8 @@ test("profiles: coverage from the tracker's columns; only new patients (on the l
   assert.ok(G.every(g => !g.onMpt));
   const PF = C.profileRows([C.PROFILE_COLS, ["990201", "ALPPAT", "Insurance", "Blue Shield", "Self pay", "", "Blue Shield", "PPO", "In", "", "", "40", "20%", "1000", "250", "5000", "4100", "complete.eligible", "2026-10-20", "r1", "", "", "Sam", ""]]);
   assert.equal(PF.get("990201").sohar.dedRem, "250"); assert.equal(PF.get("990201").sohar.date, C.fromIso("2026-10-20"));
+  const na = C.coverage(pts([["990203", "NAPAT", "Ongoing", "", "30", "", "Kaiser", "N/A", "", ""]])[0], null);
+  assert.equal(na.inf.cover, "", "N/A is no payer"); assert.equal(na.inf.payer, ""); assert.equal(na.mode, "", "no mode until both parts are set");
   assert.deepEqual(C.modeParts("infins"), { prov: "selfpay", inf: "insurance" }); assert.equal(C.modeOf("insurance", "insurance"), "both");
 });
 
@@ -84,6 +86,7 @@ test("demand by protocol: needed at the protocol, booked, to book; paused and un
   assert.equal(g["1x per week"].rate, 1); assert.equal(g["every 2 weeks"].rate, 0.5); assert.equal(g["PRN"].rate, 0);
   assert.ok(Math.abs(g["1x per week"].d8 - (7 + 4 / 7)) < 1e-9, "this week counts from today (Wednesday): 4 of 7 days");
   assert.equal(g["1x per week"].b8, 2);
+  assert.ok(Math.abs(g["1x per week"].t8 - (7 + 4 / 7 - 2)) < 1e-9, "to book = need less booked, per patient");
   assert.equal(C.demand({ patients: P1, appts: A, holds: [], today: T, cfg, weeks: 8, paused: true, sched: "all" }).rows.length, 4);
   assert.deepEqual(C.demand({ patients: P1, appts: A, holds: [], today: T, cfg, weeks: 8, sched: "only" }).rows.map(r => r.code), ["PRNPAT"]);
   assert.equal(C.demand({ patients: P1, appts: A, holds: [], today: T, cfg, weeks: 8, sched: "exclude" }).rows.length, 2);
