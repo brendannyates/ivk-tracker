@@ -60,7 +60,7 @@
        the next 4 weeks without one (not on the tracker, or no profile row) is prompted, treatment starts first. */
     S.PF = C.profileRows(r.tblIvkProfile); S.profOn = !!r.tables?.own?.tblIvkProfile;
     S.gaps = C.profileGaps(S.A, S.PM, S.PF, T, 28);
-    S.x.noProfile = new Set(S.gaps.filter(g => g.onMpt).map(g => g.mrn));
+    S.x.noProfile = new Set();   // patients on the tracker have their profile in its columns
     /* a visit takes its post check when it's an index visit (a treatment start, an Induction patient) or the patient requires one */
     const needsPost = (mrn, ev) => { const p = S.PM.get(mrn); return /start/i.test(ev) || !!p?.reqPost || /induction/i.test(p?.status || ""); };
     /* provider time off: their template slots go on those days, or become the covering provider's */
@@ -296,8 +296,8 @@
   function gapsHTML(max) {
     const G = S.gaps; if (!G.length) return "";
     const rows = G.slice(0, max).map(g => `<div class="row grow" data-state="${g.start ? "soon" : ""}"><span class="p">${esc(g.code || "—")}</span><span class="w">${dshort(g.first.date)}</span>
-      <span class="i">${g.start ? `<span class="f">Treatment start</span>, ` : ""}${g.onMpt ? "on the tracker, no profile" : "not on the Master Patient Tracker"}, ${C.fmtT(g.first.time)}</span><button class="btn ghost sm" data-act="profile" data-m="${esc(g.mrn)}">Create profile</button></div>`).join("");
-    return `<section class="card list"><div class="lh"><h2>Patient profiles to create</h2><span>${G.length}</span></div>${rows}
+      <span class="i">${g.start ? `<span class="f">Treatment start</span>, ` : ""}not on the Master Patient Tracker, ${C.fmtT(g.first.time)}</span><button class="btn ghost sm" data-act="profile" data-m="${esc(g.mrn)}">Create profile</button></div>`).join("");
+    return `<section class="card list"><div class="lh"><h2>New patients to add</h2><span>${G.length}</span></div>${rows}
       ${G.length > max ? `<p class="note" style="padding:0 14px 10px">And ${plural(G.length - max, "more")} in the next 4 weeks. <button class="btn mute sm" data-act="nav" data-v="patients">See them on Patients</button></p>` : ""}
       ${S.profOn ? "" : `<p class="note warn" style="padding:0 14px 10px">Profiles need the newer table. Use <b>Update the workbook</b> in Settings.</p>`}</section>`;
   }
@@ -422,7 +422,7 @@
     if (v.ph === "chair") quiet.push(["undoSeat", "Back to waiting"]);
     if (v.ph === "done") quiet.push(["undoOut", "Undo check-out"]);
     if (v.p) quiet.push(["openPt", "Patient view"]);
-    if (v.p && S.x.noProfile.has(v.p.mrn)) ghosts.push(["profile", "Create the profile"]);
+    if (v.p && C.indexState(v.p, S.A, todayS(), S.cfg)?.complete) ghosts.push(["idxDone", "Move to Ongoing"]);
     if (v.p) { (v.ph === "chair" || v.ph === "done" ? ghosts : quiet).push(["printSched", "Print schedule"]); if (/start/i.test(v.a.event) || C.txNo(v.p, S.A, v.a.date, v.a.time) === 1) quiet.push(["startForms", "Start paperwork"], ["startEmail", "Start email"]); }
     const oak = v.p ? C.oakState(v.p, ptOf(v.p.mrn), S.A, todayS(), S.cfg) : null;
     if (oak && oak.task && v.ph !== "booked") ghosts.push(["oakTask", "Mark OAK tasked"]);
@@ -459,8 +459,8 @@
   /* ---------- Schedule ---------- */
   /* what kind of IVK visit: a treatment start (its own tab colour), an index visit (treatments 1 to N, holds, Induction; lavender),
      or a follow-up */
-  const visitKind = a => { if (/start/i.test(a.event || "")) return "st"; const p = S.PM.get(a.mrn); if (!p) return "";
-    const n = C.txNo(p, S.A, a.date, a.time); return (n != null && n <= C.indexN(S.cfg)) || /induction/i.test(p.status) ? "ix" : ""; };
+  /* an index visit is any visit of an Induction patient */
+  const visitKind = a => { if (/start/i.test(a.event || "")) return "st"; const p = S.PM.get(a.mrn); return p && /induction/i.test(p.status) ? "ix" : ""; };
   const KIND_WORD = { st: "treatment start", ix: "index visit" };
   /* the small (i) on a visit booked off the template: hover or press it for the bubble */
   const MISS_TXT = "This visit does not match the templated slot-type";
@@ -518,7 +518,7 @@
   /* holds marked booked that the uploaded NextGen report hasn't confirmed yet (pending), or that a newer report doesn't have (missing) */
   const unconfirmed = () => (S.holds || []).filter(h => h.status === "booked").map(h => Object.assign({}, h, { conf: C.holdConfirm(h, S.A, S.raw.apptUpdated) })).filter(h => h.conf === "pending" || h.conf === "missing");
   /* patients already in index, whose index visits can be changed here: Induction, or started within the index weeks */
-  const inIndex = p => /induction/i.test(p.status) || (p.start != null && todayS() - p.start <= 7 * (+S.cfg.IndexWeeks + 1));
+  const inIndex = p => /induction/i.test(p.status);
   const listTime = () => S.raw.apptUpdated != null ? `${C.fmtD(Math.floor(S.raw.apptUpdated))} at ${C.fmtT(C.toMin(S.raw.apptUpdated))}` : "never";
   const uploadBtn = (l, cls) => `<label class="btn ${cls || "primary"}" style="cursor:pointer">${l}<input type="file" id="apptFile" accept=".xls,.xlsx,.csv" hidden></label>`;
   const minsAgo = ms => Math.max(0, Math.floor((Date.now() - ms) / 60000));
@@ -854,10 +854,10 @@
     return { r0, slots: `${c0}${g.rows[0].r + 1}:${c1}${g.rows[g.rows.length - 1].r + 1}`, step: g.step, start: g.rows[0].t, end: g.rows[g.rows.length - 1].t + g.step, tallyEnd: end }; });
 
   /* ---------- Patients ---------- */
-  const CHIPS = [["need", "Needs attention"], ["profile", "No profile"], ["active", "Active"], ["paused", "Paused"], ["disc", "Discontinued"], ["all", "All"]];
+  const CHIPS = [["need", "Needs attention"], ["profile", "New patients"], ["active", "Active"], ["paused", "Paused"], ["disc", "Discontinued"], ["all", "All"]];
   function chipOf(k, p, n) {
     if (k === "need") return n.length > 0;
-    if (k === "profile") return S.x.noProfile.has(p.mrn);
+    if (k === "profile") return false;   // new patients aren't on the tracker yet: they're listed above the table
     if (k === "active") return C.isActive(p);
     if (k === "paused") return /paused/i.test(p.status);
     if (k === "disc") return /discontinued/i.test(p.status);
@@ -973,7 +973,7 @@
         ${p.pcn ? `<dt>PCN</dt><dd>${esc(p.pcn)}${p.task ? `, ${esc(p.task)}` : ""}</dd>` : ""}</dl></div>
       <div class="section"><div class="h"><h2>BIDF</h2></div><dl class="facts"><dt>2026 BIDF</dt><dd${!p.bidf && C.isActive(p) ? ' class="flag"' : ""}>${esc(p.bidf || "Not recorded")}</dd><dt>Printed at the desk</dt><dd>${pf?.bidfPrinted != null ? C.fmtD(pf.bidfPrinted) : "—"}</dd></dl>
         <p class="note">The BIDF is completed by the benefits team and printed from NextGen.</p></div>
-      <div class="actions"><button class="btn ghost sm line" data-act="profile" data-m="${m}">${pf ? "Edit the profile" : "Create the profile"}</button><button class="btn mute sm" data-act="edit" data-m="${m}">Edit tracker fields</button></div>
+      <div class="actions"><button class="btn ghost sm line" data-act="profile" data-m="${m}">Edit coverage and benefits</button><button class="btn mute sm" data-act="edit" data-m="${m}">Edit tracker fields</button></div>
       ${p.notes ? `<p class="note">Clinic notes: ${esc(p.notes)}</p>` : ""}`;
   }
   const pvFin = p => payHTML(p);
@@ -1246,6 +1246,8 @@
         <div class="fld">Next visit${v.ask.next ? ` <span class="muted">(on the list: ${C.fmtD(v.ask.next.date)})</span>` : ""}<div class="pick">${bk("yes", "Booked", "in NextGen")}${bk("later", "Book later", "keep reminding")}${bk("no", "Not needed", "PRN or ending")}</div></div>
         ${p ? `<label class="opt"><input type="checkbox" id="mProto"${m.proto ? " checked" : ""}> The provider confirmed the protocol<small>Writes Protocol Updated ${C.fmtD(todayS())}${m.freq && m.freq !== p.freq ? ` and Frequency “${esc(m.freq)}”` : ""} on the Master Patient Tracker</small></label>
         <label class="fld">Protocol<select id="mFreq">${freqOpts(p, m.freq)}</select></label>` : ""}
+        ${m.idx ? `<div class="msg warn bidfp"><b>Treatment ${m.idx.N} kept: index is done.</b> Move ${esc(c)} to Ongoing and set the protocol the provider chose (usually 1x per week; it varies with acuity).
+          <label class="opt"><input type="checkbox" id="mIdx"${m.idxOn ? " checked" : ""}> Move to Ongoing<small>Writes Status Ongoing, Frequency and Protocol Updated ${C.fmtD(todayS())} on the Master Patient Tracker. Pick the protocol above.</small></label></div>` : ""}
         ${payPickHTML(v, m)}
         <div class="foot"><button class="btn mute" data-act="close">Cancel</button><button class="btn primary inl" data-act="doCheckout"${m.booked && payAnswered(v, m) && !S.busy ? "" : " disabled"}>${!m.booked ? "Choose the next visit" : !payAnswered(v, m) ? "Say whether payment was collected" : `Check out ${esc(c)}`}</button></div>`;
     },
@@ -1327,6 +1329,14 @@
               <label class="opt"><input type="checkbox" id="fp_bidf"${m.bidf ? " checked" : ""}> I printed the BIDF from NextGen<small>Saves today’s date on the patient’s profile</small></label></div>` : ""}`}
         ${email || m.parts.sched ? schedRangeHTML(p, m) : ""}
         <div class="foot"><button class="btn mute" data-act="close">Cancel</button><button class="btn primary inl" data-act="doForms">${email ? "Make the email" : "Open to print"}</button></div>`;
+    },
+    /* an Induction patient who has kept their 6th visit: Ongoing, on the protocol the provider set */
+    idxDone() {
+      const p = S.PM.get(S.m.mrn), ix = C.indexState(p, S.A, todayS(), S.cfg);
+      return `<h2 id="mh">${esc(p.code)}: index done</h2><p class="sub muted">${ix ? `${ix.done} index visits kept${ix.sixth ? `, treatment ${ix.N} on ${C.fmtD(ix.sixth.date)}` : ""}.` : ""} The status moves from Induction to Ongoing.</p>
+        <label class="fld">Protocol after index<select id="mFreq">${[...new Set([S.m.freq, ...S.freqs].filter(Boolean))].map(f => `<option${f === S.m.freq ? " selected" : ""}>${esc(f)}</option>`).join("")}</select><span class="hint">Usually ${esc(S.cfg.AfterIndex)}; the provider sets it by acuity. Ask the group chat if it isn’t confirmed.</span></label>
+        <p class="note">Writes Status Ongoing, Frequency and Protocol Updated ${C.fmtD(todayS())} on the Master Patient Tracker.</p>
+        <div class="foot"><button class="btn mute" data-act="close">Cancel</button><button class="btn ghost" data-act="ask" data-m="${esc(p.mrn)}">Ask the group chat</button><button class="btn primary inl" data-act="doIdxDone"${S.busy ? " disabled" : ""}>Move to Ongoing</button></div>`;
     },
     proto() {
       const p = S.PM.get(S.m.mrn);
@@ -1755,11 +1765,14 @@
     copyAsk: async () => { try { await navigator.clipboard.writeText($("#mText").value); toast("Message copied. Paste it in the group chat."); } catch (e) { $("#mText").select(); toast("Select the message and copy it with Ctrl+C."); } },
     checkout: e => {
       const v = visitBy(e.dataset.k); if (!v) return;
-      openModal("checkout", { key: v.key, booked: v.ask.book ? "" : "yes", proto: false, freq: v.p?.freq || "" });
+      /* the visit that completes index (an Induction patient's 6th kept visit): offer the move to Ongoing with the after-index protocol */
+      const ix = v.p ? C.indexState(v.p, S.A, todayS(), S.cfg, a => a === v.a || (a.mrn === v.a.mrn && a.date === v.a.date && a.time === v.a.time)) : null;
+      const idx = ix && ix.complete ? ix : null;
+      openModal("checkout", { key: v.key, booked: v.ask.book ? "" : "yes", proto: !!idx, freq: idx ? S.cfg.AfterIndex : v.p?.freq || "", idx, idxOn: !!idx });
     },
     async doCheckout() {
       const v = visitBy(S.m.key); if (!v || !S.m.booked) return;
-      const proto = !!$("#mProto")?.checked && !!v.p, freq = $("#mFreq")?.value || "", t = hm();
+      const proto = (!!$("#mProto")?.checked || (!!S.m.idx && !!$("#mIdx")?.checked)) && !!v.p, freq = $("#mFreq")?.value || "", t = hm();
       if (proto && !freq) return toast("Pick the protocol the provider confirmed, or untick the box.", true);
       const ok = await write("Checking out…", () => Store.saveVisit(v.key, visitBase(v), Object.assign({ Out: t, Booked: S.m.booked, Protocol: proto ? freq : v.st.proto, Arrived: v.st.arr != null ? C.fmtT(v.st.arr) : t }, stamp())),
         proto ? null : `${C.code(v)} checked out.`);
@@ -1767,8 +1780,11 @@
       const pay = S.m.pay || {}, rows = partsOpen(v).filter(([k]) => pay[k]).map(([k, n]) => payRow(v.p, { Date: C.isoOf(v.a.date), Key: C.partKey(v.key, k), Kind: pay[k], Amount: n, Note: PART_WORD[k] })); closeModal();
       if (rows.length) await write("Saving the payment…", () => Store.addPays(rows))
         || toast(`${C.code(v)} is checked out, but the payment answer didn’t save. Record it on the patient’s Financial page.`, true);
+      const toOngoing = !!S.m.idx && !!$("#mIdx")?.checked;
       if (proto) (await write("Saving the protocol…", () => Store.confirmProtocol(v.a.mrn, freq, todayS()), `${C.code(v)} checked out; protocol ${freq} saved on the Master Patient Tracker.`) && logConfirm(v.p, freq))
         || toast(`${C.code(v)} is checked out, but the protocol didn’t save to the Master Patient Tracker. Use Patients › Confirm protocol.`, true);
+      if (toOngoing && proto) await write("Moving to Ongoing…", () => Store.saveRow("mpt", v.a.mrn, { [mptHead()("status") || "Status"]: "Ongoing" }), `${C.code(v)}: index done, now Ongoing at ${freq}.`)
+        || toast(`${C.code(v)} is checked out, but the status didn’t change to Ongoing. Use Move to Ongoing on the patient.`, true);
     },
     async markBooked(e) { const v = visitBy(e.dataset.k); if (!v) return; await write("Saving…", () => Store.saveVisit(v.key, visitBase(v), Object.assign({ Booked: "yes" }, stamp())), `${C.code(v)}’s next visit marked booked.`); },
     gone: e => { const v = visitBy(e.dataset.k); openModal("confirm", { title: `Take ${C.code(v)} off today’s list?`, body: "NextGen isn’t changed. Cancel or reschedule the visit there too.", yes: "Take off today’s list", run: () => Store.saveVisit(v.key, visitBase(v), Object.assign({ Status: "cancelled" }, stamp())) }); },
@@ -1778,6 +1794,12 @@
     undoOut: async e => { const v = visitBy(e.dataset.k); await write("Saving…", () => Store.saveVisit(v.key, visitBase(v), Object.assign({ Out: "", Booked: "" }, stamp())), `${C.code(v)} is back in ${v.st.chair ? chairTxt(v.st.chair) : "the lobby"}.`); },
     async doConfirm() { const run = S.m.run; closeModal(); await write("Saving…", run); },
     proto: e => { const p = S.PM.get(e.dataset.m); if (p) openModal("proto", { mrn: p.mrn, freq: p.freq || "" }); },
+    idxDone: e => { const p = S.PM.get(e.dataset.m); if (p) openModal("idxDone", { mrn: p.mrn, freq: S.cfg.AfterIndex }); },
+    async doIdxDone() {
+      const p = S.PM.get(S.m.mrn), f = $("#mFreq").value; if (!p || !f) return toast("Pick the protocol after index.", true);
+      const ok = await write("Moving to Ongoing…", async () => { await Store.confirmProtocol(p.mrn, f, todayS()); return Store.saveRow("mpt", p.mrn, { [mptHead()("status") || "Status"]: "Ongoing" }); }, `${p.code}: index done, now Ongoing at ${f}.`);
+      if (ok) { closeModal(); await logConfirm(p, f); }
+    },
     async doProto() { const p = S.PM.get(S.m.mrn), f = $("#mFreq").value; if (!f) return toast("Pick the protocol the provider confirmed.", true); const ok = await write("Saving protocol…", () => Store.confirmProtocol(p.mrn, f, todayS()), `${p.code}’s protocol saved: ${f}, confirmed ${C.fmtD(todayS())}.`); if (ok) { closeModal(); await logConfirm(p, f); } },
     ...ACT2,
     saveName: () => { S.name = $("#myName").value.trim().split(/\s+/)[0] || ""; LS.set("ivkName", S.name); toast(S.name ? `Saved. Posts will say ${S.name}.` : "Name cleared."); render(); },
@@ -2044,6 +2066,7 @@
     else if (t.id === "mFreq" && S.modal === "ask") { S.m.freq = t.value; S.m.text = C.askText(S.PM.get(S.m.mrn), S.m.ask, S.tpl, t.value); $("#mText").value = S.m.text; }
     else if (t.id === "mFreq" && (S.modal === "checkout" || S.modal === "proto")) { S.m.freq = t.value; S.m.proto = $("#mProto")?.checked ?? S.m.proto; render(); }
     else if (t.id === "mProto") S.m.proto = t.checked;
+    else if (t.id === "mIdx") S.m.idxOn = t.checked;
     else if (t.id === "mShrink") { S.m.ok = t.checked; render(); }
     else if (t.id === "apName") { keepAddProv(); S.m.other = t.value === "__other"; render(); }
     else if (t.dataset && t.dataset.ti != null) {

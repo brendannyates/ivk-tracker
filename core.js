@@ -242,8 +242,9 @@
     if (A && !p.freq) add("freq", "No frequency on the tracker", ["Ask the group chat", "ask"]);
     if (A && a.proto) add("proto", p.protoAt == null ? "Protocol not confirmed" : `Protocol last confirmed ${fmtD(p.protoAt)}`, ["Confirm protocol", "proto"]);
     if (A && p.encAuth != null && p.authStart == null) add("authstart", "No auth start date", ED);
-    /* on the appointment list soon with no profile: who pays the provider visit and the infusion, the latest Sohar benefits */
-    if (x.noProfile && x.noProfile.has(p.mrn) && !/discontinued/i.test(p.status)) add("profile", "No patient profile", ["Create the profile", "profile"]);
+    /* index done: an Induction patient who has kept their 6th visit moves to Ongoing on the protocol the provider sets */
+    const ix = indexState(p, x.appts, T, c);
+    if (ix && ix.complete) add("indexdone", `Index done (${ix.done} kept): move to Ongoing and confirm the protocol`, ["Move to Ongoing", "idxDone"]);
     if (/induction/i.test(p.status)) add("induction", "Induction", null, { quiet: true });
     if (/paused/i.test(p.status)) add("paused", "Paused", null, { quiet: true });
     if (oak) add("oakq", oak.unknown ? "Oakland patient" : `Oakland: index here, ${oak.done} of ${oak.idx} done`, null, { quiet: true });
@@ -714,12 +715,12 @@
     const d = dueOf(p), prov = part(p?.ins1, prof?.prov, d.copay), inf = part(p?.ins2, prof?.inf, d.infusion);
     return { prov, inf, mode: prov.cover || inf.cover ? modeOf(prov.cover || "insurance", inf.cover || "insurance") : "", total: d.total };
   }
-  /* Patients on the appointment list (today on, within days) who have no profile yet: not on the Master Patient Tracker, or no
-     profile row saying who covers what. Treatment starts first, then by first visit. */
+  /* New patients: on the appointment list (today on, within days) with no row on the Master Patient Tracker. A patient on the
+     tracker already has their profile in its columns. Treatment starts first, then by first visit. */
   function profileGaps(A, PM, PF, today, days) {
     const by = new Map();
     for (const a of A) { if (a.date < today || a.date > today + days || isCancelled(a)) continue; const o = by.get(a.mrn); if (!o || a.date < o.first.date || (a.date === o.first.date && (a.time ?? 0) < (o.first.time ?? 0))) by.set(a.mrn, { first: a, start: (o && o.start) || /start/i.test(a.event) }); else if (/start/i.test(a.event)) o.start = true; }
-    return [...by.entries()].filter(([mrn]) => !PM.has(mrn) || !PF.has(mrn)).map(([mrn, o]) => ({ mrn, code: PM.get(mrn)?.code || o.first.code || "", first: o.first, start: o.start, onMpt: PM.has(mrn) }))
+    return [...by.entries()].filter(([mrn]) => !PM.has(mrn)).map(([mrn, o]) => ({ mrn, code: o.first.code || "", first: o.first, start: o.start, onMpt: false }))
       .sort((a, b) => (b.start - a.start) || a.first.date - b.first.date || (a.first.time ?? 0) - (b.first.time ?? 0));
   }
   /* The Sohar Eligibility add-in's benefits CSV ("Per Nbr", "MRN", "LASFIR", "Sohar Payer", ... "Sohar Ref"; the tracker file adds
@@ -764,7 +765,8 @@
       const fd = freqDays(p.freq), prn = /prn/i.test(p.freq || ""), rate = fd ? 7 / fd : 0;
       /* index: treatment N's day, booked, or projected at IndexPerWeek from the visits left */
       const L = countable(p, o.appts) ? treatments(p, o.appts) : null, done = L ? L.filter(a => a.date < T).length : null;
-      const idx = /induction/.test(st) || (L != null && p.start != null && done < N && T - p.start <= 7 * (+c.IndexWeeks + 2));
+      /* an index patient is one whose status is Induction */
+      const idx = /induction/.test(st);
       let idxEnd = null;
       if (idx) { const left = Math.max(0, N - (done ?? 0)), bookedN = L && L[N - 1] ? L[N - 1].date : null; idxEnd = bookedN ?? T + Math.ceil(left / perIdx) * 7; }
       const afterRate = Math.max(after, prn ? 0 : rate && rate < perIdx ? rate : after);
@@ -796,6 +798,16 @@
       transitions: rows.filter(r => r.idx).sort((a, b) => a.idxEnd - b.idxEnd) };
   }
 
+  /* ---------- index: Induction patients ---------- */
+  /* An Induction patient is in index. Their kept visits (not cancelled, not no-shows) are counted from the treatment start; once
+     the Nth (IndexPerWeek x IndexWeeks, 6) is kept, index is complete: the desk moves them to Ongoing and confirms the protocol
+     (usually 1x per week, set by the provider by acuity). Kept = before today, or today once checked out (keptToday). */
+  function indexState(p, A, today, cfg, keptToday) {
+    if (!p || !/induction/i.test(p.status || "")) return null;
+    const N = Math.max(1, Math.round(+cfg.IndexPerWeek * +cfg.IndexWeeks)), L = treatments(p, A);
+    const done = L.filter(a => a.date < today || (a.date === today && keptToday && keptToday(a))).length;
+    return { N, done, complete: countable(p, A) && done >= N, sixth: L[N - 1] || null, countable: countable(p, A) };
+  }
   /* ---------- treatment numbers, Oakland ---------- */
   /* the patient's IVK treatments in order, from the treatment start (Tx Start Date, else the first "start" visit on the list) */
   function treatments(p, A) {
@@ -895,7 +907,7 @@
   return { DEFAULTS, VISIT_COLS, TEMPLATES, norm, txt, num, serialOf, dateOf, isoOf, fromIso, toSerial, toMin, fmtT, fmtD, fmtDay, weekday, weekStart,
     PT_COLS, ptRows, AV_LEVELS, avName, availGrid, availStr, canCome, prefCells, awayList, awayStr, awayOn, PAY_COLS, REMIND_METHODS, money, amt, payRows, dueOf, payOf, ledger, toConfirm,
     PARTS, partKey, dueParts, visitAnswered, PROFILE_COLS, COVER_MODES, modeOf, modeParts, isSelf, SOHAR_KEYS, profileRows, coverage, profileGaps, parseSohar, demand,
-    fullPlan, eligibleStarts, memoX, indexN: cfg => Math.max(1, Math.round(+cfg.IndexPerWeek * +cfg.IndexWeeks)),
+    fullPlan, eligibleStarts, memoX, indexState, indexN: cfg => Math.max(1, Math.round(+cfg.IndexPerWeek * +cfg.IndexWeeks)),
     treatments, txNo, isOak, oakState, WAIT_ON, waitlist, waitMove, provFull, fullName, firstName, scheduleOf, START_TPL, longWhen,
     lasfir, provName, mrnKey, pickRow, eventShort, freqDays, byHeader, patients, appts, isCancelled, visitKey, visitRows, phase, isActive, futureOf, asks,
     today, code, chairState, chairStatus, waitMin, isLate, chairList, needs, loud, consults, fill, protoWords, arrivalText, askText,

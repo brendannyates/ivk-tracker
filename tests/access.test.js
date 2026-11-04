@@ -39,16 +39,15 @@ test("a start booked in a follow-up-only slot, or off the template, is flagged; 
   assert.equal(by("990101").postAt, 690, "a start's post check lands 90 min after it");
 });
 
-test("profiles: coverage from the tracker and the profile, gaps for patients on the list without one, starts first", () => {
+test("profiles: coverage from the tracker's columns; only new patients (on the list, no tracker row) are prompted, starts first", () => {
   const P1 = pts([["990201", "ALPPAT", "Ongoing", "1x per week", "40", "300", "Blue Shield", "Self Pay", "", ""]]);
   const cv = C.coverage(P1[0], null);
   assert.equal(cv.mode, "provins"); assert.equal(cv.prov.payer, "Blue Shield"); assert.equal(cv.inf.cover, "selfpay"); assert.equal(cv.prov.due, 40); assert.equal(cv.inf.due, 300);
-  const A = C.appts([AP_H, ap("990201", "ALPPAT", T + 2, 540), ap("990299", "NEWPAT", T + 5, 540, "IV Ketamine Start"), ap("990298", "LATPAT", T + 40, 540)]);
+  const A = C.appts([AP_H, ap("990201", "ALPPAT", T + 2, 540), ap("990299", "NEWPAT", T + 5, 540, "IV Ketamine Start"), ap("990297", "OTHPAT", T + 3, 540), ap("990298", "LATPAT", T + 40, 540)]);
   const G = C.profileGaps(A, new Map(P1.map(p => [p.mrn, p])), new Map(), T, 28);
-  assert.deepEqual(G.map(g => g.code), ["NEWPAT", "ALPPAT"], "the start first; nobody past 4 weeks");
-  assert.equal(G[0].onMpt, false); assert.equal(G[1].onMpt, true);
+  assert.deepEqual(G.map(g => g.code), ["NEWPAT", "OTHPAT"], "the start first; the tracker patient isn't prompted; nobody past 4 weeks");
+  assert.ok(G.every(g => !g.onMpt));
   const PF = C.profileRows([C.PROFILE_COLS, ["990201", "ALPPAT", "Insurance", "Blue Shield", "Self pay", "", "Blue Shield", "PPO", "In", "", "", "40", "20%", "1000", "250", "5000", "4100", "complete.eligible", "2026-10-20", "r1", "", "", "Sam", ""]]);
-  assert.equal(C.profileGaps(A, new Map(P1.map(p => [p.mrn, p])), PF, T, 28).length, 1);
   assert.equal(PF.get("990201").sohar.dedRem, "250"); assert.equal(PF.get("990201").sohar.date, C.fromIso("2026-10-20"));
   assert.deepEqual(C.modeParts("infins"), { prov: "selfpay", inf: "insurance" }); assert.equal(C.modeOf("insurance", "insurance"), "both");
 });
@@ -102,4 +101,23 @@ test("index patients come 2 a week to treatment 6, then once a week: the step-do
   assert.ok(w.steps.some(x => x.code === "IDXPAT"));
   assert.ok(D.weeks[D.weeks.length - 1].freed > 0.99, "a full visit a week free once they're past it");
   assert.equal(D.weeks[0].freed, 0);
+  /* only Induction is index: the same course on Ongoing counts at its own protocol */
+  const O = pts([["990401", "IDXPAT", "Ongoing", "1x per week", "", "", "", "", C.isoOf(start), ""]]);
+  assert.equal(C.demand({ patients: O, appts: A, holds: [], today: T, cfg, weeks: 6, sched: "all" }).rows[0].idx, false);
+});
+
+test("index done: an Induction patient who has kept 6 visits is asked to move to Ongoing; no-shows don't count", () => {
+  const start = T - 20, P1 = pts([["990501", "SIXPAT", "Induction", "2x per week", "", "", "", "", C.isoOf(start), ""]]);
+  const days = [start, start + 3, start + 7, start + 10, start + 14, start + 17];
+  const A = C.appts([AP_H, ...days.map((d, i) => ap("990501", "SIXPAT", d, 540, i ? "IV Ketamine Follow Up" : "IV Ketamine Start"))]);
+  const x = { today: T, cfg, appts: A, patients: P1 };
+  assert.equal(C.indexState(P1[0], A, T, cfg).complete, true);
+  assert.ok(C.needs(P1[0], x).some(n => n.k === "indexdone" && n.act[1] === "idxDone"));
+  const ns = A.map((a, i) => i === 5 ? Object.assign({}, a, { status: "No Show" }) : a);
+  assert.equal(C.indexState(P1[0], ns, T, cfg).complete, false, "5 kept");
+  /* today's 6th visit counts once it's checked out */
+  const today6 = C.appts([AP_H, ...days.slice(0, 5).map((d, i) => ap("990501", "SIXPAT", d, 540, i ? "IV Ketamine Follow Up" : "IV Ketamine Start")), ap("990501", "SIXPAT", T, 540)]);
+  assert.equal(C.indexState(P1[0], today6, T, cfg).complete, false);
+  assert.equal(C.indexState(P1[0], today6, T, cfg, a => a.date === T).complete, true);
+  assert.equal(C.indexState(pts([["990502", "ONGPAT", "Ongoing", "1x per week", "", "", "", "", C.isoOf(start), ""]])[0], A, T, cfg), null);
 });
