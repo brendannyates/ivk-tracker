@@ -495,3 +495,12 @@ button.avrow:hover{background:var(--surface-3)}button.avrow + button.avrow{box-s
   .phead>:nth-child(3),.phead>:nth-child(4),.phead>:nth-child(5),.prow>:nth-child(3),.prow>:nth-child(4),.prow>:nth-child(5){display:none}
   .pvs{padding:16px}
 }
+/* the MRN beside the code: under it on rows, inline on schedule tiles */
+.pm{display:block;font-size:11.5px;font-weight:400;color:var(--muted);letter-spacing:0}
+.blk .pm{display:inline;font-size:11px}
+/* today's payment: what the patient owes (editable) beside Collected / Not collected */
+.payr{display:flex;flex-wrap:wrap;align-items:flex-end;gap:12px}
+.payr .amt{display:block;width:120px;font-size:12px;color:var(--muted)}
+.payr .amt input{display:block;width:100%;margin-top:4px;min-height:40px;padding:8px 12px;border-radius:10px;border:1.5px solid var(--surface-2);background:var(--surface);color:var(--ink);font:inherit;font-size:14px}
+.payr .pick{margin-top:0}
+.pcb.so{background:var(--warn-soft);color:var(--warn)}

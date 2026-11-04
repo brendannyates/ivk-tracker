@@ -69,12 +69,12 @@ no-shows don't count), check-out of that visit offers **Move to Ongoing** with t
 provider sets it by acuity), and until it's done the patient has the need "Index done: move to Ongoing and confirm the protocol".
 Moving writes Status Ongoing, Frequency and Protocol Updated on the Master Patient Tracker.
 
-**Start paperwork** (schedule and consent) prompts for the BIDF: it's completed by the benefits team and printed from NextGen, so
+**Start paperwork** (treatment start visits only) and **Start email** (only before the start’s day, so on the patient view) don’t show for follow-ups. Start paperwork prompts for the BIDF: it's completed by the benefits team and printed from NextGen, so
 the add-in asks the desk to print it and saves the day they tick it. The start email still needs the BIDF uploaded as a PDF.
 
 ## The visit, at the desk
 
-1. **Check in.** Pick a chair or leave them in the lobby. The RN's chat gets "SMIJAN is here for their 1:30 PM IVK visit with
+1. **Check in.** They go to the lobby unless a chair is picked. Payment can be recorded here (optional). The RN's chat gets "SMIJAN is here for their 1:30 PM IVK visit with
    Dr. Rivera. Chair 2." If the patient needs booking out or a protocol confirmation, the group chat gets the ask at the same time.
 2. **Seat.** Picking a chair later tells the RN which one.
 3. **Ask.** While they're in the chair, the card's next step is to ask the group chat (if it wasn't sent at check-in). The message
@@ -88,12 +88,27 @@ confirming when Protocol Updated is blank or older than 90 days. Both are in Set
 ## Payments
 
 Each IVK visit owes the provider visit (the tracker's Copay) and the infusion (Infusion), collected separately. Check-out asks
-**Collected** or **Not collected** for each part that owes something; what isn't collected becomes the patient's balance. Payment
+**Collected** or **Not collected** for each part that owes something and has no answer from check-in; what the patient owes today can be changed there (and, ticked, saved as their Copay and Infusion on the tracker). **Record / Change today’s payment** on the visit card changes the answer any time, after check-out too (a new row; the latest answer counts); what isn't collected becomes the patient's balance. Payment
 rows are kept per part (the visit's key with |prov or |inf); rows saved for the whole visit before the split still count. On the
 patient's Financial page: the balance and each missed part (**Collected**, **Waive**), past visits nobody answered (since the
 payment log started), **Luma card on file** and **Okay to charge at time of service**, and **Record a payment
 or reminder**: a payment on account (comes off the oldest balance first) or a balance reminder sent (date, In-person or Luma). A
 balance with no reminder in 14 days is a need.
+
+## Transfers
+
+A patient whose Primary Location isn’t this clinic (or an Oakland patient) has **Transfer** on the patient view’s Protocol page: **Discontinue now** (Status Discontinued, a dated transfer note in Clinic Notes, a log line) or **Schedule a transfer** for a future date (tblIvkTransfers). A scheduled transfer is confirmed at check-out of their last visit here; visits booked here after the date are a need. Transferring to Oakland can mark OAK tasked to schedule them.
+
+## Sooner waitlist
+
+Click a visit on the Schedule to open the patient or waitlist them for a sooner date: the earliest day, the days and halves they can
+come (from their availability) and whether only their provider will do (tblIvkSooner). The Sooner waitlist under the schedule shows
+each patient's openings: open template slots before their visit, with a Hold button. Each NextGen upload also looks at the times a
+cancellation freed and pops up any opening nobody has been shown yet. Done takes them off.
+
+## Index booking
+
+A treatment start for an Induction patient still at 2x per week (or no protocol yet) needs the other 5 index visits booked behind it; until they’re on the list the visit card, Today’s row and the patient carry **Index not fully booked**.
 
 ## Oakland patients
 
@@ -106,7 +121,8 @@ before the list begins isn't counted (the card says so).
 
 The patient availability form's levels for each weekday morning and afternoon (Preferred, Mostly, Sometimes, Not available),
 effective and expiry dates, a note and dates away. Preferred and Mostly go to the tracker's AM/PM columns and the Index planner;
-dates away are skipped by the planner and a visit booked on one is a need. **Print availability form** prints the form with the
+the ten AM/PM columns are found by position (the first ten headers reading AM or PM, Mon AM to Fri PM), so a mistyped
+header still reads; dates away are skipped by the planner and a visit booked on one is a need. **Print availability form** prints the form with the
 patient's name and date of birth.
 
 ## Printing and the start email
@@ -177,7 +193,14 @@ patient's name and date of birth.
   the times.
 - **Upload**: run the NextGen report for the IVK providers' whole schedule. IV ketamine visits go to the Appt List tab; the rest
   are kept on the hidden tab with no patient on them (date, time, provider, event, status). The Index Planner tab's grid is then
-  rewritten as plain values; the lookups into the other workbook are gone.
+  rewritten as plain values; the lookups into the other workbook are gone. Older exports read too: .xls (Excel 97-2003, or a web
+  page saved as .xls), Excel 2003 XML, CSV or text; the report on any sheet; dates written out; the time inside the date-time.
+- **Other clinics**: the report can include the neighbouring clinics. The upload asks which locations are this clinic's (kept as
+  the Locations setting); only those go on the Appt List tab. The other clinics' IVK visits go to tblIvkElsewhere (LASFIR, no
+  names) and are used only to check a transfer or Oakland hand-off is booked there: "nothing booked there yet" is a need, a
+  booked visit a quiet tag. Nothing is said about other clinics until a report with them has been uploaded.
+  Primary Location (Edit) and Transfer to offer the report's locations as NextGen names them. The patient view's Schedule page shows
+  each visit's location, their appointments here (kept and booked) and any booked at other clinics.
 
 ## Where things are kept
 
@@ -198,6 +221,9 @@ Index planner gets the newer tables from Update the workbook):
 | tblIvkFlags | Patients who require a post-check |
 | tblIvkPatient | Per patient: Luma card on file, okay to collect, Oakland, OAK tasked, availability, dates away, waitlist order and waiting on |
 | tblIvkExceptions | Provider time off: provider, dates, who covers, whether they work the absent provider's template |
+| tblIvkTransfers | Transfers to another clinic: to, date, scheduled / done / cancelled, note, confirmed |
+| tblIvkSooner | The sooner waitlist: booked visit, earliest date, days, same provider, status, openings already shown |
+| tblIvkElsewhere | IVK visits at the other clinics from a wider report: MRN, LASFIR, date, time, provider, event, status, location |
 | tblIvkProfile | Per patient: insurance or self pay and the payer for the provider visit and the infusion, the latest Sohar benefits, BIDF printed |
 | tblIvkPay | Payments due at each visit (collected / missed), later payments and waivers, balance reminders |
 

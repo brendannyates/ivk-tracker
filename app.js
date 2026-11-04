@@ -39,6 +39,8 @@
     /* a tracker row whose Patient Name isn't a code takes the code from the Appt List's Name column, never the name itself */
     const codeOf = new Map(S.A.filter(a => a.code).map(a => [a.mrn, a.code]));
     for (const p of S.P) if (!p.code) p.code = codeOf.get(p.mrn) || "(no code)"; S.V = C.visitRows(r.visits); S.CS = C.consults(r.consults, T);
+    /* and an Appt List row with a blank Patient takes the tracker's code (the Schedule showed only the time for these) */
+    for (const a of S.A) if (!a.code && S.PM.get(a.mrn)?.code && S.PM.get(a.mrn).code !== "(no code)") a.code = S.PM.get(a.mrn).code;
     let plan = null; try { plan = r.plan ? bpCheck(r.plan).plan || null : null; } catch (e) { plan = null; }
     S.plan = plan; S.planErr = r.plan && !plan ? "The saved chair map can’t be read. Load the map file again." : "";
     S.x = { today: T, cfg, appts: S.A, patients: S.P, visits: S.V, clinic: cfg.Clinic };
@@ -56,6 +58,14 @@
     S.payStart = C.toSerial(cfg.PayStart) ?? firstPay ?? T;
     Object.assign(S.x, { PT: S.PT, pays: S.payOn ? S.pays : null, payStart: S.payStart });
     S.WL = C.waitlist(S.CS, S.PT);
+    /* transfers to another clinic (scheduled, confirmed at the last visit here) */
+    S.XF = C.xferRows(r.tblIvkTransfers); S.xferOn = !!r.tables?.own?.tblIvkTransfers; S.x.XF = S.XF;
+    /* IVK visits at the other clinics, from a wider report: whether a transfer or an Oakland hand-off is booked there.
+       E stays null until one has been uploaded, so "nothing booked there" is never said without a report to say it from */
+    S.elseOn = !!r.tables?.own?.tblIvkElsewhere; S.elseAt = C.toSerial(cfg.ElsewhereAt);
+    S.E = C.elseRows(r.tblIvkElsewhere); S.x.E = S.elseOn && C.txt(cfg.ElsewhereAt) ? S.E : null;
+    /* the sooner waitlist: patients booked on a date who'd take an earlier one */
+    S.SO = C.soonerRows(r.tblIvkSooner); S.soonerOn = !!r.tables?.own?.tblIvkSooner;
     /* patient profiles: who pays the provider visit and the infusion, the latest Sohar benefits. Anyone on the appointment list in
        the next 4 weeks without one (not on the tracker, or no profile row) is prompted, treatment starts first. */
     S.PF = C.profileRows(r.tblIvkProfile); S.profOn = !!r.tables?.own?.tblIvkProfile;
@@ -108,7 +118,7 @@
     savePlan: (m, p) => X.savePlan(m, p), saveFlag: (m, p) => X.saveFlag(m, p), placeHolds: (r, by) => X.placeHolds(r, by), setHolds: (ids, st, by) => X.setHolds(ids, st, by),
     readRow: (k, m) => X.readRow(k, m), saveRow: (k, m, p) => X.saveRow(k, m, p), savePt: (m, p) => X.savePt(m, p), addPays: r => X.addPays(r), saveRanks: (o, by) => X.saveRanks(o, by), saveException: (i, p) => X.saveException(i, p),
     setupTemplate: () => X.setupTemplate(), addGrid: (o, t) => X.addGrid(o, t), setCells: (a, r, c, v, m, s) => X.setCells(a, r, c, v, m, s),
-    saveTypes: (t, g) => X.saveTypes(t, g), replaceOther: r => X.replaceOther(r), saveProfile: (m, p) => X.saveProfile(m, p), addMpt: f => X.addMpt(f),
+    saveTypes: (t, g) => X.saveTypes(t, g), replaceOther: r => X.replaceOther(r), replaceElse: r => X.replaceElse(r), saveSooner: (m, p) => X.saveSooner(m, p), saveProfile: (m, p) => X.saveProfile(m, p), saveXfer: (m, p) => X.saveXfer(m, p), addMpt: f => X.addMpt(f),
     /* the pane reads first so the tab gets every hold anyone has placed, not just this screen's copy */
     fillPlanner: async () => { await refresh(true); return X.fillPlanner(S.A, S.holds, S.raw.apptUpdated); }
   };
@@ -267,11 +277,11 @@
     return `<div class="tools">${full}<button class="ibtn${busy ? " spin" : ""}" data-act="reload" title="Refresh: read the workbook again" aria-label="Refresh from the workbook"${busy ? " disabled" : ""}>${ICON.refresh}</button>
       <button class="ibtn" data-act="theme" title="${dark ? "Light mode" : "Dark mode"}" aria-label="${dark ? "Switch to light mode" : "Switch to dark mode"}" aria-pressed="${dark}">${dark ? ICON.sun : ICON.moon}</button></div>`; };
   const head = (title, sub, clock) => `<div class="top"><div><h1>${title}</h1>${sub ? `<p class="sub">${sub}</p>` : ""}</div><div class="topr">${tools()}${clock ? `<div class="clock"><div class="t">${hm()}</div><div class="d">${esc(C.fmtDay(todayS()))}</div></div>` : ""}</div></div>`;
-  const TABLE_WHAT = { tblIvkPlans: "index plans", tblIvkHolds: "holds", tblIvkOther: "the providers’ other visits", tblIvkFlags: "post-check flags", tblIvkPatient: "payment flags, Oakland, availability and the waitlist order", tblIvkPay: "payments and balance reminders", tblIvkExceptions: "provider time off and coverage", tblIvkProfile: "patient profiles (who pays, Sohar benefits)" };
+  const TABLE_WHAT = { tblIvkPlans: "index plans", tblIvkHolds: "holds", tblIvkOther: "the providers’ other visits", tblIvkFlags: "post-check flags", tblIvkPatient: "payment flags, Oakland, availability and the waitlist order", tblIvkPay: "payments and balance reminders", tblIvkExceptions: "provider time off and coverage", tblIvkProfile: "patient profiles (who pays, Sohar benefits)", tblIvkTransfers: "transfers to another clinic", tblIvkElsewhere: "visits at the other clinics (transfer and Oakland hand-offs)", tblIvkSooner: "the sooner waitlist" };
   function setupBanner() {
     const miss = S.raw.missing || [], noTabs = ["mpt", "appt"].filter(k => !S.raw.tables?.[k]);
     if (noTabs.length) return `<div class="msg warn"><b>This workbook has no ${noTabs.map(k => k === "mpt" ? "Master Patient Tracker" : "Appt List").join(" or ")} table.</b> Open the IVK Patient Tracker workbook, then the add-in.</div>`;
-    const NEW = ["tblIvkPlans", "tblIvkHolds", "tblIvkOther", "tblIvkFlags", "tblIvkPatient", "tblIvkPay", "tblIvkExceptions", "tblIvkProfile"];
+    const NEW = ["tblIvkPlans", "tblIvkHolds", "tblIvkOther", "tblIvkFlags", "tblIvkPatient", "tblIvkPay", "tblIvkExceptions", "tblIvkProfile", "tblIvkTransfers", "tblIvkElsewhere", "tblIvkSooner"];
     if (miss.length && miss.every(n => NEW.includes(n))) return `<div class="msg warn"><b>This version needs ${miss.length === 1 ? "one more table" : `${miss.length} more tables`}.</b> Updating adds them to the hidden ${esc(X.DATA_SHEET)} tab (${miss.map(n => TABLE_WHAT[n]).join(", ")}); nothing else changes. <div class="actions"><button class="btn primary inl" data-act="setup">Update the workbook</button></div></div>`;
     if (miss.length) return `<div class="msg warn"><b>This workbook isn’t set up for the add-in yet.</b> Setting up adds a hidden IVK Tracker Data tab for check-ins and Teams settings; nothing else changes. <div class="actions"><button class="btn primary inl" data-act="setup">Set up this workbook</button></div></div>`;
     return "";
@@ -337,29 +347,35 @@
   /* what the row says it needs, in amber; red only for a too-long wait */
   function askFlag(v) {
     if (!v.p) return `<span class="f">Not on the Master Patient Tracker</span>`;
+    /* a treatment start without the rest of index booked behind it comes first */
+    const ish = C.indexShort(v.p, S.A, v.a, S.cfg);
+    return (ish ? `<span class="f">Index not fully booked (${ish.booked} of ${ish.need})</span>, ` : "") + askRest(v);
+  }
+  function askRest(v) {
     if (v.st.asked != null) return `<span class="ok">Asked the group chat at ${C.fmtT(v.st.asked)}</span>`;
     const a = v.ask, t = a.book && a.proto ? "Confirm protocol, book at discharge" : a.book ? (a.thru == null ? "Nothing booked after today" : `Booked through ${C.fmtD(a.thru)}`) : a.proto ? "Confirm protocol" : "";
     return t ? `<span class="f">${t}</span>` : `<span>Booked through ${C.fmtD(a.thru)}</span>`;
   }
+  const mrnTag = m => m ? `<small class="pm">${esc(m)}</small>` : "";
   const rowBtn = (v, act, label) => `<button class="btn ghost sm" data-act="${act}" data-k="${esc(v.key)}">${label}</button>`;
   function waitingHTML(F) {
     if (!F.waiting.length) return "";
     const rows = F.waiting.map(v => { const w = C.waitMin(v, F.now), late = C.isLate(v, F.now, S.cfg);
       return `<div class="row" role="button" tabindex="0" data-act="sel" data-k="${esc(v.key)}" data-state="${late ? "late" : "track"}" aria-pressed="${S.sel === v.key && !S.bSel}">
-        <span class="p">${esc(C.code(v))}</span><span class="w">${C.fmtT(v.a.time)}</span><span class="i">${late ? `<span class="f bad">Waiting ${w} min for a chair</span>` : `Checked in ${C.fmtT(v.st.arr)}, ${askFlag(v)}`}</span>${rowBtn(v, "seat", "Seat")}</div>`; }).join("");
+        <span class="p">${esc(C.code(v))}${mrnTag(v.a.mrn)}</span><span class="w">${C.fmtT(v.a.time)}</span><span class="i">${late ? `<span class="f bad">Waiting ${w} min for a chair</span>` : `Checked in ${C.fmtT(v.st.arr)}, ${askFlag(v)}`}</span>${rowBtn(v, "seat", "Seat")}</div>`; }).join("");
     return `<section class="card list"><div class="lh"><h2>Checked in, waiting for a chair</h2><span>${F.waiting.length}</span></div>${rows}</section>`;
   }
   function comingHTML(F) {
     const rows = F.coming.map(v => { const late = v.a.time != null && F.now - v.a.time > 15;
       return `<div class="row" role="button" tabindex="0" data-act="sel" data-k="${esc(v.key)}" aria-pressed="${S.sel === v.key && !S.bSel}">
-        <span class="p">${esc(C.code(v))}</span><span class="w">${C.fmtT(v.a.time)}</span><span class="i">${late ? `<span class="f">Not here yet</span>, ` : ""}${esc(C.provName(v.a.provider))}${v.a.event && /start/i.test(v.a.event) ? ", treatment start" : ""}, ${askFlag(v)}</span>${rowBtn(v, "checkin", "Check in")}</div>`; }).join("");
+        <span class="p">${esc(C.code(v))}${mrnTag(v.a.mrn)}</span><span class="w">${C.fmtT(v.a.time)}</span><span class="i">${late ? `<span class="f">Not here yet</span>, ` : ""}${esc(C.provName(v.a.provider))}${v.a.event && /start/i.test(v.a.event) ? ", treatment start" : ""}, ${askFlag(v)}</span>${rowBtn(v, "checkin", "Check in")}</div>`; }).join("");
     return `<section class="card list"><div class="lh"><h2>Still to come</h2><span>${F.coming.length ? F.coming.length : ""}</span></div>${rows || `<p class="empty">Nobody else is booked today.</p>`}</section>`;
   }
   function doneHTML(F) {
     const L = [...F.done, ...F.noshow, ...F.gone];
     if (!L.length) return "";
     const what = v => v.ph === "noshow" ? "No-show in NextGen" : v.ph === "gone" ? "Not coming today" : v.st.booked === "later" && v.ask.book ? `<span class="f">Out ${C.fmtT(v.st.out)}, next visit not booked</span>` : `Out ${C.fmtT(v.st.out)}${v.st.booked === "yes" || !v.ask.book ? ", next visit booked" : ""}`;
-    const rows = L.map(v => `<div class="row" role="button" tabindex="0" data-act="sel" data-k="${esc(v.key)}" aria-pressed="${S.sel === v.key && !S.bSel}"><span class="p">${esc(C.code(v))}</span><span class="w">${C.fmtT(v.a.time)}</span><span class="i">${what(v)}</span><span></span></div>`).join("");
+    const rows = L.map(v => `<div class="row" role="button" tabindex="0" data-act="sel" data-k="${esc(v.key)}" aria-pressed="${S.sel === v.key && !S.bSel}"><span class="p">${esc(C.code(v))}${mrnTag(v.a.mrn)}</span><span class="w">${C.fmtT(v.a.time)}</span><span class="i">${what(v)}</span><span></span></div>`).join("");
     return `<section class="card list"><details class="fold"${F.openBook.length ? " open" : ""}><summary>Done for today <span>${L.length}${F.openBook.length ? `, ${F.openBook.length} still to book` : ""}</span></summary>${rows}</details></section>`;
   }
   function openChairHTML(F, id) {
@@ -423,12 +439,20 @@
     if (v.ph === "done") quiet.push(["undoOut", "Undo check-out"]);
     if (v.p) quiet.push(["openPt", "Patient view"]);
     if (v.p && C.indexState(v.p, S.A, todayS(), S.cfg)?.complete) ghosts.push(["idxDone", "Move to Ongoing"]);
-    if (v.p) { (v.ph === "chair" || v.ph === "done" ? ghosts : quiet).push(["printSched", "Print schedule"]); if (/start/i.test(v.a.event) || C.txNo(v.p, S.A, v.a.date, v.a.time) === 1) quiet.push(["startForms", "Start paperwork"], ["startEmail", "Start email"]); }
+    /* start paperwork is for a treatment start only; the start email goes out before it, so it's on the patient view, not today's card */
+    if (v.p) { (v.ph === "chair" || v.ph === "done" ? ghosts : quiet).push(["printSched", "Print schedule"]); if (/start/i.test(v.a.event)) quiet.push(["startForms", "Start paperwork"]); }
+    /* today's payment: recorded at check-in or any time before check-out, and changed after it */
+    if (v.p && S.payOn && v.ph !== "booked" && v.ph !== "gone") quiet.push(["payEdit", ["prov", "inf"].some(k => C.payOf(S.pays, v.key, k)) ? "Change today’s payment" : "Record today’s payment"]);
     const oak = v.p ? C.oakState(v.p, ptOf(v.p.mrn), S.A, todayS(), S.cfg) : null;
     if (oak && oak.task && v.ph !== "booked") ghosts.push(["oakTask", "Mark OAK tasked"]);
+    const xs = v.p ? C.xferState(S.XF.get(v.p.mrn), S.A, todayS(), S.x.E) : null;
+    if (xs && xs.due && v.ph !== "booked") ghosts.push(["xfer", `Confirm transfer to ${xs.to}`]);
+    const ish = v.p ? C.indexShort(v.p, S.A, v.a, S.cfg) : null;
     const bt = (cls, [a, l]) => `<button class="btn ${cls}" data-act="${a}" data-k="${k}" data-m="${esc(v.a.mrn)}">${l}</button>`;
-    return `<aside class="card detail" aria-label="${esc(c)}"><div class="dh"><div><div class="name">${esc(c)}${loc ? `<span class="loc">${esc(loc)}</span>` : ""}</div><div class="meta">${esc(meta)}</div></div></div>
+    return `<aside class="card detail" aria-label="${esc(c)}"><div class="dh"><div><div class="name">${esc(c)}<span class="mrn">MRN ${esc(v.a.mrn)}</span>${loc ? `<span class="loc">${esc(loc)}</span>` : ""}</div><div class="meta">${esc(meta)}</div></div></div>
       <p class="lead ${vs.cls}">${esc(vs.lead)}</p>${tl}
+      ${ish ? `<div class="msg warn"><b>Index not fully booked.</b> ${ish.booked} of the ${ish.need} visits after this start are on the list, and ${esc(c)} is in Induction at ${esc(v.p.freq || "the index protocol")}. <button class="btn ghost sm" data-act="pvPlan" data-m="${esc(v.a.mrn)}">Plan index visits</button></div>` : ""}
+      ${xs && !xs.due ? `<p class="note">Transfer to ${esc(xs.to)}${xs.date != null ? ` on ${C.fmtD(xs.date)}` : ""}; confirm it at their last visit here${xs.last ? ` (${C.fmtD(xs.last.date)})` : ""}.${thereTxt(xs.there, xs.to)}</p>` : ""}
       <ol class="steps">${steps}</ol>
       ${vs.pri ? `<button class="btn primary" data-act="${vs.pri[0]}" data-k="${k}"${S.busy ? " disabled" : ""}>${esc(vs.pri[1])}</button>` : ""}
       ${ghosts.length ? `<div class="actions">${ghosts.map(g => bt("ghost", g)).join("")}</div>` : ""}
@@ -452,6 +476,8 @@
         <dt>Auth</dt>${auth}<dt>Visits on auth</dt>${enc}
         <dt>Infusion</dt>${dd(esc([p.infusion && p.infusion !== "0" ? `$${p.infusion}` : "", p.ins2].filter(Boolean).join(", ") || "—"))}
         <dt>Copay</dt>${dd(esc(p.copay && p.copay !== "0" ? `$${p.copay}` : p.copay === "0" ? "None" : "—"))}
+        ${v && S.payOn ? (() => { const r = ["prov", "inf"].map(k => [k, C.payOf(S.pays, v.key, k)]).filter(x => x[1]);
+          return `<dt>Today</dt>${dd(r.length ? r.map(([k, x]) => `${PART_WORD[k].toLowerCase()} ${C.money(x.amount)} ${x.kind === "collected" ? "collected" : "not collected"}`).join(", ") : C.dueOf(p).total > 0 ? "Payment not recorded yet" : "Nothing due", r.length || C.dueOf(p).total <= 0 ? "" : "flag")}`; })() : ""}
         ${v && S.payOn ? (() => { const L = C.ledger(p.mrn, S.pays), t = ptOf(p.mrn); return `<dt>Balance</dt>${dd(L.balance > 0 ? `${C.money(L.balance)}${t?.card ? `, card on file${t.okCollect ? ", okay to charge" : ""}` : ""}` : "None", L.balance > 0 ? "flag" : "")}`; })() : ""}
       </dl></div>`;
   }
@@ -488,8 +514,8 @@
     };
     const blk = a => { const s = stateOf(a), p = a.p, flag = p && a.date >= T && C.futureOf(S.A, p.mrn, a.date).length === 0 && C.isActive(p) && !/prn/i.test(p.freq);
       const k = visitKind(a), bk = bookOf(a), miss = !!bk?.miss, pc = !!p?.reqPost, pk = bk?.post ? `${a.date}|${bk.postAt}|${bk.pkey}` : "";
-      const label = `${a.code} at ${C.fmtT(a.time)}, ${C.provName(a.provider)}${k ? `, ${KIND_WORD[k]}` : ""}${pc ? ", requires a post-check" : ""}, ${a.status}${miss ? `. ${MISS_TXT}` : ""}`;
-      return `<div class="blkw"><button class="blk ${s}${k ? ` k-${k}` : ""}" data-act="schedPick" data-m="${esc(a.mrn)}" data-d="${a.date}"${pk ? ` data-pc="${esc(pk)}"` : ""} aria-label="${esc(label)}"><b>${esc(a.code)}</b> ${C.fmtT(a.time)}${pc ? ` <span class="pcb" title="Requires a post-check">PC</span>` : ""}<small>${esc(C.provName(a.provider))}${k === "st" ? ", start" : k === "ix" ? `, index${(() => { const n = p ? C.txNo(p, S.A, a.date, a.time) : null; return n ? ` ${n}` : ""; })()}` : ""}${s === "noshow" ? ", no-show" : flag ? ", last booked" : ""}</small></button>${miss ? missTag() : ""}</div>`; };
+      const label = `${a.code || "No code"}, MRN ${a.mrn}, at ${C.fmtT(a.time)}, ${C.provName(a.provider)}${k ? `, ${KIND_WORD[k]}` : ""}${pc ? ", requires a post-check" : ""}, ${a.status}${miss ? `. ${MISS_TXT}` : ""}`;
+      return `<div class="blkw"><button class="blk ${s}${k ? ` k-${k}` : ""}" data-act="schedPick" data-m="${esc(a.mrn)}" data-d="${a.date}" data-t="${a.time}"${pk ? ` data-pc="${esc(pk)}"` : ""} aria-label="${esc(label)}"><b>${esc(a.code || "No code")}</b> <span class="pm">${esc(a.mrn)}</span> ${C.fmtT(a.time)}${pc ? ` <span class="pcb" title="Requires a post-check">PC</span>` : ""}${S.SO.get(a.mrn)?.status === "waiting" && S.SO.get(a.mrn).booked === a.date ? ` <span class="pcb so" title="On the sooner waitlist">Sooner</span>` : ""}<small>${esc(C.provName(a.provider))}${k === "st" ? ", start" : k === "ix" ? `, index${(() => { const n = p ? C.txNo(p, S.A, a.date, a.time) : null; return n ? ` ${n}` : ""; })()}` : ""}${s === "noshow" ? ", no-show" : flag ? ", last booked" : ""}</small></button>${miss ? missTag() : ""}</div>`; };
     const hblk = b => { const late = C.holdState(b.h, S.A, Date.now(), S.cfg) === "late", pk = `${b.h.date}|${b.postAt}|${b.pkey}`;
       return `<button class="blk hold k-ix${late ? " late" : ""}" data-act="ipPick" data-m="${esc(b.mrn)}" data-pc="${esc(pk)}" aria-label="${esc(`Hold for ${b.code} at ${C.fmtT(b.time)}${late ? ", not confirmed booked" : ""}`)}">Hold <b>${esc(b.code)}</b> ${C.fmtT(b.time)}<small>${esc(provLabel(b.provider))}${late ? ", not confirmed" : b.h.by ? `, by ${esc(b.h.by)}` : ""}</small></button>`; };
     /* an open slot: pressed, it's held for a patient (or, for an index start, planned from) */
@@ -505,11 +531,38 @@
         <button class="btn ghost sm" data-act="wk" data-v="-1">Previous week</button><button class="btn ghost sm" data-act="wk" data-v="0"${S.wk === 0 ? " disabled" : ""}>This week</button><button class="btn ghost sm" data-act="wk" data-v="1">Next week</button>
         <button class="btn ghost sm" data-act="printWeek" style="margin-left:auto">Print this week</button></div>
       <ul class="key skey"><li><span class="ktab st"></span>Treatment start</li><li><span class="ktab ix"></span>Index visit</li><li><span class="pcb">PC</span>Requires a post-check</li><li><span class="tsw pcs"></span>Where a post check lands</li><li><span class="miss sm">i</span>Not on its template slot</li><li class="muted">“last booked” = nothing booked after it</li></ul>
-      <div class="sgrid"><div></div>${W.days.map(d => `<div class="ch${d === T ? " today" : ""}">${["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"][C.weekday(d) - 1]}<small>${C.fmtD(d)}</small></div>`).join("")}${cells}</div></section>`;
+      <div class="sgrid"><div></div>${W.days.map(d => `<div class="ch${d === T ? " today" : ""}">${["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"][C.weekday(d) - 1]}<small>${C.fmtD(d)}</small></div>`).join("")}${cells}</div></section>${soonerHTML()}`;
+  }
+
+  /* ---------- sooner waitlist ---------- */
+  /* the visit a waitlisted patient is booked for (a start needs an index start slot) */
+  const soonerVisit = r => S.A.find(a => a.mrn === r.mrn && a.date === r.booked && (r.bookedTime == null || a.time === r.bookedTime) && !C.isCancelled(a)) || null;
+  /* each waiting patient and the openings that would move them sooner: open template slots, and (after an upload) times a
+     cancellation freed. extra = more openings to look through. */
+  function soonerHits(extra) {
+    const W = [...S.SO.values()].filter(r => r.status === "waiting"), T = todayS(); if (!W.length) return [];
+    const until = Math.max(...W.map(r => r.booked)) - 1;
+    const slots = S.grids.length ? memo(`soOpen|${until}`, () => C.openSlots(C.memoX(S.X), T, until)) : [];
+    return W.map(r => { const v = soonerVisit(r); return { r, v, moved: !v, hits: C.soonerMatch(r, slots.concat(extra || []), T, !!v && /start/i.test(v.event)) }; });
+  }
+  const soonerTxt = r => [`booked ${dshort(r.booked)}${r.bookedTime != null ? ` ${C.fmtT(r.bookedTime)}` : ""}`, r.from != null ? `from ${C.fmtD(r.from)}` : "",
+    r.days.size ? [...r.days].sort().map(d => `${C.DAYS5[+d[0] - 1]} ${d.slice(1).toUpperCase()}`).join(", ") : "any day", r.sameProv ? `with ${C.provName(r.provider)} only` : "any provider"].filter(Boolean).join(", ");
+  /* an open slot can be held; a time freed by a cancellation off the template is booked straight in NextGen */
+  const hitBtn = (r, c) => c.src === "freed" && !C.daySlots(c.date, S.X).slots.some(s => s.open && s.time === c.time && s.pkey === TM.provKey(c.provider))
+    ? `<span class="pcb so">${dshort(c.date)} ${C.fmtT(c.time)}, ${esc(C.provName(c.provider))}: cancelled, book in NextGen</span>` : `<button class="btn ghost sm" data-act="schedOpen" data-d="${c.date}" data-t="${c.time}" data-p="${esc(c.provider)}" data-w="${esc(r.mrn)}">${dshort(c.date)} ${C.fmtT(c.time)}, ${esc(C.provName(c.provider))}${c.src === "freed" ? " (cancelled)" : ""}</button>`;
+  function soonerHTML() {
+    const L = soonerHits(); if (!L.length && !S.soonerOn) return "";
+    const row = x => `<div class="row"><span class="p">${esc(x.r.code)}</span><span class="i">${esc(soonerTxt(x.r))}${x.r.note ? `. ${esc(x.r.note)}` : ""}${x.moved ? `<br><b>That visit isn’t on the list any more:</b> moved or cancelled?` : ""}
+      ${x.hits.length ? `<br>Sooner: ${x.hits.slice(0, 4).map(c => hitBtn(x.r, c)).join(" ")}` : S.grids.length ? "<br><span class=\"muted\">No opening yet</span>" : ""}</span>
+      <span class="w"><button class="btn mute sm" data-act="soEdit" data-m="${esc(x.r.mrn)}">Edit</button><button class="btn mute sm" data-act="soDone" data-m="${esc(x.r.mrn)}">Done</button></span></div>`;
+    return `<section class="card list"><div class="lh"><h2>Sooner waitlist</h2><span>${L.length ? `${plural(L.length, "patient")}, ${L.filter(x => x.hits.length).length} with an opening` : "nobody waiting"}</span></div>
+      ${needTable("tblIvkSooner", "The sooner waitlist")}
+      ${L.map(row).join("") || `<p class="empty">Click a visit on the schedule to waitlist the patient for a sooner date.</p>`}
+      <p class="note">${S.grids.length ? "Openings are open template slots before their visit, on the days they said" : "No template yet, so openings are only the times a cancellation frees on a new upload"}. Each upload alerts any new opening.</p></section>`;
   }
 
   /* ---------- Index planner ---------- */
-  const DAYW = ["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
+  const DAYW =["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"];
   const dshort = d => `${["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"][C.weekday(d)]} ${C.fmtD(d)}`;
   /* a provider as the templates name them ("Ana Rivera, MD"), else as NextGen does ("Dr. Rivera") */
   const provLabel = n => { const k = TM.provKey(n), g = S.grids.find(x => x.key === k); return g ? TM.nameOf(g) : C.provName(n) || "any provider"; };
@@ -520,7 +573,7 @@
   /* patients already in index, whose index visits can be changed here: Induction, or started within the index weeks */
   const inIndex = p => /induction/i.test(p.status);
   const listTime = () => S.raw.apptUpdated != null ? `${C.fmtD(Math.floor(S.raw.apptUpdated))} at ${C.fmtT(C.toMin(S.raw.apptUpdated))}` : "never";
-  const uploadBtn = (l, cls) => `<label class="btn ${cls || "primary"}" style="cursor:pointer">${l}<input type="file" id="apptFile" accept=".xls,.xlsx,.csv" hidden></label>`;
+  const uploadBtn = (l, cls) => `<label class="btn ${cls || "primary"}" style="cursor:pointer">${l}<input type="file" id="apptFile" accept=".xls,.xlsx,.xlsm,.xlsb,.csv,.txt,.xml,.htm,.html,.ods" hidden></label>`;
   const minsAgo = ms => Math.max(0, Math.floor((Date.now() - ms) / 60000));
   /* who is on the list: plans saved in the workbook, and consults waiting for their treatment start */
   function ipList() {
@@ -880,7 +933,7 @@
     const th = ([k, l]) => { const on = srt.k === k; return `<button class="sorth" data-act="pSort" data-v="${k}" aria-sort="${on ? (srt.dir > 0 ? "ascending" : "descending") : "none"}" title="Sort by ${l.toLowerCase()}">${l}<span class="arr" aria-hidden="true">${on ? (srt.dir > 0 ? "▲" : "▼") : ""}</span></button>`; };
     const row = r => { const p = r.p, conf = p.protoAt != null ? C.fmtD(p.protoAt) : "Not yet", stale = C.isActive(p) && (p.protoAt == null || T - p.protoAt > +S.cfg.ProtocolDays);
       const fl = r.loud.length ? r.loud.slice(0, 2).map(y => `<span class="f${y.bad ? " bad" : ""}">${esc(y.t)}</span>`).join(", ") + (r.loud.length > 2 ? ` <span class="muted">and ${r.loud.length - 2} more</span>` : "") : `<span class="ok">${esc(r.n[0]?.t || "On track")}</span>`;
-      return `<button class="prow" data-act="pOpen" data-m="${esc(p.mrn)}"><span class="p">${esc(p.code)}${p.reqPost ? ` <span class="pcb" title="Requires a post-check">PC</span>` : ""}</span><span>${esc(p.freq || "No frequency")}</span><span class="muted">${esc(p.status || "No status")}</span>
+      return `<button class="prow" data-act="pOpen" data-m="${esc(p.mrn)}"><span class="p">${esc(p.code)}${mrnTag(p.mrn)}${p.reqPost ? ` <span class="pcb" title="Requires a post-check">PC</span>` : ""}</span><span>${esc(p.freq || "No frequency")}</span><span class="muted">${esc(p.status || "No status")}</span>
         <span${stale ? ' class="flagt"' : ""}>${conf}</span><span>${r.thru != null ? C.fmtD(r.thru) : "Nothing booked"}</span><span class="flags">${fl}</span></button>`; };
     const offRows = (S.chip === "profile" || S.chip === "need") && off.length ? `<section class="card list"><div class="lh"><h2>On the appointment list, not on the tracker</h2><span>${off.length}</span></div>
       ${off.map(g => `<div class="row grow" data-state="${g.start ? "soon" : ""}"><span class="p">${esc(g.code || "—")}</span><span class="w">${dshort(g.first.date)}</span><span class="i">${g.start ? `<span class="f">Treatment start</span>, ` : ""}MRN ${esc(g.mrn)}, ${C.fmtT(g.first.time)} with ${esc(C.provName(g.first.provider))}</span><button class="btn ghost sm" data-act="profile" data-m="${esc(g.mrn)}">Create profile</button></div>`).join("")}</section>` : "";
@@ -929,12 +982,17 @@
     const T = todayS(), m = esc(p.mrn), fut = C.scheduleOf(p, S.A, T), past = S.A.filter(a => a.mrn === p.mrn && a.date < T && !C.isCancelled(a)).sort((a, b) => b.date - a.date).slice(0, 5);
     const miss = (d, t) => !!C.daySlots(d, S.X).bookings.find(b => b.kind === "appt" && b.mrn === p.mrn && b.time === t)?.miss;
     const row = x => { const a = { event: x.type === "Treatment start" ? "start" : "", mrn: p.mrn, date: x.date, time: x.time }, k = visitKind(a), mi = S.grids.length && miss(x.date, x.time);
-      return `<li class="step now${k ? ` k-${k}` : ""}"><span class="k">${x.n || ""}</span><span><span class="t">${esc(x.day)}, ${esc(x.at)}${mi ? missTag() : ""}</span><span class="m">${esc(x.provider)}, ${k === "st" ? "treatment start" : k === "ix" ? "index visit" : "infusion"}${p.reqPost || k ? `, post check ${C.fmtT(x.time + +S.cfg.PostCheckMin)}` : ""}${x.status && !/expected/i.test(x.status) ? `, ${esc(x.status)}` : ""}</span></span><span class="w">${x.n ? `Treatment ${x.n}` : ""}</span></li>`; };
+      return `<li class="step now${k ? ` k-${k}` : ""}"><span class="k">${x.n || ""}</span><span><span class="t">${esc(x.day)}, ${esc(x.at)}${mi ? missTag() : ""}</span><span class="m">${x.loc ? `${esc(x.loc)}, ` : ""}${esc(x.provider)}, ${k === "st" ? "treatment start" : k === "ix" ? "index visit" : "infusion"}${p.reqPost || k ? `, post check ${C.fmtT(x.time + +S.cfg.PostCheckMin)}` : ""}${x.status && !/expected/i.test(x.status) ? `, ${esc(x.status)}` : ""}</span></span><span class="w">${x.n ? `Treatment ${x.n}` : ""}</span></li>`; };
     const hs = holdsOf(p.mrn).filter(h => h.state !== "booked" || h.conf !== "onlist");
+    /* start paperwork and the start email only for a treatment start on the list (the email only before its day), never follow-ups */
+    const st = C.nextStart(p, S.A, T), vc = C.visitCounts(p.mrn, S.A, S.x.E, T);
+    const away = (S.x.E || []).filter(a => a.mrn === p.mrn && a.date >= T && !C.isCancelled(a)).sort((a, b) => a.date - b.date || (a.time ?? 0) - (b.time ?? 0));
     return `<div class="h"><h2>Schedule</h2><span>${fut.length ? `${plural(fut.length, "visit")} from today` : "nothing booked"}</span></div>
+      <dl class="facts"><dt>At ${esc(S.cfg.Clinic)}</dt><dd>${plural(vc.kept + vc.booked, "appointment")}: ${vc.kept} kept, ${vc.booked} booked</dd>${vc.away.map(x => `<dt>${esc(x.loc || "Another clinic")}</dt><dd>${plural(x.n, "appointment")} booked</dd>`).join("")}</dl>
       ${fut.length ? `<ul class="steps">${fut.slice(0, 12).map(row).join("")}</ul>${fut.length > 12 ? `<p class="note">And ${plural(fut.length - 12, "more")}.</p>` : ""}` : `<p class="note${C.isActive(p) && !/prn/i.test(p.freq) ? " warn" : ""}">No IVK visit booked from today.</p>`}
+      ${away.length ? `<div class="section"><div class="h"><h2>At other clinics</h2><span>as of ${C.fmtD(S.elseAt)}</span></div><ul class="steps">${away.slice(0, 8).map(a => `<li class="step soon"><span class="k"></span><span><span class="t">${dshort(a.date)}, ${C.fmtT(a.time)}</span><span class="m">${esc(a.loc)}, ${esc(C.provName(a.provider))}${a.status && !/expected/i.test(a.status) ? `, ${esc(a.status)}` : ""}</span></span><span class="w"></span></li>`).join("")}</ul></div>` : ""}
       ${hs.length ? `<div class="section"><div class="h"><h2>Holds</h2><span>${hs.length}</span></div><ul class="steps">${hs.map(h => `<li class="step soon k-ix"><span class="k">${h.n || ""}</span><span><span class="t">${dshort(h.date)}, ${C.fmtT(h.time)}</span><span class="m">${esc(provLabel(h.provider))}, ${h.status === "booked" ? "booked: upload to confirm" : h.state === "late" ? "not confirmed booked" : "held"}</span></span><span class="w"></span></li>`).join("")}</ul><div class="actions"><button class="btn ghost sm line" data-act="ipPick" data-m="${m}">Open in the Index planner</button></div></div>` : ""}
-      <div class="actions"><button class="btn ghost sm line" data-act="printSched" data-m="${m}">Print schedule</button><button class="btn mute sm" data-act="startForms" data-m="${m}">Start paperwork</button><button class="btn mute sm" data-act="startEmail" data-m="${m}">Start email</button><button class="btn mute sm" data-act="pvPlan" data-m="${m}">Plan index visits</button></div>
+      <div class="actions"><button class="btn ghost sm line" data-act="printSched" data-m="${m}">Print schedule</button>${st ? `<button class="btn mute sm" data-act="startForms" data-m="${m}">Start paperwork</button>` : ""}${st && st.date > T ? `<button class="btn mute sm" data-act="startEmail" data-m="${m}">Start email</button>` : ""}<button class="btn mute sm" data-act="pvPlan" data-m="${m}">Plan index visits</button></div>
       ${past.length ? `<div class="section"><div class="h"><h2>Recent visits</h2></div><dl class="facts">${past.map(a => `<dt>${dshort(a.date)}</dt><dd>${C.fmtT(a.time)}, ${esc(C.provName(a.provider))}${/no ?show/i.test(a.status) ? ", no-show" : ""}</dd>`).join("")}</dl></div>` : ""}
       ${availHTML(p)}`;
   }
@@ -951,7 +1009,21 @@
         ${ok ? `<dt>Index</dt><dd>${done >= N ? `Done${idxDay ? ` ${C.fmtD(idxDay)}` : ""}, then ${esc(S.cfg.AfterIndex)}` : `${done} of ${N} done${idxDay ? `, treatment ${N} on ${C.fmtD(idxDay)}` : ""}`}</dd>` : ""}</dl>
       ${hist.length ? `<p class="note">Confirmed: ${hist.map(l => `${dateOfIso(l.at)}${l.msg ? ` (${esc(l.msg)})` : ""}${l.by ? `, ${esc(l.by)}` : ""}`).join("; ")}.</p>` : ""}
       <div class="actions"><button class="btn ghost sm line" data-act="proto" data-m="${m}">Confirm protocol</button>${C.isActive(p) ? `<button class="btn mute sm" data-act="ask" data-m="${m}">Ask the group chat</button>` : ""}</div>
-      ${postCheckHTML(p)}${oakHTML(p)}`;
+      ${postCheckHTML(p)}${oakHTML(p)}${xferHTML(p)}`;
+  }
+  /* Transfer: a patient whose home clinic isn't this one (or an Oakland patient) can be discontinued here as transferred now, or have
+     a transfer scheduled for a future date that's confirmed at their last visit here */
+  /* the hand-off from the other clinics' visits (a wider report): booked there, or nothing there yet; nothing said without one */
+  const thereTxt = (e, to) => S.x.E == null ? "" : e ? ` Booked at ${esc(e.loc || to)} ${C.fmtD(e.date)}.` : ` Nothing booked at ${esc(to)} yet (other clinics’ visits as of ${C.fmtD(S.elseAt)}).`;
+  function xferHTML(p) {
+    const xf = S.XF.get(p.mrn), xs = C.xferState(xf, S.A, todayS(), S.x.E), m = esc(p.mrn);
+    if (!xf && !C.elsewhere(p, S.cfg) && !C.oakState(p, ptOf(p.mrn), S.A, todayS(), S.cfg)) return "";
+    const st = xs ? `to ${esc(xs.to)}${xs.date != null ? ` ${C.fmtD(xs.date)}` : ""}` : xf?.status === "done" ? `done${xf.confirmed != null ? ` ${C.fmtD(xf.confirmed)}` : ""}` : "none scheduled";
+    return `<div class="section"><div class="h"><h2>Transfer</h2><span>${st}</span></div>
+      ${needTable("tblIvkTransfers", "Transfers")}
+      ${xs ? `<p class="note${xs.due || xs.after.length ? " warn" : ""}">${xs.due ? `<b>Confirm the transfer</b>${xs.last ? `: their last visit here is ${C.fmtD(xs.last.date)}` : ""}.` : `Confirm it at their last visit here${xs.last ? `, ${C.fmtD(xs.last.date)}` : ""}.`}${xs.after.length ? ` ${plural(xs.after.length, "visit")} still booked here after ${C.fmtD(xs.date)}: cancel ${xs.after.length === 1 ? "it" : "them"} in NextGen.` : ""}${thereTxt(xs.there, xs.to)}${xf.note ? ` ${esc(xf.note)}` : ""}</p>`
+        : xf?.status === "done" ? `<p class="note">Transferred to ${esc(xf.to)}${xf.note ? `. ${esc(xf.note)}` : ""}.${S.x.E ? thereTxt(C.bookedAt(S.x.E, p.mrn, xf.to, todayS()), xf.to) : ""}</p>` : `<p class="note">Home clinic ${esc(p.loc || "not set")}. Schedule a transfer for a future date, or discontinue here now as transferred.</p>`}
+      <div class="actions"><button class="btn ghost sm line" data-act="xfer" data-m="${m}"${S.xferOn ? "" : " disabled"}>${xs ? (xs.due ? "Confirm transfer" : "Change transfer") : "Transfer"}</button></div></div>`;
   }
   /* Benefits: who pays each part of the visit, the latest Sohar benefits, the authorization, the BIDF */
   function pvBen(p) {
@@ -1047,7 +1119,7 @@
   /* Oakland patients: their index here, then maintenance back at Oakland; OAK is tasked to book it at treatment OakRemindAt */
   function oakHTML(p) {
     const t = ptOf(p.mrn), o = C.oakState(p, t, S.A, todayS(), S.cfg), m = esc(p.mrn), auto = t?.oak == null && /oak/i.test(p.loc);
-    const note = !o ? "" : o.unknown && o.tasked == null ? "This course started before the appointment list begins, so treatments can't be counted here. Mark OAK tasked once maintenance is booked at Oakland." : o.tasked != null ? `OAK tasked to book maintenance ${C.fmtD(o.tasked)}.` : o.done >= +S.cfg.OakRemindAt ? `<b>Task OAK to book maintenance now.</b>` : `At treatment ${S.cfg.OakRemindAt}, task OAK to book maintenance.`;
+    const note = !o ? "" : o.unknown && o.tasked == null ? "This course started before the appointment list begins, so treatments can't be counted here. Mark OAK tasked once maintenance is booked at Oakland." : o.tasked != null ? `OAK tasked to book maintenance ${C.fmtD(o.tasked)}.${thereTxt(C.bookedAt(S.x.E, p.mrn, "Oakland", todayS()), "Oakland")}` : o.done >= +S.cfg.OakRemindAt ? `<b>Task OAK to book maintenance now.</b>` : `At treatment ${S.cfg.OakRemindAt}, task OAK to book maintenance.`;
     return `<div class="section"><div class="h"><h2>Oakland</h2><span>${o ? (o.unknown ? "treatments not countable" : `${o.done} of ${o.idx} index treatments done`) : "Castro patient"}</span></div>
       <label class="opt"><input type="checkbox" data-pt="Oakland" data-m="${m}"${o ? " checked" : ""}${S.raw.tables?.own?.tblIvkPatient ? "" : " disabled"}> Oakland patient<small>Index (the first ${esc(S.cfg.OakIndex)}) at ${esc(S.cfg.Clinic)}, then back to Oakland for maintenance.${auto ? " Ticked because the home clinic is Oakland." : ""}</small></label>
       ${o ? `<p class="note${o.task || o.back ? " warn" : ""}">${note}${o.back ? ` Index is done and ${plural(o.after.length, "visit")} ${o.after.length === 1 ? "is" : "are"} still booked here.` : ""}</p>
@@ -1111,7 +1183,7 @@
         <label class="fld">First name<input id="myName" value="${esc(S.name)}" autocomplete="given-name"></label><div class="actions"><button class="btn ghost sm line" data-act="saveName">Save name</button></div></section>
 
       <section class="card set"><h3>Appointment list</h3><p>${u != null ? `Last updated ${C.fmtD(Math.floor(u))} at ${C.fmtT(C.toMin(u))}.` : "No record of when it was last updated."} ${plural(S.A.length, "appointment")} on the Appt List tab.</p>
-        <div class="actions"><label class="btn primary inl" style="cursor:pointer">Upload a NextGen export<input type="file" id="apptFile" accept=".xls,.xlsx,.csv" hidden></label></div>
+        <div class="actions"><label class="btn primary inl" style="cursor:pointer">Upload a NextGen export<input type="file" id="apptFile" accept=".xls,.xlsx,.xlsm,.xlsb,.csv,.txt,.xml,.htm,.html,.ods" hidden></label></div>
         <details class="fold"><summary>How to run the report</summary><ol class="how">
           <li>In NextGen PM, open Reports, then Memorized.</li><li>Set Report Type to Appointment Reports and pick the IVK appointment list (Castro Street, IV Ketamine visits).</li>
           <li>Select OK to run it, then export with the x icon beside the bar graph <img src="assets/export-icon.png" alt="Export icon" height="16">.</li>
@@ -1181,36 +1253,87 @@
   /* the patient's own frequency first; with none on file, a blank choice is shown first so nothing is written by default */
   const freqOpts = (p, cur) => (p.freq ? "" : `<option value=""${cur ? "" : " selected"}>Choose the protocol</option>`)
     + [...new Set([p.freq, ...S.freqs].filter(Boolean))].map(f => `<option${f === cur ? " selected" : ""}>${esc(f)}</option>`).join("");
-  /* check-out asks about today's payment, the provider visit and the infusion each on its own, for the parts that owe something and
-     haven't been answered */
-  const PART_WORD = { prov: "Provider visit", inf: "Infusion" };
-  const partsOpen = v => v.p && S.payOn ? C.dueParts(v.p).filter(([k]) => !C.payOf(S.pays, v.key, k)) : [];
-  const payNeeded = v => partsOpen(v).length > 0;
-  const payAnswered = (v, m) => partsOpen(v).every(([k]) => m.pay && m.pay[k]);
-  function payPickHTML(v, m) {
+  /* today's payment, the provider visit and the infusion each on its own: what the patient owes today (the tracker's amount unless
+     changed) and whether it was collected. Asked at check-in (optional), at check-out (each part that owes something and has no
+     answer yet), and changed any time after, check-out included: a new answer is a new row and the latest one counts. */
+  const PART_WORD = { prov: "Provider visit", inf: "Infusion" }, PARTS = ["prov", "inf"];
+  const trackerDue = (p, k) => k === "prov" ? C.dueOf(p).copay : C.dueOf(p).infusion;
+  const amtTxt = s => String(s ?? "").replace(/[$,\s]/g, "");
+  const amtN = (m, k) => { const n = C.num(amtTxt(m.amt?.[k])); return n == null ? 0 : n; };
+  const amtBad = m => PARTS.some(k => amtTxt(m.amt?.[k]) !== "" && C.num(amtTxt(m.amt[k])) == null);
+  /* the modal's starting point: each part's last answer for this visit, else the tracker's amount and no answer */
+  function payInit(v) {
+    if (!v.p || !S.payOn) return {};
+    const amt = {}, pay = {};
+    for (const k of PARTS) { const r = C.payOf(S.pays, v.key, k), own = r && r.key === C.partKey(v.key, k); amt[k] = String(own ? r.amount : trackerDue(v.p, k)); if (r) pay[k] = r.kind; }
+    return { amt, pay };
+  }
+  /* check-out can't finish until every part that owes something today has an answer */
+  const payAnswered = (v, m) => !v.p || !S.payOn || (!amtBad(m) && PARTS.every(k => amtN(m, k) <= 0 || !!(m.pay && m.pay[k])));
+  /* rows to add: only parts whose answer or amount changed. Owing nothing today counts as collected ($0), so it's answered. */
+  function payRowsOf(v, m) {
+    if (!v.p || !S.payOn) return [];
+    return PARTS.map(k => {
+      const n = amtN(m, k), r = C.payOf(S.pays, v.key, k), due = trackerDue(v.p, k), kind = n > 0 ? (m.pay?.[k] || "") : (r || due > 0 ? "collected" : "");
+      if (!kind || (r && r.kind === kind && r.amount === n)) return null;
+      return payRow(v.p, { Date: C.isoOf(v.a.date), Key: C.partKey(v.key, k), Kind: kind, Amount: n, Note: `${PART_WORD[k]}${n !== due ? `, ${C.money(n)} today (tracker ${C.money(due)})` : ""}${r ? ", changed" : ""}` });
+    }).filter(Boolean);
+  }
+  /* mode: "in" (check-in: Collected or Not yet), "out" (check-out) or "edit" (any time): Collected or Not collected */
+  function payPickHTML(v, m, mode) {
     if (!v.p || !S.payOn) return "";
-    const due = C.dueOf(v.p), t = ptOf(v.p.mrn), L = C.ledger(v.p.mrn, S.pays), open = partsOpen(v);
-    const had = C.dueParts(v.p).map(([k]) => [k, C.payOf(S.pays, v.key, k)]).filter(x => x[1]);
-    const hadTxt = had.length ? `<p class="note">Today: ${had.map(([k, r]) => `${PART_WORD[k].toLowerCase()} ${C.money(r.amount)} ${r.kind === "collected" ? "collected" : "not collected"}`).join(", ")}.</p>` : "";
-    if (!open.length) return hadTxt || (due.total <= 0 && L.balance > 0 ? `<p class="note warn">Nothing due today, but there’s a balance of ${C.money(L.balance)}.</p>` : "");
-    const pk = (part, k, l, s) => `<button data-act="mPay" data-p="${part}" data-v="${k}" aria-pressed="${!!m.pay && m.pay[part] === k}">${l}<small>${s}</small></button>`;
-    const anyMissed = m.pay && Object.values(m.pay).includes("missed");
-    return `${hadTxt}${open.map(([k, n]) => `<div class="fld">${PART_WORD[k]} today: ${C.money(n)}<div class="pick">${pk(k, "collected", "Collected", C.money(n))}${pk(k, "missed", "Not collected", "adds to the balance")}</div></div>`).join("")}
+    const t = ptOf(v.p.mrn), L = C.ledger(v.p.mrn, S.pays), cur = k => m.pay?.[k] || "";
+    const pk = (k, kind, l, s) => `<button data-act="mPay" data-p="${k}" data-v="${kind}" aria-pressed="${cur(k) === kind}">${l}<small>${s}</small></button>`;
+    const part = k => { const n = amtN(m, k), due = trackerDue(v.p, k), r = C.payOf(S.pays, v.key, k);
+      return `<div class="fld payp">${PART_WORD[k]} today${r && mode !== "edit" ? ` <span class="muted">(${r.kind === "collected" ? "collected" : "not collected"}, ${C.money(r.amount)})</span>` : ""}
+        <div class="payr"><label class="amt">Patient owes<input id="mAmt_${k}" inputmode="decimal" value="${esc(m.amt?.[k] ?? "")}" autocomplete="off"></label>
+          ${n > 0 ? `<div class="pick">${pk(k, "collected", "Collected", C.money(n))}${mode === "in" ? pk(k, "", "Not yet", "ask at check-out") : pk(k, "missed", "Not collected", "adds to the balance")}</div>` : `<span class="hint">Nothing due</span>`}</div>
+        ${n !== due ? `<span class="hint">The tracker has ${due ? C.money(due) : "nothing"} each visit</span>` : ""}</div>`; };
+    const changed = PARTS.some(k => amtN(m, k) !== trackerDue(v.p, k)), anyMissed = PARTS.some(k => cur(k) === "missed" && amtN(m, k) > 0);
+    return `<div class="section"><div class="h"><h2>Payment</h2>${mode === "in" ? "<span>optional at check-in</span>" : ""}</div>${PARTS.map(part).join("")}
+      ${amtBad(m) ? `<p class="note warn">What the patient owes has to be a number, like 40.</p>` : ""}
+      ${changed ? `<label class="opt"><input type="checkbox" id="mAmtSave"${m.amtSave ? " checked" : ""}> Make this what they owe each visit<small>Writes Copay and Infusion on the Master Patient Tracker. Leave it unticked to change today only.</small></label>` : ""}
       ${L.balance > 0 ? `<p class="note warn">Balance from earlier visits: ${C.money(L.balance)}.</p>` : ""}
-      ${anyMissed ? `<p class="note">${t?.card && t?.okCollect ? "Luma card on file and okay to charge at time of service: charge it in Luma, then record the payment on the patient’s Financial page." : t?.card ? "Luma card on file, but not okay to charge at time of service yet. Ask the patient." : "No Luma card on file. Ask for one, or send a balance reminder."}</p>` : ""}`;
+      ${anyMissed ? `<p class="note">${t?.card && t?.okCollect ? "Luma card on file and okay to charge at time of service: charge it in Luma, then record the payment on the patient’s Financial page." : t?.card ? "Luma card on file, but not okay to charge at time of service yet. Ask the patient." : "No Luma card on file. Ask for one, or send a balance reminder."}</p>` : ""}</div>`;
+  }
+  /* the modal's inputs back into S.m before a re-render, so nothing typed is lost */
+  function keepPay() {
+    const m = S.m; if (!m) return;
+    for (const k of PARTS) { const el = $(`#mAmt_${k}`); if (el) m.amt = Object.assign({}, m.amt, { [k]: el.value }); }
+    const as = $("#mAmtSave"); if (as) m.amtSave = as.checked;
+    const pr = $("#mProto"); if (pr) m.proto = pr.checked;
+    const fq = $("#mFreq"); if (fq) m.freq = fq.value;
+    const rn = $("#mRn"); if (rn) m.rn = rn.checked;
+    const ak = $("#mAsk"); if (ak) m.ask = ak.checked;
+    const xc = $("#mXfer"); if (xc) m.xferOn = xc.checked;
+  }
+  /* save today's payment answers (and, when ticked, the new amounts on the tracker). label for the toast; false when nothing saved */
+  async function savePay(v, m, what) {
+    const rows = payRowsOf(v, m), track = m.amtSave && PARTS.some(k => amtN(m, k) !== trackerDue(v.p, k));
+    if (!rows.length && !track) return true;
+    const ok = await write("Saving the payment…", async () => {
+      if (rows.length) await Store.addPays(rows);
+      if (track) { const H = mptHead(); return Store.saveRow("mpt", v.p.mrn, Object.fromEntries([[H("copay") || "Copay", amtN(m, "prov")], [H("infusion") || "Infusion", amtN(m, "inf")]])); }
+      return true;
+    });
+    if (!ok && what) toast(`${what}, but the payment didn’t save. Use Record today’s payment on the visit card.`, true);
+    return !!ok;
   }
   /* the edit form's fields from the row: label, current value as the input shows it, type, and suggestions from the column */
-  const SKIP_EDIT = { mpt: ["mrn", "patientname", ...PREFS_KEYS()], consults: ["patientmrn", "patient"] };
-  function PREFS_KEYS() { return ["am", "pm", "am2", "pm3", "am4", "pm5", "am6", "pm7", "am8", "pm9"]; }
+  /* the locations in the appointment list's scope, as NextGen names them: this clinic's and the other clinics' (wider report) */
+  const locOpts = () => [...new Set(S.A.map(a => a.loc).concat(S.E.map(a => a.loc)).map(C.txt).filter(Boolean))].sort();
+  /* the AM/PM columns are edited under Availability (found by position, C.prefCols) */
+  const SKIP_EDIT = { mpt: ["mrn", "patientname"], consults: ["patientmrn", "patient"] };
   function editFields(m) {
     const R = m.row, src = m.kind === "consults" ? S.raw.consults : S.raw.mpt, hdr = (src && src[0] || []).map(C.norm);
+    const prefAt = m.kind === "mpt" ? C.prefCols(R.head) : [];
     return R.head.map((h, i) => {
-      const k = C.norm(h); if (!k || SKIP_EDIT[m.kind].includes(k)) return null;
+      const k = C.norm(h); if (!k || SKIP_EDIT[m.kind].includes(k) || prefAt.includes(i)) return null;
       const v = R.values[i], f = R.formulas[i], fmt = String(R.formats[i] || ""), dateLike = /[dmy]{1,4}[\/\-.][dmy]/i.test(fmt) && !/h/i.test(fmt) || (/date|exp\b|start|updated|thru|dob|birth/i.test(h) && (typeof v === "number" || v === ""));
       const type = dateLike ? "date" : typeof v === "number" ? "num" : "text";
       const cur = type === "date" ? (C.toSerial(v) != null ? C.isoOf(C.toSerial(v)) : "") : C.txt(v);
       const col = hdr.indexOf(k), seen = col < 0 || !src ? [] : [...new Set(src.slice(1).map(r => C.txt(r[col])).filter(x => x && !/^\d+(\.\d+)?$/.test(x)))];
-      const opts = k === "frequency" ? S.freqs : seen.length <= 40 && type === "text" ? seen.sort() : [];
+      const opts = k === "frequency" ? S.freqs : k === "primarylocation" ? locOpts() : seen.length <= 40 && type === "text" ? seen.sort() : [];
       return { i, h, label: h.replace(/\s+/g, " ").trim(), type, cur, formula: !!f, shown: type === "date" && C.toSerial(v) != null ? C.fmtD(C.toSerial(v)) : C.txt(v), opts, long: /notes?\b/i.test(h) };
     }).filter(Boolean);
   }
@@ -1222,7 +1345,8 @@
         <div class="fld">Chair${chairPick(m.chair, true)}</div>
         <label class="opt"><input type="checkbox" id="mRn"${m.rn && aOk ? " checked" : ""}${aOk ? "" : " disabled"}> Tell ${esc(routeTo("arrival"))} in Teams<small>${aOk ? `“${esc(arrTxt)}”` : "Arrivals aren’t set up yet (Settings › Teams)."}</small></label>
         ${v.p && v.ask.any ? `<label class="opt"><input type="checkbox" id="mAsk"${m.ask && pOk ? " checked" : ""}${pOk ? "" : " disabled"}> Ask ${esc(routeTo("protocol"))}<small>${pOk ? `“${esc(askTxt)}”` : "The group chat isn’t set up yet (Settings › Teams)."}</small></label>` : ""}
-        <div class="foot"><button class="btn mute" data-act="close">Cancel</button><button class="btn primary inl" data-act="doCheckin"${S.busy ? " disabled" : ""}>Check in ${esc(c)}${m.chair ? ` to ${esc(chairTxt(m.chair))}` : ""}</button></div>`;
+        ${payPickHTML(v, m, "in")}
+        <div class="foot"><button class="btn mute" data-act="close">Cancel</button><button class="btn primary inl" data-act="doCheckin"${S.busy || amtBad(m) ? " disabled" : ""}>Check in ${esc(c)}${m.chair ? ` to ${esc(chairTxt(m.chair))}` : ""}</button></div>`;
     },
     seat() {
       const v = visitBy(S.m.key), c = C.code(v), aOk = teamsReady("arrival"), moving = v.ph === "chair";
@@ -1248,8 +1372,55 @@
         <label class="fld">Protocol<select id="mFreq">${freqOpts(p, m.freq)}</select></label>` : ""}
         ${m.idx ? `<div class="msg warn bidfp"><b>Treatment ${m.idx.N} kept: index is done.</b> Move ${esc(c)} to Ongoing and set the protocol the provider chose (usually 1x per week; it varies with acuity).
           <label class="opt"><input type="checkbox" id="mIdx"${m.idxOn ? " checked" : ""}> Move to Ongoing<small>Writes Status Ongoing, Frequency and Protocol Updated ${C.fmtD(todayS())} on the Master Patient Tracker. Pick the protocol above.</small></label></div>` : ""}
-        ${payPickHTML(v, m)}
+        ${m.xs ? `<div class="msg warn bidfp"><b>${m.xs.due ? `Their last visit here: transfer to ${esc(m.xs.to)}.` : `Transfer to ${esc(m.xs.to)} scheduled${m.xs.date != null ? ` for ${C.fmtD(m.xs.date)}` : ""}.`}</b>${thereTxt(m.xs.there, m.xs.to)}
+          <label class="opt"><input type="checkbox" id="mXfer"${m.xferOn ? " checked" : ""}> Confirm the transfer<small>Writes Status Discontinued and a transfer note on the Master Patient Tracker${m.xs.after.length ? `. ${plural(m.xs.after.length, "visit")} still booked here after it: cancel in NextGen` : ""}</small></label></div>` : ""}
+        ${payPickHTML(v, m, "out")}
         <div class="foot"><button class="btn mute" data-act="close">Cancel</button><button class="btn primary inl" data-act="doCheckout"${m.booked && payAnswered(v, m) && !S.busy ? "" : " disabled"}>${!m.booked ? "Choose the next visit" : !payAnswered(v, m) ? "Say whether payment was collected" : `Check out ${esc(c)}`}</button></div>`;
+    },
+    /* today's payment, recorded or changed outside check-in and check-out (after check-out included) */
+    payEdit() {
+      const v = visitBy(S.m.key), m = S.m, c = C.code(v);
+      return `<h2 id="mh">${esc(c)}: today’s payment</h2><p class="sub muted">${C.fmtT(v.a.time)} visit${v.st.out != null ? `, checked out at ${C.fmtT(v.st.out)}` : ""}. A change is saved as a new answer with your name; the latest one counts.</p>
+        ${payPickHTML(v, m, "edit")}
+        <div class="foot"><button class="btn mute" data-act="close">Cancel</button><button class="btn primary inl" data-act="doPayEdit"${S.busy || amtBad(m) ? " disabled" : ""}>Save payment</button></div>`;
+    },
+    /* a visit on the Schedule: open the patient, or waitlist them for a sooner date (from when, which days and halves, which provider) */
+    sooner() {
+      const m = S.m, r = S.SO.get(m.mrn), on = r && r.status === "waiting" && r.booked === m.date;
+      const day = (i, h) => `<button data-act="soDay" data-v="${i + 1}${h}" aria-pressed="${m.days.includes(`${i + 1}${h}`)}" aria-label="${DAYW[i]} ${h.toUpperCase()}">${h.toUpperCase()}</button>`;
+      return `<h2 id="mh">${esc(m.code || "No code")} <span class="mrn">MRN ${esc(m.mrn)}</span></h2><p class="sub muted">Booked ${dshort(m.date)} at ${C.fmtT(m.time)} with ${esc(provLabel(m.provider))}.${on ? " On the sooner waitlist." : ""}</p>
+        <div class="actions"><button class="btn ghost sm line" data-act="soPv">${S.PM.get(m.mrn) ? "Open the patient" : "Make a profile"}</button></div>
+        <div class="section"><div class="h"><h2>Wants a sooner date</h2><span>${on ? "waitlisted" : "not waitlisted"}</span></div>
+        ${needTable("tblIvkSooner", "The sooner waitlist")}
+        <label class="fld">Earliest date<input id="soFrom" type="date" value="${esc(m.from)}" min="${C.isoOf(todayS() + 1)}" max="${C.isoOf(m.date - 1)}"><span class="hint">Openings from this day up to the day before their visit</span></label>
+        <div class="fld">Days they can come<div class="prefs av">${C.DAYS5.map(d => `<b>${d}</b>`).join("")}${["am", "pm"].map(h => C.DAYS5.map((d, i) => day(i, h)).join("")).join("")}</div><span class="hint">${m.days.length ? "Only these" : "None picked: any day"}. AM is before noon.</span></div>
+        <label class="opt"><input type="checkbox" id="soSame"${m.same ? " checked" : ""}> Only with ${esc(C.provName(m.provider) || "this provider")}</label>
+        <label class="fld">Note<input id="soNote" value="${esc(m.note)}" autocomplete="off" placeholder="Can come at short notice"></label></div>
+        <div class="foot"><button class="btn mute" data-act="close">Cancel</button>${on ? `<button class="btn ghost" data-act="soDone" data-m="${esc(m.mrn)}">Take off the waitlist</button>` : ""}<button class="btn primary inl" data-act="soSave"${S.soonerOn && !S.busy ? "" : " disabled"}>${on ? "Save" : "Waitlist for sooner"}</button></div>`;
+    },
+    /* after an upload: openings that would move waitlisted patients sooner, new since the last time anyone was shown them */
+    soonerFound() {
+      const L = S.m.list;
+      return `<h2 id="mh">Sooner openings</h2><p class="sub muted">The new appointment list has ${plural(L.reduce((n, x) => n + x.hits.length, 0), "opening")} for ${plural(L.length, "waitlisted patient")}. Hold one, then book it in NextGen.</p>
+        ${L.map(x => `<div class="section"><div class="h"><h2>${esc(x.r.code)}</h2><span>${esc(soonerTxt(x.r))}</span></div><div class="actions">${x.hits.slice(0, 6).map(c => hitBtn(x.r, c)).join("")}</div></div>`).join("")}
+        <div class="foot"><button class="btn primary inl" data-act="close">Close</button></div>`;
+    },
+    /* a patient going to another clinic: discontinue here now as transferred, or schedule it for a future date (confirmed at the
+       last visit here). For Oakland maintenance, OAK is tasked to book it. */
+    xfer() {
+      const m = S.m, p = S.PM.get(m.mrn), xs = C.xferState(S.XF.get(p.mrn), S.A, todayS(), S.x.E), d = C.toSerial(m.date), T = todayS();
+      const pk = (k, l, s) => `<button data-act="xfMode" data-v="${k}" aria-pressed="${m.mode === k}">${l}<small>${s}</small></button>`;
+      const L = d != null ? S.A.filter(a => a.mrn === p.mrn && !C.isCancelled(a) && a.date < d && a.date >= T) : [], after = d != null ? S.A.filter(a => a.mrn === p.mrn && !C.isCancelled(a) && a.date >= d) : [];
+      const oak = /oak/i.test(m.to), tasked = ptOf(p.mrn)?.oakTasked;
+      return `<h2 id="mh">Transfer ${esc(p.code)} <span class="mrn">MRN ${esc(p.mrn)}</span></h2><p class="sub muted">Home clinic ${esc(p.loc || "not set")}. ${xs ? `Scheduled to ${esc(xs.to)}${xs.date != null ? ` ${C.fmtD(xs.date)}` : ""}.` : ""}</p>
+        <div class="fld">What<div class="pick">${pk("now", "Discontinue now", "transferred, from today")}${pk("later", "Schedule a transfer", "a future date, confirmed at the last visit here")}</div></div>
+        <div class="two"><label class="fld">Transferring to<input id="xfTo" value="${esc(m.to)}" autocomplete="off" list="xfClin"><datalist id="xfClin">${locOpts().filter(l => !C.isOurs(l, S.cfg)).map(x => `<option value="${esc(x)}">`).join("")}</datalist></label>
+          ${m.mode === "later" ? `<label class="fld">Transfer date<input id="xfDate" type="date" value="${esc(m.date)}" min="${C.isoOf(T + 1)}"><span class="hint">Their first visit at the new clinic, or when it takes over</span></label>` : ""}</div>
+        <label class="fld">Note<input id="xfNote" value="${esc(m.note)}" autocomplete="off" placeholder="Index here, maintenance at Oakland"></label>
+        ${m.mode === "later" && d != null ? `<p class="note">${L.length ? `Last visit here before then: ${dshort(L[L.length - 1].date)} at ${C.fmtT(L[L.length - 1].time)}. Check-out of it asks to confirm the transfer.` : "No visits booked here before then: confirm the transfer from the patient view when it happens."}${after.length ? ` <b>${plural(after.length, "visit")} booked here on or after ${C.fmtD(d)}</b>: cancel in NextGen.` : ""}</p>` : ""}
+        ${oak ? `<label class="opt"><input type="checkbox" id="xfOak"${m.oak ? " checked" : ""}${tasked != null ? " disabled" : ""}> Task OAK to schedule them<small>${tasked != null ? `OAK tasked ${C.fmtD(tasked)}` : "Marks OAK tasked today (the Oakland task in NextGen is still yours to send)"}</small></label>` : ""}
+        ${m.mode === "now" ? `<p class="note">Writes Status Discontinued and “${esc(xferNote(m))}” to Clinic Notes on the Master Patient Tracker.</p>` : ""}
+        <div class="foot">${xs ? `<button class="btn mute" data-act="xfCancel">Cancel the transfer</button>` : ""}<button class="btn mute" data-act="close">Close</button><button class="btn primary inl" data-act="doXfer"${S.busy ? " disabled" : ""}>${m.mode === "now" ? (xs ? "Confirm the transfer" : "Discontinue as transferred") : "Schedule the transfer"}</button></div>`;
     },
     /* every field on the patient's Master Patient Tracker row (or Consults row) that isn't a formula */
     edit() {
@@ -1400,12 +1571,17 @@
       const u = S.m, sh = u.sh, ds = u.rows.map(r => r[2]), sts = {};
       u.rows.forEach(r => { const k = r[6] || "blank"; sts[k] = (sts[k] || 0) + 1; });
       const why = [sh.few ? `only ${plural(u.rows.length, "appointment")}` : "", sh.half ? `fewer than half of the ${sh.had} on file` : "", sh.short ? `it ends ${C.fmtD(sh.nMax)}; the list on file runs to ${C.fmtD(sh.cMax)}` : ""].filter(Boolean);
+      const many = u.locs.length > 1, away = u.away.length;
+      const locPick = many ? `<div class="fld">Which locations are ${esc(S.cfg.Clinic)}?${u.locs.map((l, i) => `<label class="opt"><input type="checkbox" id="upLoc_${i}"${l.ours ? " checked" : ""}> ${esc(l.loc || "No location")}<small>${plural(l.n, "IVK visit")}</small></label>`).join("")}
+          <span class="hint">Ticked locations go on the Appt List tab. The rest are kept apart${S.elseOn ? "" : " (once Update the workbook adds their table)"}, only to check transfers and Oakland hand-offs are booked there; they don’t show on Today or the Schedule.</span></div>` : "";
       return `<h2 id="mh">Replace the appointment list?</h2><p class="sub muted">${esc(u.file)}</p>
-        <div class="preview">${plural(u.rows.length, "appointment")}, ${C.fmtD(Math.min(...ds))} to ${C.fmtD(Math.max(...ds))}. ${Object.entries(sts).map(([k, n]) => `${esc(k)} ${n}`).join(", ")}</div>
+        ${locPick}
+        ${u.rows.length ? `<div class="preview">${plural(u.rows.length, "appointment")} at ${esc(S.cfg.Clinic)}, ${C.fmtD(Math.min(...ds))} to ${C.fmtD(Math.max(...ds))}. ${Object.entries(sts).map(([k, n]) => `${esc(k)} ${n}`).join(", ")}${away ? `. ${plural(away, "visit")} at other clinics.` : ""}</div>`
+          : `<div class="msg warn">No visits at ${esc(S.cfg.Clinic)} in this report. Tick this clinic’s location${many ? " above" : ", or check the NextGen report’s filters"}.</div>`}
         ${u.other && u.other.length ? `<p class="note">${plural(u.other.length, "other visit")} (telehealth, TMS and the rest) are kept with no patient on them, so flex post checks those visits use aren’t offered for index.</p>` : `<p class="note">No other visits in this report, so every flex post check shows as free. Run the wider report to include the providers’ telehealth and TMS visits.</p>`}
         <p class="note">The ${sh.had} rows on the Appt List tab are replaced (MRN to Location). The Name and Lookup Key formulas stay. Then the Index Planner tab’s grid is rewritten with every IVK visit and hold, as values; anything typed in that grid is replaced.</p>
         ${sh.flag ? `<div class="msg warn" style="margin-top:12px"><b>This list is much smaller than the one on file:</b> ${why.join("; ")}. The date range in NextGen may have been narrowed.<label class="opt"><input type="checkbox" id="mShrink"${u.ok ? " checked" : ""}> The smaller list is right; replace anyway</label></div>` : ""}
-        <div class="foot"><button class="btn mute" data-act="close">Cancel</button><button class="btn primary inl" data-act="doUpload"${sh.flag && !u.ok || S.busy ? " disabled" : ""}>Replace list</button></div>`;
+        <div class="foot"><button class="btn mute" data-act="close">Cancel</button><button class="btn primary inl" data-act="doUpload"${sh.flag && !u.ok || !u.rows.length || S.busy ? " disabled" : ""}>Replace list</button></div>`;
     }
   };
   function openModal(name, m) { S.modal = name; S.m = m || {}; render(); }
@@ -1442,6 +1618,8 @@
   const keepPto = () => { if (S.modal !== "pto") return; const m = S.m, v = id => $(id)?.value;
     if ($("#ptProv")) m.provider = v("#ptProv"); if ($("#ptFrom")) m.from = v("#ptFrom"); if ($("#ptTo")) m.to = v("#ptTo"); if ($("#ptNote")) m.note = v("#ptNote"); };
   /* the availability form's state, kept across re-renders */
+  /* the sooner form's fields, kept across re-renders */
+  const keepSooner = () => { if (S.modal !== "sooner") return; const m = S.m; if ($("#soFrom")) m.from = $("#soFrom").value; if ($("#soSame")) m.same = $("#soSame").checked; if ($("#soNote")) m.note = $("#soNote").value; };
   const keepAvail = () => { if (S.modal !== "avail") return; const m = S.m, v = id => $(id)?.value ?? "";
     m.eff = v("#avEff"); m.exp = v("#avExp"); m.note = v("#avNote"); m.away = m.away.map((w, j) => ({ from: v(`#awF${j}`), to: v(`#awT${j}`), note: v(`#awN${j}`) })); };
   /* the forms window: schedule, consent, availability form, start email. It runs in a frame over the add-in (so it works in full
@@ -1527,7 +1705,32 @@
       const r = await write("Saving…", () => Store.saveRow(m.kind, m.mrn, patch)); if (!r) return;
       closeModal(); toast(`Saved ${plural(r.wrote.length, "field")}${r.skipped.length ? `; left ${r.skipped.join(", ")} alone (a formula or a missing column)` : ""}.`, !!r.skipped.length);
     },
-    mPay: e => { S.m.pay = Object.assign({}, S.m.pay, { [e.dataset.p || "prov"]: e.dataset.v }); S.m.proto = $("#mProto")?.checked ?? S.m.proto; S.m.freq = $("#mFreq")?.value ?? S.m.freq; render(); },
+    mPay: e => { keepPay(); S.m.pay = Object.assign({}, S.m.pay, { [e.dataset.p || "prov"]: e.dataset.v }); render(); },
+    payEdit: e => { const v = visitBy(e.dataset.k); if (!v || !v.p) return; if (!S.payOn) return toast("Payments need the newer tables. Use Update the workbook in Settings.", true);
+      openModal("payEdit", Object.assign({ key: v.key }, payInit(v))); },
+    async doPayEdit() {
+      keepPay(); const m = S.m, v = visitBy(m.key); if (!v) return closeModal();
+      if (!payRowsOf(v, m).length && !(m.amtSave && PARTS.some(k => amtN(m, k) !== trackerDue(v.p, k)))) return closeModal();
+      closeModal(); if (await savePay(v, m, null)) toast(`${C.code(v)}: today’s payment saved.`);
+    },
+    /* transfers */
+    xfer: e => { const p = S.PM.get(e.dataset.m); if (!p) return; if (!S.xferOn) return toast("Transfers need the newer table. Use Update the workbook in Settings.", true);
+      const xf = S.XF.get(p.mrn), xs = C.xferState(xf, S.A, todayS(), S.x.E), oak = C.oakState(p, ptOf(p.mrn), S.A, todayS(), S.cfg);
+      const to = xs?.to || (C.elsewhere(p, S.cfg) ? p.loc : oak ? "Oakland" : "");
+      openModal("xfer", { mrn: p.mrn, mode: xs ? (xs.due ? "now" : "later") : "later", to, date: xs?.date != null ? C.isoOf(xs.date) : "", note: xf?.status === "scheduled" ? xf.note : "", oak: !!oak && ptOf(p.mrn)?.oakTasked == null }); },
+    xfMode: e => { keepXfer(); S.m.mode = e.dataset.v; render(); },
+    async doXfer() {
+      keepXfer(); const m = S.m, p = S.PM.get(m.mrn), to = C.txt(m.to), d = C.toSerial(m.date);
+      if (!to) return toast("Say which clinic they’re transferring to.", true);
+      if (m.mode === "later" && (d == null || d <= todayS())) return toast("Pick a transfer date after today, or choose Discontinue now.", true);
+      const oakTask = /oak/i.test(to) && m.oak && ptOf(p.mrn)?.oakTasked == null; closeModal();
+      if (oakTask) await write("Saving…", () => Store.savePt(p.mrn, ptPatch(p, { OakTasked: C.isoOf(todayS()), Oakland: "TRUE" })));
+      if (m.mode === "now") return confirmXfer(p, to, C.txt(m.note));
+      await write("Scheduling the transfer…", () => Store.saveXfer(p.mrn, { Patient: p.code, To: to, Date: C.isoOf(d), Status: "scheduled", Note: C.txt(m.note), Confirmed: "", By: S.name, Updated: new Date().toISOString() }),
+        `${p.code}: transfer to ${to} scheduled for ${C.fmtD(d)}${oakTask ? ", OAK tasked" : ""}. Confirm it at their last visit here.`);
+    },
+    xfCancel: () => { const p = S.PM.get(S.m.mrn); openModal("confirm", { title: `Cancel ${p.code}’s transfer?`, body: "They stay a patient here. Nothing changes on the Master Patient Tracker.", yes: "Cancel the transfer",
+      run: () => Store.saveXfer(p.mrn, { Status: "cancelled", By: S.name, Updated: new Date().toISOString() }) }); },
     pay: e => { const p = S.PM.get(e.dataset.m); if (!p) return; if (!S.payOn) return toast("Payments need the newer tables. Use Update the workbook in Settings.", true); openModal("pay", { mrn: p.mrn }); },
     async doPay() {
       const p = S.PM.get(S.m.mrn), n = C.num($("#pyAmt").value.replace(/[$,\s]/g, "")), d = C.toSerial($("#pyDate").value);
@@ -1583,7 +1786,7 @@
       if (away.some(w => w.to < w.from)) return toast("One of the dates away ends before it starts.", true);
       const ok = await write("Saving availability…", async () => {
         await Store.savePt(p.mrn, ptPatch(p, { Avail: C.availStr(m.grid), AvailEffective: eff != null ? C.isoOf(eff) : "", AvailExpires: exp != null ? C.isoOf(exp) : "", AvailNote: m.note.trim(), Away: C.awayStr(away) }));
-        return Store.saveRow("mpt", p.mrn, C.prefCells(m.grid));
+        return Store.saveRow("mpt", p.mrn, C.prefCells(m.grid, S.raw.mpt && S.raw.mpt[0]));
       });
       if (ok) { closeModal(); toast(`${p.code}’s availability saved${ok.skipped?.length ? `; the tracker’s ${ok.skipped.join(", ")} weren’t changed` : ", and the tracker’s AM/PM columns updated"}.`, !!ok.skipped?.length); }
     },
@@ -1626,6 +1829,19 @@
       S.ipSel = w.mrn; S.ipView = "plan"; S.view = "index"; render();
     },
   };
+  function keepXfer() { const m = S.m; for (const [id, k] of [["xfTo", "to"], ["xfDate", "date"], ["xfNote", "note"]]) { const el = $(`#${id}`); if (el) m[k] = el.value; } const o = $("#xfOak"); if (o) m.oak = o.checked; }
+  const xferNote = m => `${C.fmtD(todayS())}, ${C.dateOf(todayS()).getFullYear()}: transferred to ${C.txt(m.to) || "another clinic"}${C.txt(m.note) ? ` (${C.txt(m.note)})` : ""}${S.name ? `, ${S.name}` : ""}`;
+  /* the transfer done: Status Discontinued and the note added to Clinic Notes on the tracker, the transfer row done, a log line */
+  async function confirmXfer(p, to, note) {
+    const H = mptHead(), line = xferNote({ to, note }), nc = H("clinicnotes");
+    const ok = await write("Saving the transfer…", async () => {
+      const r = await Store.saveRow("mpt", p.mrn, Object.assign({ [H("status") || "Status"]: "Discontinued" }, nc ? { [nc]: p.notes ? `${p.notes}\n${line}` : line } : {}));
+      if (S.xferOn) await Store.saveXfer(p.mrn, { Patient: p.code, To: to, Status: "done", Note: note, Confirmed: C.isoOf(todayS()), By: S.name, Updated: new Date().toISOString() });
+      if (S.raw.tables?.own?.tblIvkLog) { try { await Store.appendLog([`x${Date.now().toString(36)}`, "transfer", p.code, "", line, S.name, new Date().toISOString(), "saved"]); } catch (e) { console.error(e); } }
+      return r;
+    }, r => `${p.code}: discontinued here, transferred to ${to}.${r?.skipped?.length ? ` The tracker’s ${r.skipped.join(", ")} wasn’t changed (a formula or no such column).` : ""}`);
+    return !!ok;
+  }
   /* waitlist: an appeal moves them behind the next ready patient; turning it off leaves them where they are */
   async function wAppeal(t) {
     const w = S.WL.list.find(x => x.mrn === t.dataset.m); if (!w) return;
@@ -1650,7 +1866,27 @@
     chip: e => { S.chip = e.dataset.v; render(); },
     wk: e => { const d = +e.dataset.v; S.wk = d === 0 ? 0 : S.wk + d; render(); },
     /* a booked visit on the Schedule opens the patient view; someone not on the tracker yet gets the profile form */
-    schedPick: e => { const m = e.dataset.m; if (S.PM.get(m)) openPv(m); else ACT.profile(e); },
+    schedPick: e => { const mrn = e.dataset.m, d = +e.dataset.d, t = e.dataset.t === "" ? null : +e.dataset.t, a = S.A.find(x => x.mrn === mrn && x.date === d && (t == null || x.time === t)); if (!a) return;
+      const r = S.SO.get(mrn), on = r && r.status === "waiting" && r.booked === d, p = S.PM.get(mrn);
+      /* days: what they said before, else the availability they gave (Preferred or Mostly), else any */
+      const av = ptOf(mrn)?.avail || (p ? p.prefs.map(x => ({ am: x.am ? "M" : "", pm: x.pm ? "M" : "" })) : []);
+      const days = on ? [...r.days] : av.flatMap((x, i) => ["am", "pm"].filter(h => C.canCome(x[h])).map(h => `${i + 1}${h}`));
+      openModal("sooner", { mrn, code: a.code, date: d, time: a.time, provider: a.provider, from: on && r.from != null ? C.isoOf(r.from) : C.isoOf(todayS() + 1), days, same: on ? r.sameProv : false, note: on ? r.note : "" }); },
+    soPv: () => { const m = S.m.mrn; closeModal(); if (S.PM.get(m)) openPv(m); else ACT.profile({ dataset: { m } }); },
+    soDay: e => { keepSooner(); const v = e.dataset.v, L = S.m.days; S.m.days = L.includes(v) ? L.filter(x => x !== v) : L.concat(v); render(); },
+    soEdit: e => { const r = S.SO.get(e.dataset.m), v = r && soonerVisit(r); if (!v) return toast("That visit isn’t on the appointment list any more. Take them off the waitlist, or waitlist the new visit.", true);
+      ACT.schedPick({ dataset: { m: r.mrn, d: String(v.date), t: String(v.time ?? "") } }); },
+    async soSave() {
+      keepSooner(); const m = S.m, from = C.toSerial(m.from); if (needName()) return;
+      if (from != null && from >= m.date) return toast("The earliest date has to be before their visit.", true);
+      const ok = await write("Saving…", () => Store.saveSooner(m.mrn, { Patient: m.code, Booked: C.isoOf(m.date), BookedTime: C.fmtT(m.time), Provider: m.provider, From: from != null ? C.isoOf(from) : "",
+        Days: m.days.slice().sort().join(","), SameProv: m.same ? "TRUE" : "FALSE", Status: "waiting", Note: C.txt(m.note), Seen: "", By: S.name, Updated: new Date().toISOString() }));
+      if (ok) { closeModal(); const x = soonerHits().find(y => y.r.mrn === m.mrn); toast(`${m.code}: on the sooner waitlist${x && x.hits.length ? `; ${plural(x.hits.length, "opening")} already, see Sooner waitlist under the schedule` : ""}.`); }
+    },
+    async soDone(e) {
+      const mrn = e.dataset.m, r = S.SO.get(mrn); if (!r) return;
+      if (await write("Saving…", () => Store.saveSooner(mrn, { Status: "done", By: S.name, Updated: new Date().toISOString() }), `${r.code}: off the sooner waitlist.`) && S.modal === "sooner") closeModal();
+    },
     toToday: e => { S.sel = e.dataset.k; S.bSel = null; S.view = "today"; S.pv = null; render(); },
     openPt: e => openPv(e.dataset.m),
     pOpen: e => openPv(e.dataset.m),
@@ -1701,7 +1937,7 @@
     },
     /* Schedule: an open slot held for one patient */
     schedOpen: e => { const d = +e.dataset.d, t = +e.dataset.t, pk = TM.provKey(e.dataset.p), s = C.daySlots(d, S.X).slots.find(x => x.time === t && x.pkey === pk); if (!s || !s.open) return toast("That time was just taken.", true);
-      if (needName()) return; openModal("hold", { slot: s, who: "" }); },
+      if (needName()) return; openModal("hold", { slot: s, who: e.dataset.w || "" }); },
     schedPlan: () => { const s = S.m.slot; closeModal(); S.ipSel = ""; S.ipPins[""] = { 0: asPin(s) }; S.ipAlt = null; S.view = "index"; S.acLast = "index"; render(); },
     async doHold() {
       const s = S.m.slot, w = $("#hdWho")?.value || S.m.who; let mrn = w, code = "";
@@ -1716,19 +1952,21 @@
       await write("Filling the Index Planner tab…", () => Store.fillPlanner());
     },
     setup: async () => { const r = await write("Setting up…", () => Store.setup()); if (r && r.blocked?.length) toast(`Couldn’t add ${r.blocked.join(", ")}: cells on the ${X.DATA_SHEET} tab already hold something.`, true); else if (r) toast("Workbook set up. Check-ins and Teams settings now save here."); },
-    checkin: e => { if (needName()) return; const v = visitBy(e.dataset.k); if (!v) return; openModal("checkin", { key: v.key, chair: freeChair(), rn: true, ask: true }); },
+    /* the lobby by default: a chair is picked here or later with Seat */
+    checkin: e => { if (needName()) return; const v = visitBy(e.dataset.k); if (!v) return; openModal("checkin", Object.assign({ key: v.key, chair: "", rn: true, ask: true }, payInit(v))); },
     seat: e => { const v = visitBy(e.dataset.k); if (!v) return; openModal("seat", { key: v.key, chair: v.ph === "chair" ? "" : freeChair(), rn: true }); },
     seatHere: e => { const v = visitBy(e.dataset.k); if (!v) return; openModal("seat", { key: v.key, chair: e.dataset.b, rn: true }); },
-    mPick: e => { S.m.chair = e.dataset.b; S.m.rn = $("#mRn")?.checked ?? S.m.rn; S.m.ask = $("#mAsk")?.checked ?? S.m.ask; render(); },
-    mBook: e => { S.m.booked = e.dataset.v; S.m.proto = $("#mProto")?.checked ?? S.m.proto; S.m.freq = $("#mFreq")?.value ?? S.m.freq; render(); },
+    mPick: e => { keepPay(); S.m.chair = e.dataset.b; render(); },
+    mBook: e => { keepPay(); S.m.booked = e.dataset.v; render(); },
     close: () => closeModal(),
     scrim: (e, ev) => { if (ev.target === e) closeModal(); },
     async doCheckin() {
-      const v = visitBy(S.m.key), chair = S.m.chair, rn = $("#mRn")?.checked, ask = $("#mAsk")?.checked, t = hm();
+      keepPay(); const m = S.m, v = visitBy(m.key), chair = m.chair, rn = $("#mRn")?.checked, ask = $("#mAsk")?.checked, t = hm();
       if (!v) return closeModal();
       const ok = await write("Saving check-in…", () => Store.saveVisit(v.key, visitBase(v), Object.assign({ Arrived: t, Chair: chair, Seated: chair ? t : "", Out: "", Status: "" }, stamp()), "Arrived"));
       if (!ok) return;
       closeModal(); S.sel = v.key; S.bSel = null;
+      await savePay(v, m, `${C.code(v)} is checked in`);
       const msgs = [`${C.code(v)} checked in${chair ? ` to ${chairTxt(chair)}` : ""}.`];
       if (rn) { const r = await sendArrival(v, chair); msgs.push(teamsWord(r, routeTo("arrival"))); }
       if (ask && v.p) { const r = await sendAsk(v.p, C.askText(v.p, v.ask, S.tpl, v.p.freq), v.p.freq, v.key); msgs.push(r.ok ? `Asked ${routeTo("protocol")}.` : r.reason); }
@@ -1768,19 +2006,20 @@
       /* the visit that completes index (an Induction patient's 6th kept visit): offer the move to Ongoing with the after-index protocol */
       const ix = v.p ? C.indexState(v.p, S.A, todayS(), S.cfg, a => a === v.a || (a.mrn === v.a.mrn && a.date === v.a.date && a.time === v.a.time)) : null;
       const idx = ix && ix.complete ? ix : null;
-      openModal("checkout", { key: v.key, booked: v.ask.book ? "" : "yes", proto: !!idx, freq: idx ? S.cfg.AfterIndex : v.p?.freq || "", idx, idxOn: !!idx });
+      /* a scheduled transfer is confirmed at the last visit here: ticked when this is it (or the date has come) */
+      const xs = v.p ? C.xferState(S.XF.get(v.p.mrn), S.A, todayS(), S.x.E) : null, lastHere = !!xs && (xs.due || (xs.last && xs.last.date === v.a.date && xs.last.time === v.a.time));
+      openModal("checkout", Object.assign({ key: v.key, booked: v.ask.book ? "" : "yes", proto: !!idx, freq: idx ? S.cfg.AfterIndex : v.p?.freq || "", idx, idxOn: !!idx, xs, xferOn: lastHere }, payInit(v)));
     },
     async doCheckout() {
-      const v = visitBy(S.m.key); if (!v || !S.m.booked) return;
-      const proto = (!!$("#mProto")?.checked || (!!S.m.idx && !!$("#mIdx")?.checked)) && !!v.p, freq = $("#mFreq")?.value || "", t = hm();
+      keepPay(); const m = S.m, v = visitBy(m.key); if (!v || !m.booked) return;
+      const toOngoing = !!m.idx && !!$("#mIdx")?.checked, proto = (!!$("#mProto")?.checked || toOngoing) && !!v.p, freq = $("#mFreq")?.value || "", t = hm();
       if (proto && !freq) return toast("Pick the protocol the provider confirmed, or untick the box.", true);
       const ok = await write("Checking out…", () => Store.saveVisit(v.key, visitBase(v), Object.assign({ Out: t, Booked: S.m.booked, Protocol: proto ? freq : v.st.proto, Arrived: v.st.arr != null ? C.fmtT(v.st.arr) : t }, stamp())),
         proto ? null : `${C.code(v)} checked out.`);
       if (!ok) return;
-      const pay = S.m.pay || {}, rows = partsOpen(v).filter(([k]) => pay[k]).map(([k, n]) => payRow(v.p, { Date: C.isoOf(v.a.date), Key: C.partKey(v.key, k), Kind: pay[k], Amount: n, Note: PART_WORD[k] })); closeModal();
-      if (rows.length) await write("Saving the payment…", () => Store.addPays(rows))
-        || toast(`${C.code(v)} is checked out, but the payment answer didn’t save. Record it on the patient’s Financial page.`, true);
-      const toOngoing = !!S.m.idx && !!$("#mIdx")?.checked;
+      closeModal();
+      await savePay(v, m, `${C.code(v)} is checked out`);
+      if (m.xs && m.xferOn) await confirmXfer(v.p, m.xs.to, S.XF.get(v.p.mrn)?.note || "");
       if (proto) (await write("Saving the protocol…", () => Store.confirmProtocol(v.a.mrn, freq, todayS()), `${C.code(v)} checked out; protocol ${freq} saved on the Master Patient Tracker.`) && logConfirm(v.p, freq))
         || toast(`${C.code(v)} is checked out, but the protocol didn’t save to the Master Patient Tracker. Use Patients › Confirm protocol.`, true);
       if (toOngoing && proto) await write("Moving to Ongoing…", () => Store.saveRow("mpt", v.a.mrn, { [mptHead()("status") || "Status"]: "Ongoing" }), `${C.code(v)}: index done, now Ongoing at ${freq}.`)
@@ -1827,17 +2066,30 @@
     mapDown: () => { const P = S.raw.plan, a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([JSON.stringify(P, null, 1)], { type: "application/json" })); a.download = `Chair map - ${S.cfg.Clinic} IVK.json`; a.click(); },
     mapRemove: () => openModal("confirm", { title: "Remove the chair map?", body: "Today shows chair tiles instead. You can load the file again any time.", yes: "Remove the map", run: () => Store.setDoc(MAP_KEY, null) }),
     async doUpload() {
-      const u = S.m; if (u.sh.flag && !$("#mShrink")?.checked) return; closeModal();
-      const wasPending = new Set(unconfirmed().map(h => h.id));   // before the new list is read
+      const u = S.m; if (u.sh.flag && !$("#mShrink")?.checked || !u.rows.length) return; closeModal();
+      const wasPending = new Set(unconfirmed().map(h => h.id)), oldA = S.A.slice();   // before the new list is read
       const ok = await write("Writing the appointment list…", () => Store.replaceAppts(u.rows, C.serialOf(new Date()) + nowMin() / 1440)); if (!ok) return;
       if (S.raw.tables?.own?.tblIvkOther && !(await write("Saving the providers’ other visits…", () => Store.replaceOther(u.other))))
         toast("The appointment list is updated, but the providers’ other visits didn’t save, so flex post checks may show as free. Upload again.", true);
+      /* a report with other clinics: their IVK visits replace tblIvkElsewhere, and the locations picked as this clinic's are kept */
+      if (u.locs.length > 1) {
+        const L = u.locs.filter(l => l.ours && l.loc).map(l => l.loc).join("; ");
+        const kept = S.elseOn ? await write("Saving the other clinics’ visits…", () => Store.replaceElse(u.away)) : null;
+        await write("Saving…", () => Store.saveKeyed("tblIvkConfig", Object.assign({ Locations: L }, kept ? { ElsewhereAt: C.isoOf(todayS()) } : {})));
+        if (!S.elseOn) toast("Visits at the other clinics weren’t kept: use Update the workbook in Settings, then upload again.", true);
+      }
       await write("Filling the Index Planner tab…", () => Store.fillPlanner(), r => `Appointment list updated: ${plural(u.rows.length, "appointment")}.${r && r.skipped ? ` Index Planner tab not filled (${r.skipped}).` : r ? ` Index Planner tab filled, ${C.fmtD(r.from)} to ${C.fmtD(r.to)}.` : ""}`)
         || toast("The appointment list is updated, but the Index Planner tab wasn’t filled. Upload again, or place or release a hold, to retry.", true);
       /* the booked index visits this report confirms, and any it doesn't have */
       if (wasPending.size) {
         const H = (S.holds || []).filter(h => wasPending.has(h.id)).map(h => C.holdConfirm(h, S.A, S.raw.apptUpdated)), ok = H.filter(c => c === "onlist").length, miss = H.filter(c => c === "missing").length;
         toast(miss ? `${plural(ok, "booked index visit")} confirmed; ${plural(miss, "visit")} marked booked ${miss === 1 ? "isn’t" : "aren’t"} on this report. Check them in NextGen (Index planner).` : `${ok === 1 ? "The booked index visit is" : `All ${ok} booked index visits are`} confirmed on the NextGen report.`, !!miss);
+      }
+      /* the sooner waitlist: openings on the new list (open slots, times cancellations freed) nobody has been shown yet */
+      const fresh = soonerHits(C.freedTimes(oldA, S.A, todayS())).map(x => Object.assign({}, x, { hits: x.hits.filter(c => !x.r.seen.has(c.key)) })).filter(x => x.hits.length);
+      if (fresh.length) {
+        openModal("soonerFound", { list: fresh });
+        for (const x of fresh) await write("Saving…", () => Store.saveSooner(x.r.mrn, { Seen: [...x.r.seen, ...x.hits.map(c => c.key)].slice(-60).join(";"), Updated: new Date().toISOString() }));
       }
     },
     /* index planner */
@@ -2040,14 +2292,28 @@
   async function readAppt(f) {
     if (!(await loadXLSX())) return toast("The spreadsheet reader didn’t load. Check the connection and reopen the add-in.", true);
     let rows;
-    try { const wb = XLSX.read(await f.arrayBuffer(), { type: "array" }); rows = C.parseReport(XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, raw: true, defval: "" })); }
-    catch (e) { console.error(e); return toast("That file couldn’t be read. Upload the NextGen export unchanged.", true); }
+    /* older exports: .xls (Excel 97-2003, or a web page saved as .xls), Excel 2003 XML, text; the report on whichever sheet has it */
+    try { const wb = XLSX.read(await f.arrayBuffer(), { type: "array", cellDates: false });
+      for (const n of wb.SheetNames) { rows = C.parseReport(XLSX.utils.sheet_to_json(wb.Sheets[n], { header: 1, raw: true, defval: "" })); if (rows && rows.length) break; } }
+    catch (e) { console.error(e); return toast("That file couldn’t be read. Save it from Excel as .xlsx and upload that, or upload the NextGen export unchanged.", true); }
     if (!rows || !rows.length) return toast("This doesn’t look like a NextGen appointment listing (no MRN, Appointment Date and Status columns).", true);
     /* a wider report (the providers' whole schedule) is split: IVK visits for the Appt List tab, the others kept with no patient on them */
     const ivk = rows.filter(r => C.isIvkVisit(r[5])), other = rows.filter(r => !C.isIvkVisit(r[5])).map(r => [C.isoOf(r[2]), r[3] === "" ? "" : C.fmtT(Math.round(r[3] * 1440)), r[4], r[5], r[6]]);
     if (!ivk.length) return toast("This report has no IV ketamine visits. Check the NextGen report's filters.", true);
-    const sh = C.shrink(ivk, S.A.map(a => a.date)); sh.had = S.A.length;
-    openModal("upload", { file: f.name, rows: ivk, other, sh, ok: false });
+    /* a report with the neighbouring clinics in it: each location is this clinic's (the Locations setting, else the ones naming the
+       clinic) or another clinic's. A report with one location is all this clinic's unless Locations says otherwise. */
+    const names = [...new Set(ivk.map(r => r[7]))].sort(), one = names.length === 1 && !C.txt(S.cfg.Locations);
+    const locs = names.map(l => ({ loc: l, n: ivk.filter(r => r[7] === l).length, ours: one || C.isOurs(l, S.cfg) }));
+    openModal("upload", upSplit({ file: f.name, all: ivk, other, locs, ok: false }));
+  }
+  /* the upload's rows for the Appt List tab (this clinic's locations) and for tblIvkElsewhere (the rest, LASFIR only) */
+  function upSplit(u) {
+    const ours = new Set(u.locs.filter(l => l.ours).map(l => l.loc)), tm = r => r[3] === "" ? "" : C.fmtT(Math.round(r[3] * 1440));
+    u.rows = u.all.filter(r => ours.has(r[7]));
+    u.away = u.all.filter(r => !ours.has(r[7])).map(r => { const mrn = C.mrnKey(r[0]), p = S.PM.get(mrn);
+      return [mrn, p && p.code !== "(no code)" ? p.code : C.lasfir(r[1]), C.isoOf(r[2]), tm(r), r[4], r[5], r[6], r[7]]; });
+    u.sh = C.shrink(u.rows, S.A.map(a => a.date)); u.sh.had = S.A.length;
+    return u;
   }
   async function readMap(f) {
     let x; try { x = JSON.parse(await f.text()); } catch (e) { return toast("That file isn’t a map file from the Bay Map Builder.", true); }
@@ -2068,6 +2334,7 @@
     else if (t.id === "mProto") S.m.proto = t.checked;
     else if (t.id === "mIdx") S.m.idxOn = t.checked;
     else if (t.id === "mShrink") { S.m.ok = t.checked; render(); }
+    else if (S.modal === "upload" && /^upLoc_\d+$/.test(t.id)) { S.m.locs[+t.id.slice(6)].ours = t.checked; upSplit(S.m); render(); }
     else if (t.id === "apName") { keepAddProv(); S.m.other = t.value === "__other"; render(); }
     else if (t.dataset && t.dataset.ti != null) {
       /* the slot types draft: colour, name, IVK use, kind, and the eligible events checkboxes */
@@ -2095,6 +2362,8 @@
     }
     else if (t.id === "mRn") S.m.rn = t.checked;
     else if (t.id === "mAsk") S.m.ask = t.checked;
+    else if (/^mAmt_/.test(t.id) || t.id === "mAmtSave" || t.id === "mXfer") { keepPay(); render(); }
+    else if (S.modal === "xfer" && ["xfTo", "xfDate"].includes(t.id)) { keepXfer(); render(); }
   });
   document.addEventListener("input", e => { if (e.target.id === "ptSearch") { S.q = e.target.value; const pos = e.target.selectionStart; render(); const s = $("#ptSearch"); if (s) { s.focus(); s.setSelectionRange(pos, pos); } } });
   /* a start and its post check shade together while either is hovered or focused (Schedule and the Access week) */
