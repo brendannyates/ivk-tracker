@@ -503,3 +503,4 @@ button.avrow:hover{background:var(--surface-3)}button.avrow + button.avrow{box-s
 .payr .amt{display:block;width:120px;font-size:12px;color:var(--muted)}
 .payr .amt input{display:block;width:100%;margin-top:4px;min-height:40px;padding:8px 12px;border-radius:10px;border:1.5px solid var(--surface-2);background:var(--surface);color:var(--ink);font:inherit;font-size:14px}
 .payr .pick{margin-top:0}
+.pcb.so{background:var(--warn-soft);color:var(--warn)}

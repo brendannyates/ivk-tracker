@@ -99,6 +99,13 @@ balance with no reminder in 14 days is a need.
 
 A patient whose Primary Location isn’t this clinic (or an Oakland patient) has **Transfer** on the patient view’s Protocol page: **Discontinue now** (Status Discontinued, a dated transfer note in Clinic Notes, a log line) or **Schedule a transfer** for a future date (tblIvkTransfers). A scheduled transfer is confirmed at check-out of their last visit here; visits booked here after the date are a need. Transferring to Oakland can mark OAK tasked to schedule them.
 
+## Sooner waitlist
+
+Click a visit on the Schedule to open the patient or waitlist them for a sooner date: the earliest day, the days and halves they can
+come (from their availability) and whether only their provider will do (tblIvkSooner). The Sooner waitlist under the schedule shows
+each patient's openings: open template slots before their visit, with a Hold button. Each NextGen upload also looks at the times a
+cancellation freed and pops up any opening nobody has been shown yet. Done takes them off.
+
 ## Index booking
 
 A treatment start for an Induction patient still at 2x per week (or no protocol yet) needs the other 5 index visits booked behind it; until they’re on the list the visit card, Today’s row and the patient carry **Index not fully booked**.
@@ -186,7 +193,8 @@ patient's name and date of birth.
   the times.
 - **Upload**: run the NextGen report for the IVK providers' whole schedule. IV ketamine visits go to the Appt List tab; the rest
   are kept on the hidden tab with no patient on them (date, time, provider, event, status). The Index Planner tab's grid is then
-  rewritten as plain values; the lookups into the other workbook are gone.
+  rewritten as plain values; the lookups into the other workbook are gone. Older exports read too: .xls (Excel 97-2003, or a web
+  page saved as .xls), Excel 2003 XML, CSV or text; the report on any sheet; dates written out; the time inside the date-time.
 - **Other clinics**: the report can include the neighbouring clinics. The upload asks which locations are this clinic's (kept as
   the Locations setting); only those go on the Appt List tab. The other clinics' IVK visits go to tblIvkElsewhere (LASFIR, no
   names) and are used only to check a transfer or Oakland hand-off is booked there: "nothing booked there yet" is a need, a
@@ -214,6 +222,7 @@ Index planner gets the newer tables from Update the workbook):
 | tblIvkPatient | Per patient: Luma card on file, okay to collect, Oakland, OAK tasked, availability, dates away, waitlist order and waiting on |
 | tblIvkExceptions | Provider time off: provider, dates, who covers, whether they work the absent provider's template |
 | tblIvkTransfers | Transfers to another clinic: to, date, scheduled / done / cancelled, note, confirmed |
+| tblIvkSooner | The sooner waitlist: booked visit, earliest date, days, same provider, status, openings already shown |
 | tblIvkElsewhere | IVK visits at the other clinics from a wider report: MRN, LASFIR, date, time, provider, event, status, location |
 | tblIvkProfile | Per patient: insurance or self pay and the payer for the provider visit and the infusion, the latest Sohar benefits, BIDF printed |
 | tblIvkPay | Payments due at each visit (collected / missed), later payments and waivers, balance reminders |

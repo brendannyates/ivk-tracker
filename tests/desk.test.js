@@ -78,3 +78,27 @@ test("NextGen location names: home clinic and appointment counts here and at oth
   const E = C.elseRows([C.ELSE_COLS, ["990101", "TESANN", C.isoOf(T + 9), "10:00 AM", "Chen MD, Paul", "IV Ketamine Follow Up", "Expected", "MHS Oakland IVK"]]);
   assert.deepEqual(C.visitCounts("990101", A, E, T), { kept: 1, booked: 1, away: [{ loc: "MHS Oakland IVK", n: 1 }] });
 });
+
+test("the sooner waitlist: openings before their visit, on their days, new ones only once", () => {
+  const SO = C.soonerRows([C.SOONER_COLS, ["990101", "TESANN", C.isoOf(T + 14), "10:00 AM", "Rivera MD, Ana Maria", C.isoOf(T + 2), "1am,3pm", "TRUE", "waiting", "", "", "BY", ""]]);
+  const r = SO.get("990101"); assert.equal(r.days.size, 2); assert.equal(r.sameProv, true);
+  const mon = T + 5, wed = T + 7;                                                 // T is a Wednesday
+  const cands = [{ date: mon, time: 600, provider: "Rivera MD, Ana Maria" }, { date: mon, time: 800, provider: "Rivera MD, Ana Maria" },   // Mon PM: not a day they said
+    { date: wed, time: 780, provider: "Chen MD, Paul" }, { date: wed, time: 780, provider: "Rivera MD, Ana Maria" }, { date: T + 1, time: 600, provider: "Rivera MD, Ana Maria" },   // before From
+    { date: T + 19, time: 600, provider: "Rivera MD, Ana Maria" }];             // after their visit
+  assert.deepEqual(C.soonerMatch(r, cands, T, false).map(c => [c.date, c.time]), [[mon, 600], [wed, 780]]);
+  assert.equal(C.soonerMatch(Object.assign({}, r, { status: "done" }), cands, T, false).length, 0);
+  /* a cancellation on the new list frees its time, unless someone else is booked in it */
+  const old = C.appts([AP_H, ap("990202", mon, 600), ap("990303", wed, 600), ap("990404", T + 8, 600)]);
+  const now = C.appts([AP_H, ap("990202", mon, 600, undefined, "Cancelled"), ap("990505", wed, 600), ap("990404", T + 8, 600)]);
+  assert.deepEqual(C.freedTimes(old, now, T).map(c => c.date), [mon]);
+});
+
+test("older NextGen exports: written-out dates, the time inside the date-time, older header names", () => {
+  assert.equal(C.toSerial("Wednesday, November 04, 2026"), T); assert.equal(C.toSerial("Nov 4, 2026"), T);
+  assert.equal(C.toMin("11/04/2026 10:30 AM"), 630); assert.equal(C.toSerial("11/04/2026 10:30 AM"), T);
+  const aoa = [["Appointments Listing"], [], ["Med Rec Nbr", "Patient Name", "Appt Date", "Provider Name", "Event Name", "Appt Status", "Location Name"],
+    ["990101", "Test, Ann", "11/04/2026 10:30 AM", "Rivera MD, Ana Maria", "IV Ketamine Follow Up", "Confirmed", "Castro Street"], ["Total: 1"]];
+  const rows = C.parseReport(aoa);
+  assert.equal(rows.length, 1); assert.equal(rows[0][2], T); assert.equal(Math.round(rows[0][3] * 1440), 630); assert.equal(rows[0][7], "Castro Street");
+});

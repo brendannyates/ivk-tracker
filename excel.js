@@ -18,6 +18,8 @@
                           (per patient: who pays the provider visit and the infusion, the latest Sohar benefits, when the BIDF was printed)
      tblIvkTransfers  EO1  MRN | Patient | To | Date | Status | Note | Confirmed | By | Updated   (transfers to another clinic)
      tblIvkElsewhere  EY1  MRN | Patient | Date | Time | Provider | Event | Status | Location   (IVK visits at other clinics, wider report)
+     tblIvkSooner     FH1  MRN | Patient | Booked | BookedTime | Provider | From | Days | SameProv | Status | Note | Seen | By | Updated
+                          (the sooner waitlist: patients who would take an earlier visit)
    (AK1 held tblIvkSlots, the first template; it is no longer read.)
    Text cells only on that sheet ("1:22 PM" stays text). The chair map is a document setting (a map file can be larger than a cell holds).
    Two visible tabs hold the provider templates, in the Clinic Template Tool's format so that tool can read them (template.js):
@@ -51,7 +53,8 @@
     { name: "tblIvkExceptions", anchor: "DD", columns: C.EX_COLS, rows: [C.EX_COLS.map(() => "")] },
     { name: "tblIvkProfile", anchor: "DP", columns: C.PROFILE_COLS, rows: [C.PROFILE_COLS.map(() => "")] },
     { name: "tblIvkTransfers", anchor: "EO", columns: C.XFER_COLS, rows: [C.XFER_COLS.map(() => "")] },
-    { name: "tblIvkElsewhere", anchor: "EY", columns: C.ELSE_COLS, rows: [C.ELSE_COLS.map(() => "")] }
+    { name: "tblIvkElsewhere", anchor: "EY", columns: C.ELSE_COLS, rows: [C.ELSE_COLS.map(() => "")] },
+    { name: "tblIvkSooner", anchor: "FH", columns: C.SOONER_COLS, rows: [C.SOONER_COLS.map(() => "")] }
   ];
   const BIG = ["tblIvkVisits", "tblIvkLog", "tblIvkHolds", "tblIvkOther", "tblIvkPay", "tblIvkElsewhere"];
   const IP_RANGE = "A1:AZ60";   // the Index Planner tab: 9 weeks of Mon-Fri across, half hours down, the slot list below
@@ -137,7 +140,7 @@
         t.getDataBodyRange().values = s.rows.map(r => r.map(String));
         made.push(s.name);
       }
-      if (made.length) { ws.getRange("A:FF").format.autofitColumns(); ws.visibility = Excel.SheetVisibility.hidden; }
+      if (made.length) { ws.getRange("A:FT").format.autofitColumns(); ws.visibility = Excel.SheetVisibility.hidden; }
       await ctx.sync();
       return { made, blocked };
     });
@@ -520,6 +523,7 @@
   const savePt = (mrn, patch) => upsertMrn("tblIvkPatient", mrn, patch);
   const saveProfile = (mrn, patch) => upsertMrn("tblIvkProfile", mrn, patch);
   const saveXfer = (mrn, patch) => upsertMrn("tblIvkTransfers", mrn, patch);
+  const saveSooner = (mrn, patch) => upsertMrn("tblIvkSooner", mrn, patch);
   /* a time-off entry, by Id (a new Id adds one; Status "removed" takes it out) */
   async function saveException(id, patch) {
     return Excel.run(async ctx => {
@@ -596,6 +600,6 @@
   }
 
   return { DATA_SHEET, SHEETS, PLANNER, TPL_SHEET, TYPES_SHEET, SPEC, load, setup, saveVisit, confirmProtocol, replaceAppts, saveKeyed, saveRoutes, appendLog, openRow,
-    setupTemplate, addGrid, setCells, saveTypes, replaceOther, replaceElse, savePlan, saveFlag, placeHolds, setHolds, fillPlanner, getDoc, setDoc, refreshDoc,
+    setupTemplate, addGrid, setCells, saveTypes, replaceOther, replaceElse, saveSooner, savePlan, saveFlag, placeHolds, setHolds, fillPlanner, getDoc, setDoc, refreshDoc,
     readRow, saveRow, savePt, addPays, saveRanks, saveException, saveProfile, saveXfer, addMpt };
 });

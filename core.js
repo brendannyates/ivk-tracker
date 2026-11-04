@@ -44,12 +44,16 @@
     const n = num(v); if (n != null) return n > 1000 && n < 200000 ? Math.floor(n) : null;
     const s = txt(v); let m;
     if ((m = s.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})/))) return serialOf(new Date(+m[3] < 100 ? 2000 + +m[3] : +m[3], +m[1] - 1, +m[2]));
-    return fromIso(s);
+    const iso = fromIso(s); if (iso != null) return iso;
+    /* older exports write the date out ("Nov 4, 2026", "Wednesday, November 04, 2026") */
+    if (/[a-z]{3}/i.test(s) && /\d{4}/.test(s)) { const d = new Date(s.replace(/^[a-z]+day,?\s*/i, "")); if (!isNaN(d)) return serialOf(d); }
+    return null;
   }
   /* a time cell: a day fraction (or a full serial), "1:30 PM", "13:30"; minutes after midnight, else null */
   function toMin(v) {
     const n = num(v); if (n != null) { const f = n % 1; return Math.round(f * 1440) % 1440; }
-    const m = txt(v).match(/^(\d{1,2}):(\d{2})(?::\d{2})?\s*([AaPp])?/); if (!m) return null;
+    /* also a time inside a date-time ("11/04/2026 10:00 AM"), as older exports write it */
+    const m = txt(v).match(/(?:^|\s)(\d{1,2}):(\d{2})(?::\d{2})?\s*([AaPp])?/); if (!m) return null;
     let h = +m[1]; if (m[3]) { if (/p/i.test(m[3]) && h < 12) h += 12; if (/a/i.test(m[3]) && h === 12) h = 0; }
     return h * 60 + +m[2];
   }
@@ -327,18 +331,21 @@
   /* ---------- NextGen "Appointments Listing" export -> Appt List rows ---------- */
   /* Report headers (row 7 of the export): MRN | Location | Appointment Date | Time | Provider | Appointment Type | Patient | Status.
      Out: [MRN, Patient, Date serial, Time fraction, Provider, Event, Status, Location], the Appt List table's order. */
-  const REPORT_HDR = { mrn: ["mrn", "mdrc"], patient: ["patient", "patientname", "patname"], date: ["appointmentdate", "apptdate", "apptdt", "date"],
-    time: ["time", "begtm", "appointmenttime"], provider: ["provider", "renderingprovider", "resource"], event: ["appointmenttype", "event", "eventtype"],
-    status: ["status", "sts", "appointmentstatus"], loc: ["location", "loc"] };
+  const REPORT_HDR = { mrn: ["mrn", "mdrc", "medrecnbr", "medrecno", "medicalrecordnumber", "medrec"], patient: ["patient", "patientname", "patname"],
+    date: ["appointmentdate", "apptdate", "apptdt", "date", "appointmentdatetime", "apptdatetime"],
+    time: ["time", "begtm", "appointmenttime", "appttime", "starttime", "begintime", "begtime"], provider: ["provider", "renderingprovider", "resource", "providername", "resourcename"],
+    event: ["appointmenttype", "event", "eventtype", "apptevent", "eventname", "appttype"], status: ["status", "sts", "appointmentstatus", "apptstatus"],
+    loc: ["location", "loc", "locationname", "apptlocation"] };
   const REPORT_ORDER = ["mrn", "patient", "date", "time", "provider", "event", "status", "loc"];
   function parseReport(aoa) {
     const hr = aoa.slice(0, 40).findIndex(r => r.some(v => REPORT_HDR.mrn.includes(norm(v))) && r.some(v => REPORT_HDR.date.includes(norm(v))));
     if (hr < 0) return null;
     const hn = aoa[hr].map(norm), idx = REPORT_ORDER.map(k => hn.findIndex(h => REPORT_HDR[k].includes(h)));
-    if (["mrn", "patient", "date", "time", "status"].some(k => idx[REPORT_ORDER.indexOf(k)] < 0)) return null;
+    if (["mrn", "patient", "date", "status"].some(k => idx[REPORT_ORDER.indexOf(k)] < 0)) return null;
     const rows = [];
     for (const r of aoa.slice(hr + 1)) {
-      const v = idx.map(i => i < 0 ? "" : r[i] ?? ""), d = toSerial(v[2]), t = toMin(v[3]);
+      /* no time column (older exports): the time inside the date-time */
+      const v = idx.map(i => i < 0 ? "" : r[i] ?? ""), d = toSerial(v[2]), t = idx[3] >= 0 ? toMin(v[3]) : num(v[2]) != null ? (num(v[2]) % 1 ? toMin(v[2]) : null) : toMin(v[2]);
       if (txt(v[0]) === "" || d == null) continue;   // blank and footer lines
       v[0] = txt(v[0]); v[1] = txt(v[1]); v[2] = d; v[3] = t == null ? "" : t / 1440; for (const j of [4, 5, 6, 7]) v[j] = txt(v[j]);
       rows.push(v);
@@ -889,6 +896,45 @@
   /* their first visit at another clinic (one named like "to", or any when "to" is blank) on or after "from", not cancelled */
   const bookedAt = (E, mrn, to, from) => (E || []).filter(a => a.mrn === mrn && a.date >= from && !isCancelled(a) && !/no ?show/i.test(a.status) && (!txt(to) || sameLoc(a.loc, to)))
     .sort((a, b) => a.date - b.date || (a.time ?? 0) - (b.time ?? 0))[0] || null;
+  /* ---------- sooner waitlist ---------- */
+  /* tblIvkSooner: a patient booked on one date who'd take an earlier one, one row per patient. Days "1am,3pm" (weekday 1-5 and
+     half), blank = any. SameProv TRUE = only with the provider they're booked with. Status waiting, done or removed. Seen: the
+     openings already shown ("2026-11-10|600|rivera;..."), so a refreshed list only alerts what's new. */
+  const SOONER_COLS = ["MRN", "Patient", "Booked", "BookedTime", "Provider", "From", "Days", "SameProv", "Status", "Note", "Seen", "By", "Updated"];
+  function soonerRows(values) {
+    const m = new Map();
+    byHeader(values).rows.forEach(x => { const g = x.get, mrn = mrnKey(g("mrn")), booked = toSerial(g("booked")); if (!mrn || booked == null) return;
+      m.set(mrn, { mrn, code: txt(g("patient")), booked, bookedTime: toMin(g("bookedtime")), provider: txt(g("provider")), from: toSerial(g("from")),
+        days: new Set(txt(g("days")).split(/[,\s]+/).filter(d => /^[1-5](am|pm)$/.test(d))), sameProv: /^(true|yes|1)$/i.test(txt(g("sameprov"))),
+        status: txt(g("status")).toLowerCase() || "waiting", note: txt(g("note")), seen: new Set(txt(g("seen")).split(";").map(txt).filter(Boolean)), by: txt(g("by")) }); });
+    return m;
+  }
+  const soonerKey = c => `${isoOf(c.date)}|${c.time}|${TM.provKey(c.provider)}`;
+  /* which of the openings (open slots, or times a cancellation freed) would move them sooner: from From (or tomorrow) to the day
+     before the visit they have, on the days and halves they said, with their provider if asked; a start needs an index start slot */
+  function soonerMatch(r, cands, today, isStart) {
+    if (!r || r.status !== "waiting") return [];
+    const from = Math.max(today + 1, r.from ?? 0), seen = new Set();
+    return cands.filter(c => c.date >= from && c.date < r.booked && c.time != null && c.mrn !== r.mrn && (!isStart || c.index !== false)
+      && (!r.days.size || r.days.has(`${weekday(c.date)}${c.time < 720 ? "am" : "pm"}`)) && (!r.sameProv || sameProv(c.provider, r.provider)))
+      .map(c => Object.assign({}, c, { key: soonerKey(c) })).filter(c => !seen.has(c.key) && seen.add(c.key))
+      .sort((a, b) => a.date - b.date || a.time - b.time);
+  }
+  /* open template slots from tomorrow to a date (index: false for follow-up-only slots) */
+  function openSlots(X, today, until) {
+    const out = [];
+    for (let d = today + 1; d <= until; d++) { const wd = weekday(d); if (wd < 1 || wd > 5) continue;
+      for (const s of daySlots(d, X).slots) if (s.open) out.push({ date: d, time: s.time, provider: s.provider, index: !!s.openIndex, src: "slot" }); }
+    return out;
+  }
+  /* visits on the old list that the new one cancels or no longer has, from tomorrow on: times a cancellation freed */
+  function freedTimes(oldA, newA, today) {
+    const live = a => !isCancelled(a) && !/no ?show/i.test(a.status), L = newA.filter(live), now = new Set(L.map(a => `${a.mrn}|${a.date}|${a.time}`));
+    const taken = new Set(L.map(a => `${a.date}|${a.time}|${TM.provKey(a.provider)}`));   // someone else is already in that time
+    return oldA.filter(a => live(a) && a.date > today && a.time != null && !now.has(`${a.mrn}|${a.date}|${a.time}`) && !taken.has(`${a.date}|${a.time}|${TM.provKey(a.provider)}`))
+      .map(a => ({ date: a.date, time: a.time, provider: a.provider, mrn: a.mrn, src: "freed" }));
+  }
+
   /* home clinic isn't this one: Primary Location isn't one of this clinic's locations (cfg, or just the clinic's name) */
   const elsewhere = (p, cfg) => { const c = typeof cfg === "string" ? { Clinic: cfg } : cfg || {}; return !!(p && p.loc && c.Clinic && !isOurs(p.loc, c)); };
   /* a patient's IVK appointments: kept and booked here (the Appt List), and booked at each other clinic (the wider report) */
@@ -997,7 +1043,7 @@
   return { DEFAULTS, VISIT_COLS, TEMPLATES, norm, txt, num, serialOf, dateOf, isoOf, fromIso, toSerial, toMin, fmtT, fmtD, fmtDay, weekday, weekStart,
     PT_COLS, ptRows, AV_LEVELS, avName, availGrid, availStr, canCome, prefCells, awayList, awayStr, awayOn, PAY_COLS, REMIND_METHODS, money, amt, payRows, dueOf, payOf, ledger, toConfirm,
     PARTS, partKey, dueParts, visitAnswered, PROFILE_COLS, COVER_MODES, modeOf, modeParts, isSelf, SOHAR_KEYS, profileRows, coverage, profileGaps, parseSohar, demand,
-    fullPlan, eligibleStarts, memoX, indexState, indexShort, nextStart, XFER_COLS, xferRows, xferState, elsewhere, visitCounts, ELSE_COLS, elseRows, sameLoc, isOurs, bookedAt, prefCols, indexN: cfg => Math.max(1, Math.round(+cfg.IndexPerWeek * +cfg.IndexWeeks)),
+    fullPlan, eligibleStarts, memoX, indexState, indexShort, nextStart, XFER_COLS, xferRows, xferState, elsewhere, visitCounts, SOONER_COLS, soonerRows, soonerKey, soonerMatch, openSlots, freedTimes, ELSE_COLS, elseRows, sameLoc, isOurs, bookedAt, prefCols, indexN: cfg => Math.max(1, Math.round(+cfg.IndexPerWeek * +cfg.IndexWeeks)),
     treatments, txNo, isOak, oakState, WAIT_ON, waitlist, waitMove, provFull, fullName, firstName, scheduleOf, START_TPL, longWhen,
     lasfir, provName, mrnKey, pickRow, eventShort, freqDays, byHeader, patients, appts, isCancelled, visitKey, visitRows, phase, isActive, futureOf, asks,
     today, code, chairState, chairStatus, waitMin, isLate, chairList, needs, loud, consults, fill, protoWords, arrivalText, askText,
