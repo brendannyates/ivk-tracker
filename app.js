@@ -51,7 +51,7 @@
   function setWho(name) {
     S.name = name || "";
     if (!FULL && whoKey()) { const rec = whoRead(); LS.set(whoKey(), JSON.stringify(name ? C.whoPick(rec, name, dayIso()) : Object.assign(rec, { day: "", name: "" }))); }
-    toChild({ k: "who", name: S.name });
+    toChild({ k: "who", name: S.name }); if (name) maybeAutoFull();
   }
   const me = () => (S.users || []).find(u => C.userKey(u.name) === C.userKey(S.name)) || null;
   /* the signature is cleaned again whenever it's used: anyone who can edit the workbook can edit the cell */
@@ -261,6 +261,20 @@
       pop.dlg.addEventHandler(Office.EventType.DialogEventReceived, () => { pop.dlg = null; if (window.DevUpdates) DevUpdates.setSend(null); render(); });
     });
   }
+  /* full screen on open: once per session, as soon as we know who's at the desk (today's pick, or the pick at the prompt) */
+  function maybeAutoFull() {
+    if (FULL || S.autoDone || !S.name) return; S.autoDone = true;
+    if (C.autoFullOf(me()) && !pop.dlg) openFull();
+  }
+  async function saveAutoFull(on) {
+    if (!S.name) return;
+    const any = C.autoAny(S.users, S.name, on);
+    await write("Saving…", async () => {
+      if (!S.raw.tables?.own?.tblIvkUsers) await Store.setup(); if (!me()) await Store.saveUser(S.name, {});
+      await Store.saveUser(S.name, { autoFull: !!on });
+      await Store.setDoc(C.AUTO_SHOW, any ? true : null);
+    }, on ? "Saved. Next time you open this workbook, the tracker opens in full screen." : any ? "Saved. You’ll open beside the sheet; someone else still has full screen on, so the tracker keeps opening with the workbook." : "Saved. The tracker no longer opens by itself with this workbook.");
+  }
   function closeFull() { if (pop.dlg) { try { pop.dlg.close(); } catch (e) { /* closed */ } pop.dlg = null; } if (window.DevUpdates) DevUpdates.setSend(null); render(); }
 
   /* ---------- reading ---------- */
@@ -281,7 +295,7 @@
       const raw = await X.load(S.raw ? null : bootStep); raw.plan = X.getDoc(MAP_KEY) || null;
       const sig = hash(JSON.stringify(raw));
       S.live = true; S.err = "";
-      if (force || sig !== S.sig) { const first = !S.raw; S.sig = sig; S.raw = raw; derive(); loadWho(); if (first) bootDone(); toChild({ k: "snap", raw, who: S.name }); if (!S.modal && !typing()) render(); if (first) carryCastro(); }
+      if (force || sig !== S.sig) { const first = !S.raw; S.sig = sig; S.raw = raw; derive(); loadWho(); if (first) bootDone(); toChild({ k: "snap", raw, who: S.name }); if (!S.modal && !typing()) render(); if (first) { carryCastro(); maybeAutoFull(); } }
       if (C.repliesDue(S.replies).length && !applying) setTimeout(applyReplies, 0);
     } catch (e) { console.error(e); S.err = "Couldn’t read the workbook. Check you’re still signed in; the tracker tries again in a few seconds."; render(); }
   }
@@ -1424,6 +1438,7 @@
     return `${head("Settings", "", false)}${setupBanner()}<div class="sgrid2">
       <section class="card set"><h3>You</h3><p>${S.name ? `At the desk today: <b>${esc(S.name)}</b>. Your name goes on Teams posts and in the log.` : "Nobody picked yet."} The tracker asks who’s at the desk the first time it opens each day.</p>
         <div class="actions"><button class="btn ghost sm line" data-act="switchUser">Switch user</button></div>
+        <label class="opt"><input type="checkbox" id="autoFull"${C.autoFullOf(me()) ? " checked" : ""}${S.name ? "" : " disabled"}> Open in full screen whenever I open this workbook<small>${S.name ? "Saved with your name. While anyone has this on, the tracker opens by itself when the workbook opens (beside the sheet for everyone else)." : "Pick who’s at the desk first."}</small></label>
         <details class="fold"><summary>Add a signature <span>only if Outlook doesn’t add yours</span></summary>
           <p class="small muted">The start email leaves the signature to Outlook: set yours once in Outlook (Settings › Mail › Signatures on the web, or File › Options › Mail › Signatures), then use <b>Copy email</b> and paste it into a new message. The <b>Outlook draft (.eml)</b> file may open without your signature, so add it here if you use the draft.</p>
           <ol class="how"><li>In File Explorer, click the address bar, paste <code>%APPDATA%\\Microsoft\\Signatures</code> and press Enter.</li><li>Choose the <b>.htm</b> file named after your signature below (the .txt file works too). Pictures in a signature don’t come along.</li></ol>
@@ -2815,6 +2830,7 @@
     else if (S.modal === "profile" && t.id === "pfStatus") keepProfile();
     else if (t.dataset && t.dataset.cm != null) cmSet(t.dataset.m, t.dataset.cm, t.checked);
     else if (t.dataset && t.dataset.prof != null) { t.checked = false; ACT.profile({ dataset: { m: t.dataset.prof } }); }
+    else if (t.id === "autoFull") saveAutoFull(t.checked);
     else if (t.id === "darkOn") { S.theme = t.checked ? "dark" : "light"; LS.set("ivkTheme", S.theme); document.documentElement.dataset.theme = S.theme; }
     else if (t.id === "mFreq" && S.modal === "ask") { S.m.freq = t.value; S.m.text = C.askText(S.PM.get(S.m.mrn), S.m.ask, S.tpl, t.value); $("#mText").value = S.m.text; }
     else if (t.id === "mFreq" && (S.modal === "checkout" || S.modal === "proto")) { S.m.freq = t.value; S.m.proto = $("#mProto")?.checked ?? S.m.proto; render(); }
