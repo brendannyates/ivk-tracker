@@ -57,6 +57,9 @@
     const firstPay = S.pays.map(x => x.date).filter(d => d != null).sort((a, b) => a - b)[0];
     S.payStart = C.toSerial(cfg.PayStart) ?? firstPay ?? T;
     Object.assign(S.x, { PT: S.PT, pays: S.payOn ? S.pays : null, payStart: S.payStart });
+    /* the start checklist (tblIvkStarts) and the Consults rows against the appointment list: a kept start takes them off the waitlist */
+    S.ST = C.startRows(r.tblIvkStarts); S.stOn = !!r.tables?.own?.tblIvkStarts;
+    C.consultStarts(S.CS, S.A, S.ST, cfg);
     S.WL = C.waitlist(S.CS, S.PT);
     /* transfers to another clinic (scheduled, confirmed at the last visit here) */
     S.XF = C.xferRows(r.tblIvkTransfers); S.xferOn = !!r.tables?.own?.tblIvkTransfers; S.x.XF = S.XF;
@@ -71,6 +74,8 @@
     S.PF = C.profileRows(r.tblIvkProfile); S.profOn = !!r.tables?.own?.tblIvkProfile;
     S.gaps = C.profileGaps(S.A, S.PM, S.PF, T, 28);
     S.x.noProfile = new Set();   // patients on the tracker have their profile in its columns
+    /* every treatment start: a profile once it's booked, Case Management in NextGen on the day */
+    S.SL = C.startList({ today: T, appts: S.A, PM: S.PM, PF: S.PF, ST: S.ST, CS: S.CS, visits: S.V, cfg }); S.x.SL = S.SL;
     /* a visit takes its post check when it's an index visit (a treatment start, an Induction patient) or the patient requires one */
     const needsPost = (mrn, ev) => { const p = S.PM.get(mrn); return /start/i.test(ev) || !!p?.reqPost || /induction/i.test(p?.status || ""); };
     /* provider time off: their template slots go on those days, or become the covering provider's */
@@ -118,7 +123,7 @@
     savePlan: (m, p) => X.savePlan(m, p), saveFlag: (m, p) => X.saveFlag(m, p), placeHolds: (r, by) => X.placeHolds(r, by), setHolds: (ids, st, by) => X.setHolds(ids, st, by),
     readRow: (k, m) => X.readRow(k, m), saveRow: (k, m, p) => X.saveRow(k, m, p), savePt: (m, p) => X.savePt(m, p), addPays: r => X.addPays(r), saveRanks: (o, by) => X.saveRanks(o, by), saveException: (i, p) => X.saveException(i, p),
     setupTemplate: () => X.setupTemplate(), addGrid: (o, t) => X.addGrid(o, t), setCells: (a, r, c, v, m, s) => X.setCells(a, r, c, v, m, s),
-    saveTypes: (t, g) => X.saveTypes(t, g), replaceOther: r => X.replaceOther(r), replaceElse: r => X.replaceElse(r), saveSooner: (m, p) => X.saveSooner(m, p), saveProfile: (m, p) => X.saveProfile(m, p), saveXfer: (m, p) => X.saveXfer(m, p), addMpt: f => X.addMpt(f),
+    saveTypes: (t, g) => X.saveTypes(t, g), replaceOther: r => X.replaceOther(r), replaceElse: r => X.replaceElse(r), saveSooner: (m, p) => X.saveSooner(m, p), saveProfile: (m, p) => X.saveProfile(m, p), saveXfer: (m, p) => X.saveXfer(m, p), addMpt: f => X.addMpt(f), saveStart: (k, p) => X.saveStart(k, p),
     /* the pane reads first so the tab gets every hold anyone has placed, not just this screen's copy */
     fillPlanner: async () => { await refresh(true); return X.fillPlanner(S.A, S.holds, S.raw.apptUpdated); }
   };
@@ -244,10 +249,11 @@
   function badges() {
     const F = floor(), b = {};
     /* Today counts the visits in treatment whose providers still need asking */
-    if (F.askNow.length) b.today = { n: F.askNow.length };
+    const cmN = S.SL.filter(s => s.cmDue).length;
+    if (F.askNow.length || cmN) b.today = { n: F.askNow.length + cmN };
     /* Patients counts only what blocks the next infusion; the amber needs live under the Needs attention chip */
     const pn = S.P.filter(p => C.needs(p, S.x).some(y => y.bad)).length; if (pn) b.patients = { n: pn, bad: true };
-    const ca = S.CS.filter(c => c.state === "act").length; if (ca) b.consults = { n: ca };
+    const ca = S.CS.filter(c => c.state === "act" || c.state === "cm").length; if (ca) b.consults = { n: ca };
     if (S.gaps.length) b.patients = b.patients ? { n: b.patients.n + S.gaps.filter(g => !g.onMpt).length, bad: true } : { n: S.gaps.length };
     /* holds waiting to be booked; red once one is past HoldMin without being confirmed */
     /* and booked holds the uploaded report hasn't confirmed; red when a newer report doesn't have them */
@@ -298,11 +304,11 @@
     return `<div class="tools">${busy ? `<span class="busyl">Reading the workbook…</span>` : ""}${full}<button class="ibtn${busy ? " spin" : ""}" data-act="reload" title="Refresh: read the workbook again" aria-label="Refresh from the workbook"${busy ? " disabled" : ""}>${ICON.refresh}</button>
       <button class="ibtn" data-act="theme" title="${dark ? "Light mode" : "Dark mode"}" aria-label="${dark ? "Switch to light mode" : "Switch to dark mode"}" aria-pressed="${dark}">${dark ? ICON.sun : ICON.moon}</button></div>`; };
   const head = (title, sub, clock) => `<div class="top"><div><h1>${title}</h1>${sub ? `<p class="sub">${sub}</p>` : ""}</div><div class="topr">${tools()}${clock ? `<div class="clock"><div class="t">${hm()}</div><div class="d">${esc(C.fmtDay(todayS()))}</div></div>` : ""}</div></div>`;
-  const TABLE_WHAT = { tblIvkPlans: "index plans", tblIvkHolds: "holds", tblIvkOther: "the providers’ other visits", tblIvkFlags: "post-check flags", tblIvkPatient: "payment flags, Oakland, availability and the waitlist order", tblIvkPay: "payments and balance reminders", tblIvkExceptions: "provider time off and coverage", tblIvkProfile: "patient profiles (who pays, Sohar benefits)", tblIvkTransfers: "transfers to another clinic", tblIvkElsewhere: "visits at the other clinics (transfer and Oakland hand-offs)", tblIvkSooner: "the sooner waitlist" };
+  const TABLE_WHAT = { tblIvkPlans: "index plans", tblIvkHolds: "holds", tblIvkOther: "the providers’ other visits", tblIvkFlags: "post-check flags", tblIvkPatient: "payment flags, Oakland, availability and the waitlist order", tblIvkPay: "payments and balance reminders", tblIvkExceptions: "provider time off and coverage", tblIvkProfile: "patient profiles (who pays, Sohar benefits)", tblIvkTransfers: "transfers to another clinic", tblIvkElsewhere: "visits at the other clinics (transfer and Oakland hand-offs)", tblIvkSooner: "the sooner waitlist", tblIvkStarts: "the treatment start checklist" };
   function setupBanner() {
     const miss = S.raw.missing || [], noTabs = ["mpt", "appt"].filter(k => !S.raw.tables?.[k]);
     if (noTabs.length) return `<div class="msg warn"><b>This workbook has no ${noTabs.map(k => k === "mpt" ? "Master Patient Tracker" : "Appt List").join(" or ")} table.</b> Open the IVK Patient Tracker workbook, then the add-in.</div>`;
-    const NEW = ["tblIvkPlans", "tblIvkHolds", "tblIvkOther", "tblIvkFlags", "tblIvkPatient", "tblIvkPay", "tblIvkExceptions", "tblIvkProfile", "tblIvkTransfers", "tblIvkElsewhere", "tblIvkSooner"];
+    const NEW = ["tblIvkPlans", "tblIvkHolds", "tblIvkOther", "tblIvkFlags", "tblIvkPatient", "tblIvkPay", "tblIvkExceptions", "tblIvkProfile", "tblIvkTransfers", "tblIvkElsewhere", "tblIvkSooner", "tblIvkStarts"];
     if (miss.length && miss.every(n => NEW.includes(n))) return `<div class="msg warn"><b>This version needs ${miss.length === 1 ? "one more table" : `${miss.length} more tables`}.</b> Updating adds them to the hidden ${esc(X.DATA_SHEET)} tab (${miss.map(n => TABLE_WHAT[n]).join(", ")}); nothing else changes. <div class="actions"><button class="btn primary inl" data-act="setup">Update the workbook</button></div></div>`;
     if (miss.length) return `<div class="msg warn"><b>This workbook isn’t set up for the add-in yet.</b> Setting up adds a hidden IVK Tracker Data tab for check-ins and Teams settings; nothing else changes. <div class="actions"><button class="btn primary inl" data-act="setup">Set up this workbook</button></div></div>`;
     return "";
@@ -318,13 +324,33 @@
         ${listHTML("In treatment", `${F.tx.length} now`, F.tx, "Nobody is in treatment.")}
         ${listHTML("Checked in", `${F.inn.length} today`, F.inn, "Nobody is checked in.")}
         ${listHTML("Still to come", F.coming.length ? `${F.coming.length} more today` : "", F.coming, "Nobody else is booked today.")}
-        ${doneHTML(F)}${gapsHTML(6)}</div>
+        ${startsHTML()}${doneHTML(F)}${gapsHTML(6)}</div>
       <div class="tside">${visitCardHTML(visitBy(S.sel), F)}</div></div>`;
   }
   const planErrHTML = () => S.planErr ? `<div class="msg warn">${esc(S.planErr)}</div>` : "";
   /* patients on the appointment list without a profile (treatment starts first): the tech makes one before they come */
+  /* the start checklist: a newly booked start needs a profile; on the day, Case Management in NextGen goes to CmStage.
+     Today's starts always show; the rest only while something is still to do. */
+  const cmStage = () => C.txt(S.cfg.CmStage) || C.DEFAULTS.CmStage;
+  function startsHTML() {
+    const L = S.SL; if (!L.length) return "";
+    const box = (on, attrs, label, small, dis) => `<label class="opt"><input type="checkbox" ${attrs}${on ? " checked" : ""}${dis ? " disabled" : ""}> ${label}${small ? `<small>${small}</small>` : ""}</label>`;
+    const rows = L.map(s => { const m = esc(s.mrn), k = esc(s.key), when = s.today ? "today" : dshort(s.date), cmLater = s.date > todayS();
+      const prof = box(s.profDone, `data-prof="${m}"`, "Profile created", s.profDone ? (S.PM.has(s.mrn) ? "On the Master Patient Tracker" : "Profile saved") : "Opens the profile form: who pays, Sohar benefits", s.profDone);
+      const cmWhy = s.cmDone ? (s.cmAt != null ? `Marked ${C.fmtD(s.cmAt)}` : `Case Management shows ${esc(s.c?.stage || cmStage())}`)
+        : cmLater ? "On the day of the start" : s.noshow ? "No-show: nothing to update" : s.today ? "Once the start is kept" : `Start kept ${C.fmtD(s.date)}`;
+      const cm = box(s.cmDone, `data-cm="${k}" data-m="${m}"`, `Case Management updated in NextGen to “${esc(cmStage())}”`, cmWhy,
+        cmLater || (!s.cmDone && s.noshow) || (s.cmDone && s.cmAt == null) || !(S.stOn || s.c));
+      return `<div class="nrow startck"><b>${esc(s.code || "—")}</b>
+        <span class="i"><span class="ktab st"></span>Treatment start ${when} ${C.fmtT(s.a.time)} · ${esc(C.provName(s.a.provider) || "")} · MRN ${m}${s.kept ? " · kept" : ""}</span>
+        <div class="ck">${prof}${cm}</div></div>`; }).join("");
+    const open = L.filter(s => s.open).length;
+    return `<section class="card list"><div class="lh"><h2>Treatment starts</h2><span>${open ? `${plural(open, "start")} with something to do` : "All done"}</span></div>${rows}
+      ${S.stOn ? "" : `<p class="note warn">Ticking Case Management needs the newer table. Use <b>Update the workbook</b> in Settings.</p>`}</section>`;
+  }
   function gapsHTML(max) {
-    const G = S.gaps; if (!G.length) return "";
+    /* new patients with a treatment start are on the start checklist above */
+    const G = S.gaps.filter(g => !S.SL.some(s => s.mrn === g.mrn && s.profDue)); if (!G.length) return "";
     const rows = G.slice(0, max).map(g => `<div class="nrow"><b>${esc(g.code || "—")}</b>
       <span class="i">${g.start ? `<span class="ktab st"></span>Treatment start` : "Visit"} ${dshort(g.first.date)} ${C.fmtT(g.first.time)} · ${esc(C.provName(g.first.provider) || "")} · MRN ${esc(g.mrn)}</span>
       <button class="btn line sm" data-act="profile" data-m="${esc(g.mrn)}">Create profile</button></div>`).join("");
@@ -414,6 +440,7 @@
   function visitCardHTML(v) {
     if (!v) return `<aside class="card detail"><div class="name">No visit picked</div><p class="body">${S.list.length ? "Pick a row or a chair to see the visit." : "Nobody is on today’s IVK list. Upload a fresh appointment list in Settings if that looks wrong."}</p></aside>`;
     const vs = visitState(v), k = esc(v.key), c = C.code(v), p = v.p, pc = hasPc(v), T = todayS();
+    const sv = /start/i.test(v.a.event || "") ? S.SL.find(s => s.key === C.startKey(v.a.date, v.a.mrn)) || null : null;
     const where = ({ in: "Checked in", tx: "In treatment", done: "Checked out", noshow: "No-show", gone: "Not coming" })[v.ph] || "";
     const loc = where + (S.plan && v.st.chair && (v.ph === "in" || v.ph === "tx") ? ` · ${chairTxt(v.st.chair)}` : "");
     const meta = [`${C.fmtT(v.a.time)} ${kindTxt(v).toLowerCase()}`, C.provName(v.a.provider), `MRN ${v.a.mrn}`].filter(Boolean).join(" · ");
@@ -430,7 +457,9 @@
       p && (v.ask.any || v.st.asked != null) ? (v.st.asked != null ? st("done", "Asked the providers", ask ? esc(routeTo("protocol")) : "Marked asked", C.fmtT(v.st.asked))
         : st(v.ph === "tx" ? "soon" : "next", "Ask the providers", v.ask.proto ? `Protocol not confirmed since ${p.protoAt != null ? C.fmtD(p.protoAt) : "it was set"}` : v.ask.thru != null ? `Booked through ${C.fmtD(v.ask.thru)}` : "Nothing booked after today", "")) : "",
       v.st.out != null ? st("done", "Checked out", v.st.booked === "yes" ? "Next visit booked" : v.st.booked === "no" ? "No next visit needed" : v.ask.book ? "Next visit not booked yet" : "Next visit on the list", C.fmtT(v.st.out))
-        : st(v.ph === "tx" && !C.askDue(v) ? "now" : "next", "Check out", "Next visit, protocol, payment", "")
+        : st(v.ph === "tx" && !C.askDue(v) ? "now" : "next", "Check out", "Next visit, protocol, payment", ""),
+      sv ? (sv.cmDone ? st("done", "Case Management updated", `In NextGen, ${esc(cmStage())}`, sv.cmAt != null ? C.fmtD(sv.cmAt) : "")
+        : st(v.ph === "done" ? "soon" : "next", "Update Case Management", `In NextGen, to “${esc(cmStage())}”, once the start is kept`, "")) : ""
     ].join("");
     /* secondary steps as quiet buttons under the primary; corrections and lookups underneath them */
     const sec = [], quiet = [];
@@ -440,6 +469,7 @@
     if (v.ph === "in") sec.push(["remind", `Remind ${routeTo("arrival")}`]);
     if (v.ph === "tx" && S.plan) sec.push(["seat", v.st.chair ? "Move to another chair" : "Pick a chair"]);
     if (p && ix?.complete) sec.push(["idxDone", "Move to Ongoing"]);
+    if (sv && sv.cmDue && v.ph !== "booked") sec.push(["cmDone", "Case Management updated"]);
     const oak = p ? C.oakState(p, pt, S.A, T, S.cfg) : null;
     if (oak && oak.task && v.ph !== "booked") sec.push(["oakTask", "Mark OAK tasked"]);
     const xs = p ? C.xferState(S.XF.get(p.mrn), S.A, T, S.x.E) : null;
@@ -1135,10 +1165,11 @@
   /* Waitlist: everyone waiting for a treatment start, in line by consult date or the order set here; the Consults tab beneath it */
   const WAIT_TXT = { ready: "Ready to start", referral: "Waiting on the referral", auth: "Waiting on the authorization" };
   function consultsHTML() {
-    const L = S.CS.slice().sort((a, b) => ({ act: 0, wait: 1, done: 2, closed: 3 }[a.state] - { act: 0, wait: 1, done: 2, closed: 3 }[b.state]) || (b.days ?? 0) - (a.days ?? 0));
+    const ORD = { cm: 0, act: 1, wait: 2, done: 3, started: 4, closed: 5 };
+    const L = S.CS.slice().sort((a, b) => ORD[a.state] - ORD[b.state] || (b.days ?? 0) - (a.days ?? 0));
     const n = s => L.filter(c => c.state === s).length, W = S.WL, ok = !!S.raw.tables?.own?.tblIvkPatient, planned = new Set(ipList().filter(o => o.pl || o.holds.length).map(o => o.mrn));
     const sub = [plural(W.list.length, "patient") + " on the waitlist", W.next ? `${W.next.code} starts next` : W.list.length ? "nobody ready to start yet" : "",
-      n("done") ? `${n("done")} scheduled` : ""].filter(Boolean).join(", ");
+      n("done") ? `${n("done")} scheduled` : "", n("cm") ? `${plural(n("cm"), "start")} to update in Case Management` : ""].filter(Boolean).join(", ");
     if (!S.wSel || !W.list.find(w => w.mrn === S.wSel)) S.wSel = W.list[0]?.mrn || null;
     const wrow = (w, i) => { const c = w.c, why = w.next ? `<span class="ok">Starts next</span>` : w.on === "referral" ? `<span class="f">Referral: keeps their place</span>`
         : w.on === "auth" ? `<span class="f">${w.appeal ? "Appeal: the next ready patient starts first" : "Authorization pending"}</span>` : w.ahead ? "" : "Ready";
@@ -1148,7 +1179,7 @@
         <span class="mv"><button class="btn mute sm" data-act="wMove" data-m="${esc(w.mrn)}" data-v="-1" aria-label="Move ${esc(w.code)} up"${i === 0 || !ok ? " disabled" : ""}>↑</button><button class="btn mute sm" data-act="wMove" data-m="${esc(w.mrn)}" data-v="1" aria-label="Move ${esc(w.code)} down"${i === W.list.length - 1 || !ok ? " disabled" : ""}>↓</button></span></div>`; };
     const cur = W.list.find(w => w.mrn === S.wSel);
     const row = c => `<div class="crow" role="button" tabindex="0" data-act="editConsult" data-m="${esc(c.mrn)}"${c.mrn ? "" : ' style="cursor:default"'}><span class="p">${esc(c.code || "—")}</span><span class="proto">${c.consult != null ? `Consult ${C.fmtD(c.consult)}` : "No consult date"}<br>${esc(c.provider || "")}</span><span class="thru">${esc(c.stage || "No stage")}${c.days != null ? `<br><span class="muted small">${plural(c.days, "day")} in stage</span>` : ""}</span>
-      <span class="flags">${c.flag ? `<span class="f">${esc(c.flag)}</span>` : c.state === "done" ? `<span class="ok">Scheduled</span>` : c.state === "closed" ? "Not proceeding" : "Waiting"}</span></div>`;
+      <span class="flags">${c.flag ? `<span class="f">${esc(c.flag)}</span>` : c.state === "started" ? `<span class="ok">Started ${C.fmtD(c.kept)}</span>` : c.state === "done" ? `<span class="ok">Scheduled</span>` : c.state === "closed" ? "Not proceeding" : "Waiting"}${c.state === "cm" ? ` <button class="btn ghost sm" data-act="cmDone" data-m="${esc(c.mrn)}">Case Management updated</button>` : ""}</span></div>`;
     return `${setupBanner()}${head("Waitlist", sub, false)}${accessChips()}${!S.raw.tables?.consults ? `<div class="msg warn">There’s no table on a Consults tab in this workbook.</div>` : ""}
       <div class="cols"><section class="card plist wl"><div class="chead"><span>#</span><span>Patient</span><span>Consult</span><span>Waiting on</span><span></span><span></span></div>
         ${W.list.map(wrow).join("") || `<p class="empty" style="padding:10px 14px">Nobody is waiting for a treatment start.</p>`}
@@ -1758,6 +1789,7 @@
       const rows = C.dueParts(p).filter(([part]) => !C.payOf(S.pays, k, part)).map(([part, n]) => payRow(p, { Date: C.isoOf(d), Key: C.partKey(k, part), Kind: kind, Amount: n, Note: `${PART_WORD[part]}, confirmed later` }));
       if (!rows.length) return;
       await write("Saving…", () => Store.addPays(rows), `${dshort(d)}: ${kind === "collected" ? "collected" : "not collected, added to the balance"}.`); },
+    cmDone: e => cmSet(e.dataset.m, e.dataset.s || "", true),
     oakTask: async e => { const p = S.PM.get(e.dataset.m); if (!p) return; await write("Saving…", () => Store.savePt(p.mrn, ptPatch(p, { OakTasked: C.isoOf(todayS()), Oakland: "TRUE" })), `${p.code}: OAK tasked to book maintenance, ${C.fmtD(todayS())}.`); },
     oakUntask: async e => { const p = S.PM.get(e.dataset.m); if (!p) return; await write("Saving…", () => Store.savePt(p.mrn, ptPatch(p, { OakTasked: "" }))); },
     avail: e => {
@@ -1855,6 +1887,20 @@
       await Store.savePt(w.mrn, ptPatch({ code: w.code }, { Appeal: t.checked ? "TRUE" : "", WaitingOn: "auth" }));
       if (t.checked) { const L = S.WL.list, order = C.waitMove(L, w.mrn, "appeal"); await Store.saveRanks(order.map(x => ({ mrn: x, code: L.find(y => y.mrn === x).code })), S.name); }
     }, t.checked ? `${w.code} moved behind the next ready patient.` : null);
+  }
+  /* the start checklist: Case Management updated in NextGen (or undone). The start is found by key, else the patient's open one,
+     else their kept start from the Consults tab. Saved on tblIvkStarts, and as CM Updated on the Consults row when there is one. */
+  async function cmSet(mrn, key, on) {
+    const T = todayS(), c = S.CS.find(x => x.mrn === mrn) || null;
+    const s = (key && S.SL.find(x => x.key === key)) || S.SL.find(x => x.mrn === mrn && (on ? x.cmDue : x.cmDone)) || null;
+    const date = s ? s.date : c?.kept ?? null; if (date == null) { render(); return toast("No treatment start found for that patient.", true); }
+    const k = s ? s.key : C.startKey(date, mrn), code = s?.code || c?.code || S.PM.get(mrn)?.code || "";
+    if (!S.stOn && !c) { render(); return toast("Ticking Case Management needs the newer table. Use Update the workbook in Settings.", true); }
+    const ok = await write("Saving…", async () => {
+      if (S.stOn) await Store.saveStart(k, { Date: C.isoOf(date), MRN: mrn, Patient: code, CmUpdated: on ? C.isoOf(T) : "", By: S.name, Updated: new Date().toISOString() });
+      return c ? Store.saveRow("consults", mrn, { "CM Updated": on ? { v: T, date: true } : { v: "" } }) : true;
+    });
+    if (ok) toast(on ? `${code}: Case Management marked updated (${cmStage()}), ${C.fmtD(T)}.` : `${code}: Case Management tick taken off.`);
   }
   async function ptFlag(t) {
     const p = S.PM.get(t.dataset.m); if (!p) return; const k = t.dataset.pt, on = t.checked;
@@ -2342,6 +2388,8 @@
     else if (t.id === "ipFor") { S.ipFor = t.value; render(); }
     else if (t.id === "hdWho" && S.modal === "hold") { S.m.who = t.value; render(); }
     else if (S.modal === "profile" && t.id === "pfStatus") keepProfile();
+    else if (t.dataset && t.dataset.cm != null) cmSet(t.dataset.m, t.dataset.cm, t.checked);
+    else if (t.dataset && t.dataset.prof != null) { t.checked = false; ACT.profile({ dataset: { m: t.dataset.prof } }); }
     else if (t.id === "darkOn") { S.theme = t.checked ? "dark" : "light"; LS.set("ivkTheme", S.theme); document.documentElement.dataset.theme = S.theme; }
     else if (t.id === "mFreq" && S.modal === "ask") { S.m.freq = t.value; S.m.text = C.askText(S.PM.get(S.m.mrn), S.m.ask, S.tpl, t.value); $("#mText").value = S.m.text; }
     else if (t.id === "mFreq" && (S.modal === "checkout" || S.modal === "proto")) { S.m.freq = t.value; S.m.proto = $("#mProto")?.checked ?? S.m.proto; render(); }

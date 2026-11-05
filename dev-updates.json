@@ -1,6 +1,14 @@
 {
   "updates": [
     {
+      "id": "2026-11-05-start-checklist",
+      "date": "2026-11-05",
+      "bullets": [
+        "New: Today has a Treatment starts checklist. When a new patient is booked for a start, tick Profile created to open their profile. On the day of the start, tick Case Management updated once you've moved them to 6. Started in NextGen.",
+        "New: The Consults tab now has Kept Start, CM Updated and CM Flag columns. A patient whose start was kept is taken off the waitlist and flagged until Case Management shows 6. Started."
+      ]
+    },
+    {
       "id": "2026-11-04-desk-payments-transfers",
       "date": "2026-11-04",
       "bullets": [
