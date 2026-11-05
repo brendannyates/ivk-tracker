@@ -20,6 +20,7 @@
      tblIvkElsewhere  EY1  MRN | Patient | Date | Time | Provider | Event | Status | Location   (IVK visits at other clinics, wider report)
      tblIvkSooner     FH1  MRN | Patient | Booked | BookedTime | Provider | From | Days | SameProv | Status | Note | Seen | By | Updated
                           (the sooner waitlist: patients who would take an earlier visit)
+     tblIvkStarts     FV1  Key | Date | MRN | Patient | CmUpdated | By | Updated   (the start checklist: Case Management updated in NextGen)
    (AK1 held tblIvkSlots, the first template; it is no longer read.)
    Text cells only on that sheet ("1:22 PM" stays text). The chair map is a document setting (a map file can be larger than a cell holds).
    Two visible tabs hold the provider templates, in the Clinic Template Tool's format so that tool can read them (template.js):
@@ -54,7 +55,8 @@
     { name: "tblIvkProfile", anchor: "DP", columns: C.PROFILE_COLS, rows: [C.PROFILE_COLS.map(() => "")] },
     { name: "tblIvkTransfers", anchor: "EO", columns: C.XFER_COLS, rows: [C.XFER_COLS.map(() => "")] },
     { name: "tblIvkElsewhere", anchor: "EY", columns: C.ELSE_COLS, rows: [C.ELSE_COLS.map(() => "")] },
-    { name: "tblIvkSooner", anchor: "FH", columns: C.SOONER_COLS, rows: [C.SOONER_COLS.map(() => "")] }
+    { name: "tblIvkSooner", anchor: "FH", columns: C.SOONER_COLS, rows: [C.SOONER_COLS.map(() => "")] },
+    { name: "tblIvkStarts", anchor: "FV", columns: C.START_COLS, rows: [C.START_COLS.map(() => "")] }
   ];
   const BIG = ["tblIvkVisits", "tblIvkLog", "tblIvkHolds", "tblIvkOther", "tblIvkPay", "tblIvkElsewhere"];
   const IP_RANGE = "A1:AZ60";   // the Index Planner tab: 9 weeks of Mon-Fri across, half hours down, the slot list below
@@ -146,7 +148,7 @@
         t.getDataBodyRange().values = s.rows.map(r => r.map(String));
         made.push(s.name);
       }
-      if (made.length) { ws.getRange("A:FT").format.autofitColumns(); ws.visibility = Excel.SheetVisibility.hidden; }
+      if (made.length) { ws.getRange("A:GB").format.autofitColumns(); ws.visibility = Excel.SheetVisibility.hidden; }
       await ctx.sync();
       return { made, blocked };
     });
@@ -540,6 +542,16 @@
       b.getRow(i).values = [row]; await ctx.sync(); return true;
     });
   }
+  /* the start checklist, one row per treatment start by Key (start day|MRN) */
+  async function saveStart(key, patch) {
+    return Excel.run(async ctx => {
+      const { t, b, cols } = await openTable(ctx, "tblIvkStarts"), cK = cols.indexOf("key"), i = b.values.findIndex(r => String(r[cK]) === key);
+      if (i < 0) { addRows(t, cols, b, [Object.assign({ Key: key }, patch)]); await ctx.sync(); return true; }
+      const row = b.values[i].map(v => v == null ? "" : String(v));
+      for (const [k, v] of Object.entries(patch)) { const c = cols.indexOf(C.norm(k)); if (c >= 0) row[c] = v == null ? "" : String(v); }
+      b.getRow(i).values = [row]; await ctx.sync(); return true;
+    });
+  }
   async function upsertMrn(table, mrn, patch) {
     return Excel.run(async ctx => {
       const { t, b, cols } = await openTable(ctx, table), cM = cols.indexOf("mrn");
@@ -607,5 +619,5 @@
 
   return { DATA_SHEET, SHEETS, PLANNER, TPL_SHEET, TYPES_SHEET, SPEC, load, setup, saveVisit, confirmProtocol, replaceAppts, saveKeyed, saveRoutes, appendLog, openRow,
     setupTemplate, addGrid, setCells, saveTypes, replaceOther, replaceElse, saveSooner, savePlan, saveFlag, placeHolds, setHolds, fillPlanner, getDoc, setDoc, refreshDoc,
-    readRow, saveRow, savePt, addPays, saveRanks, saveException, saveProfile, saveXfer, addMpt };
+    readRow, saveRow, savePt, addPays, saveRanks, saveException, saveProfile, saveXfer, addMpt, saveStart };
 });

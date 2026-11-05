@@ -502,6 +502,10 @@ button.avrow:hover{background:var(--surface-3)}button.avrow + button.avrow{box-s
 .list .empty{margin:4px 0 12px;padding:0}
 .nrow{display:grid;grid-template-columns:80px minmax(0,1fr) auto;gap:12px;align-items:center;min-height:56px;border-top:1px solid var(--surface-2);margin-top:6px}
 .nrow b{font-weight:500}.nrow .i{font-size:13.5px;color:var(--muted)}
+/* the start checklist: the two items under the patient line */
+.nrow.startck{grid-template-columns:80px minmax(0,1fr);padding:8px 0 10px}
+.nrow.startck .ck{grid-column:2;display:grid;gap:0}
+.nrow.startck .ck .opt{margin-top:6px;font-size:13.5px}
 .list .note{margin:6px 0 10px}
 .detail .dh .btn.mute{color:var(--muted);white-space:nowrap}
 .detail .tags{margin-top:12px}

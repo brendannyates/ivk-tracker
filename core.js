@@ -22,7 +22,10 @@
        Blank = any location naming the clinic. ElsewhereAt: when the other clinics' visits were last uploaded */
     Locations: "", ElsewhereAt: "",
     /* the start email: the clinic's address for "your first treatment at", and who is copied on every one */
-    ClinicAddress: "45 Castro Street Suite 318, San Francisco, CA 94114", StartCc: "helpcastro@mindfulhealthsolutions.com", StartBcc: "amreed@mymhs.com" };
+    ClinicAddress: "45 Castro Street Suite 318, San Francisco, CA 94114", StartCc: "helpcastro@mindfulhealthsolutions.com", StartBcc: "amreed@mymhs.com",
+    /* the start checklist: the Case Management stage a kept start moves the patient to in NextGen, and how many days a kept start
+       stays on the list while Case Management isn't marked updated */
+    CmStage: "6. Started", StartBackDays: 14 };
   const ACTIVE = ["ongoing", "induction"];
   const DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
   const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
@@ -250,6 +253,9 @@
     /* a treatment start without the rest of index booked behind it */
     const sv = A ? nextStart(p, x.appts, T) : null, short = sv ? indexShort(p, x.appts, sv, c) : null;
     if (short) add("idxbook", `Index not fully booked: ${short.booked} of ${short.need} visits after the ${fmtD(sv.date)} start`, ["Plan index visits", "pvPlan"]);
+    /* the start checklist: Case Management in NextGen on the day of the start (x.SL, from startList) */
+    const cms = (x.SL || []).find(s => s.mrn === p.mrn && s.cmDue);
+    if (cms) add("cm", cms.today ? `Treatment start today: update Case Management to ${c.CmStage || DEFAULTS.CmStage}` : `Start kept ${fmtD(cms.date)}: update Case Management to ${c.CmStage || DEFAULTS.CmStage}`, ["Case Management updated", "cmDone"]);
     /* a transfer to another clinic: confirmed at the last visit here; visits booked here after it need moving */
     const xs = xferState(x.XF ? x.XF.get(p.mrn) : null, x.appts, T, x.E);
     if (xs && xs.after.length) add("xferafter", `Transfer to ${xs.to} ${fmtD(xs.date)}: ${xs.after.length} visit${xs.after.length === 1 ? "" : "s"} still booked here after it`, ["Transfer", "xfer"]);
@@ -279,19 +285,87 @@
 
   /* ---------- Consults ---------- */
   /* Consults rows: Location | Referral Date | Start Date | Patient | Patient MRN | Consult Date | Provider | Patient Journey Stage |
-     Individual PJ Stage | Days in current Stage | Case Management Latest Status Note */
+     Individual PJ Stage | Days in current Stage | Case Management Latest Status Note | Kept Start | CM Updated | CM Flag
+     (the last three: the kept treatment start since the consult, a formula on the Appt List; the day Case Management was updated
+     in NextGen; and the formula's flag while it wasn't) */
   function consults(values, today) {
     const { rows } = byHeader(values);
     return rows.filter(x => txt(x.get("patient")) || txt(x.get("patientmrn"))).map(x => {
       const g = x.get, stage = txt(g("individualpjstage")) || txt(g("patientjourneystage")), days = num(g("daysincurrentstage"));
       const c = { i: x.i, loc: txt(g("location")), code: lasfir(g("patient")), mrn: mrnKey(g("patientmrn")), ref: toSerial(g("referraldate")),
-        start: toSerial(g("startdate")), consult: toSerial(g("consultdate")), provider: provName(g("provider")), stage, days };
+        start: toSerial(g("startdate")), consult: toSerial(g("consultdate")), provider: provName(g("provider")), stage, days,
+        keptSheet: toSerial(g("keptstart")), cmAt: toSerial(g("cmupdated")) };
       const st = stage.toLowerCase();
       c.state = /not proceeding/.test(st) ? "closed" : /scheduled/.test(st) && !/not yet scheduled/.test(st) ? "done"
         : /not yet scheduled/.test(st) ? "act" : /unclear/.test(st) ? "act" : "wait";
       c.flag = c.state === "act" ? (/unclear/.test(st) ? "Ask the provider whether to refer" : "Book the treatment start") : "";
       return c;
     });
+  }
+
+  /* ---------- treatment starts: kept, Case Management, the start checklist (tblIvkStarts) ---------- */
+  /* Case Management's stage once a start is kept: "6. Started" (the Individual PJ Stage; the combined "5. ... / 6. Started" isn't) */
+  const isStartedStage = s => /^\s*6\b/.test(txt(s));
+  const isStartEv = e => /start/i.test(txt(e));
+  const keptSt = a => /\b(kept|completed?|checked ?out)\b/i.test(txt(a.status));
+  /* the latest kept treatment start on the appointment list on or after a day (from null = any) */
+  function keptStartOf(mrn, A, from) {
+    const L = A.filter(a => a.mrn === mrn && isStartEv(a.event) && keptSt(a) && (from == null || a.date >= from)).sort((x, y) => x.date - y.date);
+    return L.length ? L[L.length - 1] : null;
+  }
+  /* Key | Date | MRN | Patient | CmUpdated | By | Updated. One row per treatment start (start day|MRN, so a new time keeps the tick):
+     the day the technician updated Case Management in NextGen for it. */
+  const START_COLS = ["Key", "Date", "MRN", "Patient", "CmUpdated", "By", "Updated"];
+  const startKey = (date, mrn) => `${isoOf(date)}|${mrnKey(mrn)}`;
+  function startRows(values) {
+    const m = new Map();
+    byHeader(values).rows.forEach(x => { const g = x.get, mrn = mrnKey(g("mrn")), date = toSerial(g("date")); if (!mrn || date == null) return;
+      m.set(startKey(date, mrn), { key: startKey(date, mrn), date, mrn, code: txt(g("patient")), cm: toSerial(g("cmupdated")), by: txt(g("by")) }); });
+    return m;
+  }
+  /* Consults rows against the appointment list: kept (the start kept since the consult, else the tab's Kept Start), and once kept the
+     row leaves the waitlist: state "cm" while Case Management still needs updating (not at stage 6, no CM Updated day on the tab or
+     the checklist), else "started". Changes the rows in place. */
+  function consultStarts(CS, A, ST, cfg) {
+    const stage = txt((cfg || {}).CmStage) || DEFAULTS.CmStage;
+    for (const c of CS) {
+      if (!c.mrn || c.state === "closed") continue;
+      const a = keptStartOf(c.mrn, A, c.consult), kept = a ? Math.max(a.date, c.keptSheet ?? 0) : c.keptSheet;
+      c.kept = kept ?? null; if (c.kept == null) continue;
+      const rec = ST ? ST.get(startKey(c.kept, c.mrn)) : null;
+      c.cmDone = isStartedStage(c.stage) || c.cmAt != null || (rec?.cm != null);
+      c.cmAt = c.cmAt ?? rec?.cm ?? null;
+      c.state = c.cmDone ? "started" : "cm";
+      c.flag = c.cmDone ? "" : `Started ${fmtD(c.kept)}: update Case Management to ${stage}`;
+    }
+    return CS;
+  }
+  /* The start checklist. o = { today, appts, PM (tracker), PF (profiles), ST (tblIvkStarts), CS (Consults), visits (desk Map), cfg }.
+     Every treatment start from StartBackDays ago to `ahead` days out, with two items:
+       profile  a newly booked start: the patient needs a profile (done once they're on the tracker or have a profile row)
+       cm       on the day of the start (and after it, once kept): update Case Management in NextGen to CmStage
+     cmDue: the day has come, Case Management isn't marked updated (or at stage 6 on the Consults tab), and a past start was kept.
+     open: something still to do. Today's starts are always listed; others only while open. */
+  function startList(o, ahead = 28) {
+    const T = o.today, back = +o.cfg?.StartBackDays || DEFAULTS.StartBackDays, by = new Map();
+    for (const a of o.appts) {
+      if (!isStartEv(a.event) || isCancelled(a) || a.date < T - back || a.date > T + ahead) continue;
+      const k = startKey(a.date, a.mrn), was = by.get(k); if (!was || (a.time ?? 0) < (was.time ?? 0)) by.set(k, a);
+    }
+    const out = [];
+    for (const [key, a] of by) {
+      const rec = o.ST ? o.ST.get(key) || null : null, c = (o.CS || []).find(x => x.mrn === a.mrn) || null;
+      const out1 = o.visits ? o.visits.get(visitKey(a.date, a.mrn, a.time)) : null, noshow = /no ?show/i.test(a.status);
+      const kept = keptSt(a) || (out1 && out1.out != null);
+      const profDone = !!(o.PM && o.PM.has(a.mrn)) || !!(o.PF && o.PF.has(a.mrn));
+      const cmDone = rec?.cm != null || (c && (isStartedStage(c.stage) || (c.cmAt != null && c.cmAt >= a.date)));
+      const cmDue = a.date <= T && !cmDone && !noshow && (a.date === T || kept);
+      const s = { key, a, mrn: a.mrn, code: a.code || o.PM?.get(a.mrn)?.code || "", date: a.date, kept: !!kept, noshow, rec, c,
+        profDone, profDue: !profDone && a.date >= T, cmDone: !!cmDone, cmDue, cmAt: rec?.cm ?? c?.cmAt ?? null, today: a.date === T };
+      s.open = s.profDue || s.cmDue;
+      if (s.open || s.today) out.push(s);
+    }
+    return out.sort((x, y) => x.date - y.date || (x.a.time ?? 0) - (y.a.time ?? 0));
   }
 
   /* ---------- Teams messages ---------- */
@@ -1041,7 +1115,7 @@
     fullPlan, eligibleStarts, memoX, indexState, indexShort, nextStart, XFER_COLS, xferRows, xferState, elsewhere, visitCounts, SOONER_COLS, soonerRows, soonerKey, soonerMatch, openSlots, freedTimes, ELSE_COLS, elseRows, sameLoc, isOurs, bookedAt, prefCols, indexN: cfg => Math.max(1, Math.round(+cfg.IndexPerWeek * +cfg.IndexWeeks)),
     treatments, txNo, isOak, oakState, WAIT_ON, waitlist, waitMove, provFull, fullName, firstName, scheduleOf, START_TPL, longWhen,
     lasfir, provName, mrnKey, pickRow, eventShort, freqDays, byHeader, patients, appts, isCancelled, visitKey, visitRows, phase, isActive, futureOf, asks,
-    today, code, chairState, chairStatus, askDue, chairList, chairCount, needs, loud, consults, fill, protoWords, arrivalText, askText,
+    today, code, chairState, chairStatus, askDue, chairList, chairCount, needs, loud, consults, isStartedStage, keptStartOf, START_COLS, startKey, startRows, consultStarts, startList, fill, protoWords, arrivalText, askText,
     parseReport, shrink, week, DAYS5, dayNum, sameProv, OTHER_COLS, otherRows, isIvkVisit, FLAG_COLS, flagRows, PLAN_COLS, planRows, HOLD_COLS, holdRows,
     onList, holding, holdState, holdConfirm, EX_COLS, exRows, exFor, withExceptions, exClashes, daySlots, postCheckSlots, availOf, availText, fits, planIndex, altSlots, capacity, plannerLayout, plannerGrid };
 });
