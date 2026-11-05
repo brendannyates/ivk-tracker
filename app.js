@@ -2441,9 +2441,11 @@
     admLock: () => { S.adminUntil = 0; render(); },
     rmUser: e => { const n = e.dataset.v; if (!adminOn() || !n) return;
       openModal("confirm", { title: `Take ${n} off the list?`, body: "They won’t be offered when someone picks who’s at the desk. Their name stays on what they already saved.", yes: "Remove",
-        run: async () => { await Store.saveUser(n, null, true); if (C.userKey(n) === C.userKey(S.name)) { await Store.setWho(""); S.name = ""; }
-          /* the last person with full screen on is gone: the workbook stops opening the tracker by itself */
-          if (C.autoFullOf((S.users || []).find(u => C.userKey(u.name) === C.userKey(n)))) await Store.setDoc(C.AUTO_SHOW, C.autoAny(S.users, n, false) ? true : null); } }); },
+        run: async () => {
+          /* read before removing (the save refreshes the list): if they had full screen on and nobody else does, the workbook stops opening the tracker by itself */
+          const had = C.autoFullOf((S.users || []).find(u => C.userKey(u.name) === C.userKey(n))), any = C.autoAny(S.users, n, false);
+          await Store.saveUser(n, null, true); if (C.userKey(n) === C.userKey(S.name)) { await Store.setWho(""); S.name = ""; }
+          if (had) await Store.setDoc(C.AUTO_SHOW, any ? true : null); } }); },
     async sigSave() {
       if (!S.name) return; const t = $("#sigText")?.value || "", cur = sigOf(), same = C.txt(t) === C.withSignature("", cur, false).trim();
       await saveSig(same ? cur : C.sigFromFile(t, false));
