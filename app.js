@@ -75,6 +75,7 @@
     S.tpl = Object.assign({}, C.TEMPLATES, C.START_TPL); for (const [k, v] of Object.entries(kv(r.tblIvkTemplates))) if (C.txt(v)) S.tpl[k] = C.txt(v);
     S.routes = {}; C.byHeader(r.tblIvkRoutes).rows.forEach(x => { const ev = C.txt(x.get("event")).toLowerCase(); if (ev) S.routes[ev] = { to: C.txt(x.get("sendsto")), url: C.txt(x.get("flowurl")), on: N.truthy(x.get("enabled")) }; });
     S.log = C.byHeader(r.tblIvkLog).rows.map(x => ({ ev: C.txt(x.get("event")), code: C.txt(x.get("patient")), chair: C.txt(x.get("chair")), msg: C.txt(x.get("message")), at: C.txt(x.get("sentat")), by: C.txt(x.get("sentby")), result: C.txt(x.get("result")) })).filter(l => l.ev);
+    S.tags = C.tagsOf(cfg); S.replies = C.replyRows(r.tblIvkReplies);
     S.P = C.patients(r.mpt); S.PM = new Map(S.P.map(p => [p.mrn, p]));
     S.A = C.appts(r.appt);
     /* a tracker row whose Patient Name isn't a code takes the code from the Appt List's Name column, never the name itself */
@@ -164,7 +165,7 @@
   /* ---------- writes (pane does them; full screen asks the pane) ---------- */
   const Local = {
     saveVisit: (k, b, p, g) => X.saveVisit(k, b, p, g), confirmProtocol: (m, f, s) => X.confirmProtocol(m, f, s), replaceAppts: (r, s) => X.replaceAppts(r, s),
-    saveKeyed: (t, p) => X.saveKeyed(t, p), saveRoutes: r => X.saveRoutes(r), appendLog: r => X.appendLog(r), openRow: (k, m) => X.openRow(k, m),
+    saveKeyed: (t, p) => X.saveKeyed(t, p), saveRoutes: r => X.saveRoutes(r), appendLog: r => X.appendLog(r), addReply: o => X.addReply(o), openRow: (k, m) => X.openRow(k, m),
     setup: () => X.setup(), setDoc: (k, v) => X.setDoc(k, v),
     savePlan: (m, p) => X.savePlan(m, p), saveFlag: (m, p) => X.saveFlag(m, p), placeHolds: (r, by) => X.placeHolds(r, by), setHolds: (ids, st, by) => X.setHolds(ids, st, by),
     readRow: (k, m) => X.readRow(k, m), saveRow: (k, m, p) => X.saveRow(k, m, p), savePt: (m, p) => X.savePt(m, p), addPays: r => X.addPays(r), saveRanks: (o, by) => X.saveRanks(o, by), saveException: (i, p) => X.saveException(i, p),
@@ -188,10 +189,18 @@
     catch (e) { console.error(e); toast(`Couldn’t save to the workbook (${label.replace(/…$/, "").toLowerCase()}): ${whyFailed(e)}`, true); return null; }
     finally { S.busy = null; render(); }
   }
-  async function teams(ev, text, facts, code, chair) {
-    const r = await N.send({ event: ev, text, facts, patient: code, chair, sentBy: S.name, clinic: S.cfg.Clinic }, S.routes, S.cfg.Enabled, row => Store.appendLog(row));
+  /* o = { mentions, reply, row }: row = the tblIvkReplies fields for a card that takes an answer (no table yet: no buttons) */
+  async function teams(ev, text, facts, code, chair, o) {
+    o = o || {};
+    const before = o.row && S.raw.tables?.own?.tblIvkReplies ? ref => Store.addReply(Object.assign({ Ref: ref, SentBy: S.name, SentAt: new Date().toISOString() }, o.row)) : null;
+    const r = await N.send({ event: ev, text, facts, patient: code, chair, sentBy: S.name, clinic: S.cfg.Clinic, mentions: o.mentions, reply: before ? o.reply : null },
+      S.routes, S.cfg.Enabled, row => Store.appendLog(row), undefined, before);
     return r;
   }
+  /* who a post tags: the RN on arrivals, the visit's provider on asks (Settings › Teams › Who gets tagged) */
+  const arrivalTags = () => S.tags.arrival ? [S.tags.arrival] : [];
+  const askTag = (v, a) => { const pv = C.askProvider(v, a); return { prov: pv, tag: pv ? S.tags.prov.get(pv) || null : null }; };
+  const tagNote = t => t ? ` <small class="muted">Tags ${esc(t.name)}</small>` : "";
   const teamsWord = (r, who) => r.ok ? (r.unconfirmed ? `Posted to ${who}; the workflow didn’t confirm it, so check the chat.` : `Posted to ${who} in Teams.`) : r.reason;
 
   /* ---------- pane <-> full screen ---------- */
@@ -270,6 +279,7 @@
       const sig = hash(JSON.stringify(raw));
       S.live = true; S.err = "";
       if (force || sig !== S.sig) { const first = !S.raw; S.sig = sig; S.raw = raw; derive(); loadWho(); if (first) bootDone(); toChild({ k: "snap", raw, who: S.name }); if (!S.modal && !typing()) render(); if (first) carryCastro(); }
+      if (C.repliesDue(S.replies).length && !applying) setTimeout(applyReplies, 0);
     } catch (e) { console.error(e); S.err = "Couldn’t read the workbook. Check you’re still signed in; the tracker tries again in a few seconds."; render(); }
   }
 
@@ -369,7 +379,7 @@
     return `<div class="tools">${busy ? `<span class="busyl">Reading the workbook…</span>` : ""}${full}<button class="ibtn${busy ? " spin" : ""}" data-act="reload" title="Refresh: read the workbook again" aria-label="Refresh from the workbook"${busy ? " disabled" : ""}>${ICON.refresh}</button>
       <button class="ibtn" data-act="theme" title="${dark ? "Light mode" : "Dark mode"}" aria-label="${dark ? "Switch to light mode" : "Switch to dark mode"}" aria-pressed="${dark}">${dark ? ICON.sun : ICON.moon}</button></div>`; };
   const head = (title, sub, clock) => `<div class="top"><div><h1>${title}</h1>${sub ? `<p class="sub">${sub}</p>` : ""}</div><div class="topr">${tools()}${clock ? `<div class="clock"><div class="t">${hm()}</div><div class="d">${esc(C.fmtDay(todayS()))}</div></div>` : ""}</div></div>`;
-  const TABLE_WHAT = { tblIvkUsers: "the list of people who use this workbook", tblIvkPlans: "index plans", tblIvkHolds: "holds", tblIvkOther: "the providers’ other visits", tblIvkFlags: "post-check flags", tblIvkPatient: "payment flags, Oakland, availability and the waitlist order", tblIvkPay: "payments and balance reminders", tblIvkExceptions: "provider time off and coverage", tblIvkProfile: "patient profiles (who pays, Sohar benefits)", tblIvkTransfers: "transfers to another clinic", tblIvkElsewhere: "visits at the other clinics (transfer and Oakland hand-offs)", tblIvkSooner: "the sooner waitlist", tblIvkStarts: "the treatment start checklist", tblIvkMissed: "no-shows and late cancels" };
+  const TABLE_WHAT = { tblIvkUsers: "the list of people who use this workbook", tblIvkPlans: "index plans", tblIvkHolds: "holds", tblIvkOther: "the providers’ other visits", tblIvkFlags: "post-check flags", tblIvkPatient: "payment flags, Oakland, availability and the waitlist order", tblIvkPay: "payments and balance reminders", tblIvkExceptions: "provider time off and coverage", tblIvkProfile: "patient profiles (who pays, Sohar benefits)", tblIvkTransfers: "transfers to another clinic", tblIvkElsewhere: "visits at the other clinics (transfer and Oakland hand-offs)", tblIvkSooner: "the sooner waitlist", tblIvkStarts: "the treatment start checklist", tblIvkMissed: "no-shows and late cancels", tblIvkReplies: "answers from Teams cards" };
   /* "Who's at the desk?": this workbook's list only, the people who've used this computer here first, nobody picked */
   function pickHTML() {
     const L = C.pickOrder(S.users, whoRead().used), cancel = S.picking && S.name;
@@ -384,7 +394,7 @@
   function setupBanner() {
     const miss = S.raw.missing || [], noTabs = ["mpt", "appt"].filter(k => !S.raw.tables?.[k]);
     if (noTabs.length) return `<div class="msg warn"><b>This workbook has no ${noTabs.map(k => k === "mpt" ? "Master Patient Tracker" : "Appt List").join(" or ")} table.</b> Open the IVK Patient Tracker workbook, then the add-in.</div>`;
-    const NEW = ["tblIvkPlans", "tblIvkHolds", "tblIvkOther", "tblIvkFlags", "tblIvkPatient", "tblIvkPay", "tblIvkExceptions", "tblIvkProfile", "tblIvkTransfers", "tblIvkElsewhere", "tblIvkSooner", "tblIvkStarts", "tblIvkUsers", "tblIvkMissed"];
+    const NEW = ["tblIvkPlans", "tblIvkHolds", "tblIvkOther", "tblIvkFlags", "tblIvkPatient", "tblIvkPay", "tblIvkExceptions", "tblIvkProfile", "tblIvkTransfers", "tblIvkElsewhere", "tblIvkSooner", "tblIvkStarts", "tblIvkUsers", "tblIvkMissed", "tblIvkReplies"];
     if (miss.length && miss.every(n => NEW.includes(n))) return `<div class="msg warn"><b>This version needs ${miss.length === 1 ? "one more table" : `${miss.length} more tables`}.</b> Updating adds them to the hidden ${esc(X.DATA_SHEET)} tab (${miss.map(n => TABLE_WHAT[n]).join(", ")}); nothing else changes. <div class="actions"><button class="btn primary inl" data-act="setup">Update the workbook</button></div></div>`;
     if (miss.length) return `<div class="msg warn"><b>This workbook isn’t set up for the add-in yet.</b> Setting up adds a hidden IVK Tracker Data tab for check-ins and Teams settings; nothing else changes. <div class="actions"><button class="btn primary inl" data-act="setup">Set up this workbook</button></div></div>`;
     if (!noTabs.length && !miss.includes("tblIvkConfig") && !S.cfg.Clinic) return `<div class="msg warn"><b>Which clinic is this tracker for?</b> The workbook’s name doesn’t say, so type it once for everyone here (for example Castro).
@@ -1344,6 +1354,59 @@
       <dl class="facts"><dt>Referred</dt><dd>${c.ref != null ? C.fmtD(c.ref) : "—"}</dd><dt>Stage</dt><dd>${esc(c.stage || "—")}</dd><dt>In stage</dt><dd>${c.days != null ? plural(c.days, "day") : "—"}</dd>${c.start != null ? `<dt>Start date</dt><dd>${C.fmtD(c.start)}</dd>` : ""}</dl></aside>`;
   }
 
+  /* the ask modal: who it tags, and whether the card can save the answer */
+  function askTagNote(p) {
+    const v = S.m.key ? visitBy(S.m.key) : null, t = askTag(v, v ? v.ask : C.asks(p, S.x, null));
+    if (t.tag) return `<p class="note">Tags ${esc(t.tag.name)}.${S.m.ask?.proto || S.m.freq ? " The card has a Confirm button; the answer saves here." : ""}</p>`;
+    return t.prov ? `<p class="note">${esc(t.prov)} isn’t tagged yet (Settings › Teams › Who gets tagged).</p>` : "";
+  }
+  /* Settings › Teams › Who gets tagged: the RN on arrivals and each provider on their asks, as tblIvkConfig "Name <email>" rows */
+  const tagProvs = () => [...new Set(S.A.map(a => C.provName(a.provider)).filter(Boolean).concat([...S.tags.prov.keys()]))].sort();
+  function tagsHTML() {
+    const row = (id, label, t) => `<div class="two"><label class="fld">${esc(label)}<input id="tg_${id}_n" value="${esc(t?.name || "")}" autocomplete="off" placeholder="Name as it shows in Teams"></label>
+      <label class="fld">Work email<input id="tg_${id}_e" value="${esc(t?.id || "")}" autocomplete="off" spellcheck="false" inputmode="email"></label></div>`;
+    const P = tagProvs();
+    return `<div class="section"><div class="h"><h2>Who gets tagged</h2><span>${S.tags.arrival || S.tags.prov.size ? "on" : "no one yet"}</span></div>
+      <p>Arrivals tag the RN. Protocol and scheduling asks tag the visit’s provider, and a protocol ask has a Confirm button that saves the protocol here. Only a tagged provider’s answer saves a protocol. Leave a row blank to tag no one.</p>
+      ${row("arrival", "RN on arrivals", S.tags.arrival)}
+      ${P.map((pv, i) => row(`p${i}`, pv, S.tags.prov.get(pv))).join("")}
+      <div class="actions"><button class="btn ghost sm line" data-act="saveTags">Save who gets tagged</button></div></div>`;
+  }
+  /* Answers from Teams cards (tblIvkReplies, filled in by the workflow): a chair move or a confirmed protocol. The pane applies
+     each once: it claims the row (Applied blank) so two desks don't both apply it, then saves and says what it did. */
+  let applying = false;
+  async function applyReplies() {
+    if (FULL || applying) return; applying = true;
+    const done = [];
+    try {
+      for (const r of C.repliesDue(S.replies)) {
+        const iso = new Date().toISOString(), who = r.by || r.email || "Teams";
+        if (!(await X.setReply(r.ref, { Applied: `applying (${S.name || "desk"} ${iso})` }, "Applied"))) continue;
+        const act = C.replyAction(r, { chairs: S.chairs, freqs: S.freqs, providers: [...S.tags.prov.values()].map(t => t.id) });
+        let note;
+        try {
+          if (act.skip) note = `not applied: ${act.skip}`;
+          else if (act.chair) {
+            const v = visitBy(r.key);
+            const busy = v && S.list.find(y => y.key !== v.key && (y.ph === "tx" || y.ph === "in") && y.st.chair === act.chair);
+            if (!v || v.ph === "done" || v.ph === "gone") note = "not applied: the visit isn’t on today’s floor";
+            else if (busy) note = `not applied: ${chairTxt(act.chair)} has ${C.code(busy)} in it`;
+            else { await X.saveVisit(v.key, visitBase(v), { Chair: act.chair, By: `${who} (Teams)`, Updated: iso }); note = `Chair ${act.chair} saved`; done.push(`${who} moved ${r.patient} to ${chairTxt(act.chair)}.`); }
+          } else if (act.freq) {
+            await X.confirmProtocol(r.mrn, act.freq, todayS());
+            const v = r.key ? visitBy(r.key) : null; if (v) await X.saveVisit(v.key, visitBase(v), { Protocol: act.freq, By: `${who} (Teams)`, Updated: iso });
+            try { await X.appendLog([`c${Date.now().toString(36)}`, "confirmed", r.patient, "", act.freq, `${who} (Teams)`, iso, "saved"]); } catch (e) { console.error(e); }
+            note = `protocol ${act.freq} saved`; done.push(`${who} confirmed ${act.freq} for ${r.patient}.`);
+          }
+        } catch (e) { console.error(e); note = `failed: ${e.message || e}. Save it by hand`; done.push(`${who}’s answer for ${r.patient} didn’t save (${e.message || e}). Save it by hand.`); }
+        if (/^not applied/.test(note)) done.push(`${who}’s answer for ${r.patient} wasn’t applied: ${note.replace(/^not applied: /, "")}.`);
+        await X.setReply(r.ref, { Applied: `${note} (${iso})` });
+      }
+    } catch (e) { console.error(e); }
+    finally { applying = false; }
+    if (done.length) { toast(`From Teams: ${done.join(" ")}`, done.some(t => /didn’t save|wasn’t applied/.test(t))); refresh(true); }
+  }
+
   /* ---------- Settings ---------- */
   function settingsHTML() {
     const r = S.raw, miss = r.missing || [], c = S.cfg, u = r.apptUpdated;
@@ -1387,6 +1450,7 @@
         ${route("arrival", "Arrivals", "When the desk checks a patient in, and when they’re seated. The RN takes vitals, so this goes to the RN’s chat.")}
         ${route("protocol", "Protocol and scheduling", "Asks the providers to confirm the protocol and send the patient to the desk at discharge.")}
         <div class="actions"><button class="btn primary inl" data-act="saveRoutes">Save Teams settings</button></div>
+        ${tagsHTML()}
         <details class="fold"><summary>Set up a workflow</summary><ol class="how">
           <li>Open the chat in Teams (the clinic’s IVK group chat, or the RN’s chat).</li><li>Choose More options (…), then Workflows, then <b>Send webhook alerts to a chat</b>.</li>
           <li>Name it “IVK Tracker - arrivals” or “IVK Tracker - group chat”, confirm the chat and finish.</li><li>Copy the URL Teams shows and paste it above. Don’t paste it anywhere else.</li>
@@ -1536,8 +1600,8 @@
       const arrTxt = C.arrivalText(v, S.plan ? m.chair : "", S.tpl.arrival), askTxt = C.askText(v.p, v.ask, S.tpl, v.p?.freq);
       return `<h2 id="mh">Check in ${esc(c)}${mrnH(v.a.mrn)}</h2><p class="sub muted">${C.fmtT(v.a.time)} visit with ${esc(C.provName(v.a.provider) || "the provider")}</p>
         ${S.plan ? `<div class="fld">Chair${chairPick(m.chair, true)}</div>` : ""}
-        <label class="preview opt"><input type="checkbox" id="mRn"${m.rn && aOk ? " checked" : ""}${aOk ? "" : " disabled"}><span><small>To ${esc(routeTo("arrival"))}</small>${aOk ? esc(arrTxt) : "Arrivals aren’t set up yet (Settings › Teams)."}</span></label>
-        ${v.p && v.ask.any ? `<label class="preview opt"><input type="checkbox" id="mAsk"${m.ask && pOk ? " checked" : ""}${pOk ? "" : " disabled"}><span><small>To ${esc(routeTo("protocol"))}, at the same time</small>${pOk ? esc(askTxt) : "The group chat isn’t set up yet (Settings › Teams)."}</span></label>` : ""}
+        <label class="preview opt"><input type="checkbox" id="mRn"${m.rn && aOk ? " checked" : ""}${aOk ? "" : " disabled"}><span><small>To ${esc(routeTo("arrival"))}</small>${aOk ? esc(arrTxt) + tagNote(S.tags.arrival) : "Arrivals aren’t set up yet (Settings › Teams)."}</span></label>
+        ${v.p && v.ask.any ? `<label class="preview opt"><input type="checkbox" id="mAsk"${m.ask && pOk ? " checked" : ""}${pOk ? "" : " disabled"}><span><small>To ${esc(routeTo("protocol"))}, after the arrival${v.ask.why.length ? ` (${esc(v.ask.why.join("; "))})` : ""}</small>${pOk ? esc(askTxt) + tagNote(askTag(v, v.ask).tag) : "The group chat isn’t set up yet (Settings › Teams)."}</span></label>` : ""}
         ${payPickHTML(v, m, "in")}
         <div class="foot"><button class="btn mute" data-act="close">Cancel</button><button class="btn primary inl" data-act="doCheckin"${S.busy || amtBad(m) ? " disabled" : ""}>Check in</button></div>`;
     },
@@ -1554,6 +1618,7 @@
       return `<h2 id="mh">Ask ${esc(routeTo("protocol"))}</h2><p class="sub muted">${esc(p.code)}, ${esc(p.freq || "no frequency on the tracker")}</p>
         <label class="fld">Protocol to confirm<select id="mFreq">${["", ...S.freqs].map(f => `<option value="${esc(f)}"${f === S.m.freq ? " selected" : ""}>${esc(f || "Ask for the protocol")}</option>`).join("")}</select></label>
         <label class="fld">Message<textarea id="mText" rows="3">${esc(S.m.text)}</textarea></label>
+        ${ok ? askTagNote(p) : ""}
         ${ok ? "" : `<p class="note warn">The group chat isn’t set up yet. Add its workflow in Settings › Teams, or copy the message and post it yourself.</p>`}
         <div class="foot"><button class="btn mute" data-act="close">Cancel</button>${ok ? "" : `<button class="btn ghost" data-act="copyAsk">Copy message</button>`}<button class="btn primary inl" data-act="doAsk"${ok && !S.busy ? "" : " disabled"}>Send to ${esc(routeTo("protocol"))}</button></div>`;
     },
@@ -1812,12 +1877,19 @@
     if (!sig) return toast("No signature found in that file.", true);
     await saveSig(sig);
   }
+  /* the arrival and chair cards tag the RN; with a chair map they carry a chair picker, so the RN can move the patient from Teams */
   async function sendArrival(v, chair, seatedOnly) {
     const c = C.code(v), text = seatedOnly ? C.fill(S.tpl.seated, { patient: c, chair }) : C.arrivalText(v, chair, S.tpl.arrival);
-    return teams("arrival", text, [["Visit", C.fmtT(v.a.time)], ["Provider", C.provName(v.a.provider)], ["Chair", chair ? chairTxt(chair) : ""], ["Desk", S.name]], c, chair);
+    const pick = S.plan && S.chairs.length ? { reply: { kind: "chair", chair, chairs: S.chairs }, row: { Kind: "chair", Key: v.key, MRN: v.a.mrn, Patient: c, Value: chair } } : {};
+    return teams("arrival", text, [["Visit", C.fmtT(v.a.time)], ["Provider", C.provName(v.a.provider)], ["Chair", chair ? chairTxt(chair) : ""], ["Desk", S.name]], c, chair,
+      Object.assign({ mentions: arrivalTags() }, pick));
   }
-  async function sendAsk(p, text, freq, key) {
-    const r = await teams("protocol", text, [["Patient", p.code], ["Protocol on file", p.freq || "none"], freq && freq !== p.freq ? ["Asking about", freq] : ["", ""], ["Desk", S.name]], p.code, "");
+  /* the ask tags the provider; when it asks for the protocol, the card has "Confirm <protocol>" and a dropdown for another */
+  async function sendAsk(p, text, freq, key, proto) {
+    const v = key ? visitBy(key) : null, a = v ? v.ask : C.asks(p, S.x, null), t = askTag(v, a), f = freq || p.freq || "";
+    const o = { mentions: t.tag ? [t.tag] : [] };
+    if (proto) Object.assign(o, { reply: { kind: "protocol", freq: f, freqs: S.freqs }, row: { Kind: "protocol", Key: key || "", MRN: p.mrn, Patient: p.code, Value: f } });
+    const r = await teams("protocol", text, [["Patient", p.code], ["Protocol on file", p.freq || "none"], freq && freq !== p.freq ? ["Asking about", freq] : ["", ""], ["Why", (a.why || []).join("; ")], ["Desk", S.name]], p.code, "", o);
     if (r.ok && key) { const v = visitBy(key); if (v) await Store.saveVisit(key, visitBase(v), Object.assign({ Asked: hm() }, stamp())); }
     return r;
   }
@@ -2237,7 +2309,7 @@
       await savePay(v, m, `${C.code(v)} is checked in`);
       const msgs = [`${C.code(v)} checked in${chair ? ` to ${chairTxt(chair)}` : ""}.`];
       if (rn) { const r = await sendArrival(v, chair); msgs.push(teamsWord(r, routeTo("arrival"))); }
-      if (ask && v.p) { const r = await sendAsk(v.p, C.askText(v.p, v.ask, S.tpl, v.p.freq), v.p.freq, v.key); msgs.push(r.ok ? `Asked ${routeTo("protocol")}.` : r.reason); }
+      if (ask && v.p) { const r = await sendAsk(v.p, C.askText(v.p, v.ask, S.tpl, v.p.freq), v.p.freq, v.key, v.ask.proto); msgs.push(r.ok ? `Asked ${routeTo("protocol")}.` : r.reason); }
       toast(msgs.join(" "), msgs.some(x => /answered|couldn’t|No Teams|off/i.test(x)));
     },
     /* the chair picked at the start of treatment (it starts now), or a move to another chair (the start time stays) */
@@ -2264,7 +2336,7 @@
       const p = S.PM.get(S.m.mrn), text = $("#mText").value.trim(), freq = $("#mFreq").value; if (!p || !text) return;
       S.busy = "Posting to Teams…"; render();
       let r;
-      try { r = await sendAsk(p, text, freq, S.m.key); }
+      try { r = await sendAsk(p, text, freq, S.m.key, !!(S.m.ask && S.m.ask.proto) || (!!freq && freq !== p.freq)); }
       catch (e) { console.error(e); r = { ok: true, saveErr: e.message || String(e) }; }
       finally { S.busy = null; }
       if (r.ok) closeModal(); else render();
@@ -2347,6 +2419,15 @@
       await saveSig(same ? cur : C.sigFromFile(t, false));
     },
     sigClear: () => saveSig(""),
+    async saveTags() {
+      const o = {}, bad = [];
+      const one = (id, label) => { const n = $(`#tg_${id}_n`).value.trim(), e = $(`#tg_${id}_e`).value.trim();
+        if ((n || e) && !C.parseTag(C.tagStr(n, e))) bad.push(label); return C.tagStr(n, e); };
+      o.TagArrival = one("arrival", "the RN");
+      tagProvs().forEach((pv, i) => { o[C.tagKey(pv)] = one(`p${i}`, pv); });
+      if (bad.length) return toast(`Each tag needs a name and a work email: ${bad.join(", ")}.`, true);
+      await write("Saving who gets tagged…", () => Store.saveKeyed("tblIvkConfig", o), "Saved. Teams posts will tag them.");
+    },
     async saveRoutes() {
       const r = {}; for (const ev of ["arrival", "protocol"]) r[ev] = { to: $(`#rt_${ev}_to`).value.trim(), url: $(`#rt_${ev}_url`).value.trim(), on: $(`#rt_${ev}_on`).checked };
       const bad = Object.entries(r).filter(([, x]) => x.url && !N.flowUrl(x.url)); if (bad.length) return toast("One of the URLs isn’t a Power Automate workflow URL. Copy it again from Teams.", true);

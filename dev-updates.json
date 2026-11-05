@@ -1,6 +1,15 @@
 {
   "updates": [
     {
+      "id": "2026-11-05-teams-tags-replies",
+      "date": "2026-11-05",
+      "bullets": [
+        "New: Teams posts can tag people. Arrivals tag the RN, and protocol and scheduling asks tag the visit's provider. Set who gets tagged in Settings › Teams.",
+        "New: The provider can confirm the protocol from the Teams card (\"Confirm 1x per week\", or pick a different one), and it saves to the Master Patient Tracker. With a chair map loaded, the RN can change the patient's chair from the arrival card.",
+        "Changed: Check-in asks the provider to confirm the protocol when Protocol Updated is past its date, or when the patient has gone two of their intervals without a visit (every 2 weeks and not seen in over 4 weeks). A blank Protocol Updated still shows on Patients, but doesn't trigger the ask by itself."
+      ]
+    },
+    {
       "id": "2026-11-05-start-checklist",
       "date": "2026-11-05",
       "bullets": [

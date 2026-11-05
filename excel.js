@@ -21,6 +21,8 @@
      tblIvkSooner     FH1  MRN | Patient | Booked | BookedTime | Provider | From | Days | SameProv | Status | Note | Seen | By | Updated
                           (the sooner waitlist: patients who would take an earlier visit)
      tblIvkStarts     FV1  Key | Date | MRN | Patient | CmUpdated | By | Updated   (the start checklist: Case Management updated in NextGen)
+     tblIvkReplies    GD1  Ref | Kind | Key | MRN | Patient | Value | SentBy | SentAt | Reply | ReplyBy | ReplyEmail | RepliedAt | Applied
+                          (Teams cards that take an answer: the Teams workflow fills Reply..RepliedAt by Ref, the add-in fills Applied)
      tblIvkUsers      GR1  Name | Added | Updated | Settings (JSON)   (who uses this workbook: the "Who's at the desk?" list; no patient)
      tblIvkMissed     GX1  Key | Date | Time | MRN | Patient | Provider | Kind | Exempt | Reason | Source | By | Updated
                           (late cancels, cancellations the desk still has to call, exemptions; no-shows come from NextGen)
@@ -60,10 +62,11 @@
     { name: "tblIvkElsewhere", anchor: "EY", columns: C.ELSE_COLS, rows: [C.ELSE_COLS.map(() => "")] },
     { name: "tblIvkSooner", anchor: "FH", columns: C.SOONER_COLS, rows: [C.SOONER_COLS.map(() => "")] },
     { name: "tblIvkStarts", anchor: "FV", columns: C.START_COLS, rows: [C.START_COLS.map(() => "")] },
+    { name: "tblIvkReplies", anchor: "GD", columns: C.REPLY_COLS, rows: [C.REPLY_COLS.map(() => "")] },
     { name: "tblIvkUsers", anchor: "GR", columns: C.USER_COLS, rows: [C.USER_COLS.map(() => "")] },
     { name: "tblIvkMissed", anchor: "GX", columns: C.MISS_COLS, rows: [C.MISS_COLS.map(() => "")] }
   ];
-  const BIG = ["tblIvkVisits", "tblIvkLog", "tblIvkHolds", "tblIvkOther", "tblIvkPay", "tblIvkElsewhere"];
+  const BIG = ["tblIvkVisits", "tblIvkLog", "tblIvkHolds", "tblIvkOther", "tblIvkPay", "tblIvkElsewhere", "tblIvkReplies"];
   const IP_RANGE = "A1:AZ60";   // the Index Planner tab: 9 weeks of Mon-Fri across, half hours down, the slot list below
   const colIdx = l => l.split("").reduce((n, c) => n * 26 + c.charCodeAt(0) - 64, 0) - 1;
   const colL = i => { let s = ""; for (let n = i + 1; n > 0; n = Math.floor((n - 1) / 26)) s = String.fromCharCode(65 + (n - 1) % 26) + s; return s; };
@@ -98,7 +101,7 @@
       const wb = ctx.workbook; wb.load("name");
       const small = {};
       for (const k of ["mpt", "consults"]) if (tm[k]) small[k] = readTable(ctx, tm[k]);
-      const TAIL = ["tblIvkVisits", "tblIvkLog", "tblIvkHolds"];   // tblIvkOther is read whole: the planner needs every future visit
+      const TAIL = ["tblIvkVisits", "tblIvkLog", "tblIvkHolds", "tblIvkReplies"];   // tblIvkOther is read whole: the planner needs every future visit
       for (const s of SPEC) if (tm.own[s.name] && !TAIL.includes(s.name)) small[s.name] = readTable(ctx, s.name);
       const apSheet = wb.worksheets.getItemOrNullObject(SHEETS.appt), acSheet = wb.worksheets.getItemOrNullObject(SHEETS.access), ipSheet = wb.worksheets.getItemOrNullObject(PLANNER);
       apSheet.load("isNullObject"); acSheet.load("isNullObject"); ipSheet.load("isNullObject");
@@ -271,6 +274,32 @@
       await ctx.sync();
     });
   }
+  /* tblIvkReplies: a new row (written before its card is posted), and changes to one row found by Ref. ifBlank = a column that
+     must still be empty (Applied, so two desks don't both apply an answer); returns false when it isn't, or the Ref isn't there. */
+  async function addReply(o) {
+    return Excel.run(async ctx => {
+      const t = ctx.workbook.tables.getItem("tblIvkReplies"), h = t.getHeaderRowRange(), b = t.getDataBodyRange(); h.load("values"); b.load("values"); await ctx.sync();
+      const cols = h.values[0].map(C.norm), row = cols.map(() => "");
+      for (const [k, v] of Object.entries(o)) { const c = cols.indexOf(C.norm(k)); if (c >= 0) row[c] = v == null ? "" : String(v); }
+      const blank = b.values.length === 1 && b.values[0].every(v => v === "" || v == null);
+      if (blank) b.getRow(0).values = [row]; else t.rows.add(null, [row]);
+      await ctx.sync();
+    });
+  }
+  async function setReply(ref, patch, ifBlank) {
+    return Excel.run(async ctx => {
+      const t = ctx.workbook.tables.getItem("tblIvkReplies"), h = t.getHeaderRowRange(), b = t.getDataBodyRange(); h.load("values"); b.load("values"); await ctx.sync();
+      const cols = h.values[0].map(C.norm), cR = cols.indexOf("ref");
+      let i = -1; for (let j = b.values.length - 1; j >= 0; j--) if (String(b.values[j][cR]) === ref) { i = j; break; }
+      if (i < 0) return false;
+      if (ifBlank && C.txt(b.values[i][cols.indexOf(C.norm(ifBlank))])) return false;
+      const row = b.values[i].map(v => v == null ? "" : String(v));
+      for (const [k, v] of Object.entries(patch)) { const c = cols.indexOf(C.norm(k)); if (c >= 0) row[c] = v == null ? "" : String(v); }
+      b.getRow(i).values = [row]; await ctx.sync();
+      return true;
+    });
+  }
+
   /* Show the patient's row on the Master Patient Tracker (or a Consults row) */
   async function openRow(kind, mrn) {
     return Excel.run(async ctx => {
@@ -668,7 +697,7 @@
     });
   }
 
-  return { DATA_SHEET, SHEETS, PLANNER, TPL_SHEET, TYPES_SHEET, SPEC, load, setup, saveVisit, confirmProtocol, replaceAppts, saveKeyed, saveRoutes, appendLog, openRow,
+  return { DATA_SHEET, SHEETS, PLANNER, TPL_SHEET, TYPES_SHEET, SPEC, load, setup, saveVisit, confirmProtocol, replaceAppts, saveKeyed, saveRoutes, appendLog, addReply, setReply, openRow,
     setupTemplate, addGrid, setCells, saveTypes, replaceOther, replaceElse, saveSooner, savePlan, saveFlag, placeHolds, setHolds, fillPlanner, getDoc, setDoc, refreshDoc,
     readRow, saveRow, savePt, addPays, saveRanks, saveException, saveProfile, upsertMany, saveXfer, addMpt, saveStart, saveMissed, addMissed, saveUser };
 });

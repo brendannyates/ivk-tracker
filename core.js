@@ -177,15 +177,28 @@
   /* future visits for a patient after a day, from the appointment list (cancelled ones don't count) */
   const futureOf = (A, mrn, after) => A.filter(a => a.mrn === mrn && a.date > after && !isCancelled(a)).sort((x, y) => x.date - y.date || (x.time ?? 0) - (y.time ?? 0));
 
+  /* the patient's last visit before a day that wasn't cancelled or a no-show (null when the list has none) */
+  function lastSeen(A, mrn, before) {
+    let best = null;
+    for (const a of A) if (a.mrn === mrn && a.date < before && !isCancelled(a) && !/no ?show/i.test(a.status) && (!best || a.date > best.date)) best = a;
+    return best;
+  }
   /* Does this patient need booking out, and is the protocol due a confirmation? x = { today, cfg, appts }.
-     book: nothing booked after today, or booked through less than AheadWeeks out. proto: never confirmed or older than ProtocolDays. */
+     book: nothing booked after today, or booked through less than AheadWeeks out.
+     proto (the standard ask): Protocol Updated is filled in and older than ProtocolDays, or the patient has gone two of their
+     intervals without a visit (every 2 weeks, last seen over 28 days ago). A blank Protocol Updated alone doesn't send the ask
+     (unconfirmed shows it on Patients instead). why: the reasons, for the Teams card. */
   function asks(p, x, st) {
-    const c = x.cfg, fut = futureOf(x.appts, p?.mrn ?? "", x.today), thru = fut.length ? fut[fut.length - 1].date : null;
-    const ahead = +c.AheadWeeks * 7, protoDue = !p || p.protoAt == null || x.today - p.protoAt > +c.ProtocolDays;
-    const prn = /prn/i.test(p?.freq ?? "");
-    const book = !!p && isActive(p) && !prn && (thru == null || thru < x.today + ahead) && !(st && /^(yes|no)$/.test(st.booked));
-    const proto = !!p && isActive(p) && protoDue && !(st && st.proto);
-    return { book, proto, next: fut[0] || null, thru, any: book || proto };
+    const c = x.cfg, T = x.today, fut = futureOf(x.appts, p?.mrn ?? "", T), thru = fut.length ? fut[fut.length - 1].date : null;
+    const ahead = +c.AheadWeeks * 7, A = !!p && isActive(p), prn = /prn/i.test(p?.freq ?? "");
+    const expired = A && p.protoAt != null && T - p.protoAt > +c.ProtocolDays;
+    const fd = A && !prn ? freqDays(p.freq) : null, last = A ? lastSeen(x.appts, p.mrn, T) : null;
+    const overdue = !!fd && !!last && T - last.date > 2 * fd;
+    const book = A && !prn && (thru == null || thru < T + ahead) && !(st && /^(yes|no)$/.test(st.booked));
+    const done = !!(st && st.proto), proto = (expired || overdue) && !done, why = [];
+    if (proto && expired) why.push(`Protocol last confirmed ${fmtD(p.protoAt)}, ${T - p.protoAt} days ago`);
+    if (proto && overdue) why.push(`Last seen ${fmtD(last.date)}, ${T - last.date} days ago (${p.freq})`);
+    return { book, proto, expired, overdue, last, why, unconfirmed: A && p.protoAt == null && !done, next: fut[0] || null, thru, any: book || proto };
   }
 
   /* Today's visits, each with its phase and what the desk still has to do. */
@@ -253,7 +266,8 @@
     if (A && !/prn/i.test(p.freq) && !fut.length) add("book", "Nothing booked", ["Ask the group chat", "ask"], { bad: true });
     else if (A && a.book) add("book", a.thru == null ? "Nothing booked after today" : `Booked through ${fmtD(a.thru)}`, ["Ask the group chat", "ask"]);
     if (A && !p.freq) add("freq", "No frequency on the tracker", ["Ask the group chat", "ask"]);
-    if (A && a.proto) add("proto", p.protoAt == null ? "Protocol not confirmed" : `Protocol last confirmed ${fmtD(p.protoAt)}`, ["Confirm protocol", "proto"]);
+    if (A && (a.proto || a.unconfirmed)) add("proto", a.overdue ? `Not seen since ${fmtD(a.last.date)} (${p.freq}): confirm the protocol`
+      : p.protoAt == null ? "Protocol not confirmed" : `Protocol last confirmed ${fmtD(p.protoAt)}`, ["Confirm protocol", "proto"]);
     if (A && p.encAuth != null && p.authStart == null) add("authstart", "No auth start date", ED);
     /* a treatment start without the rest of index booked behind it */
     const sv = A ? nextStart(p, x.appts, T) : null, short = sv ? indexShort(p, x.appts, sv, c) : null;
@@ -409,6 +423,58 @@
     const which = ask.book && ask.proto ? "protocol" : ask.book ? "bookOnly" : ask.proto ? "protocolOnly" : "protocol";
     return fill(t[which], d);
   }
+
+  /* ---------- Teams @mentions and card replies ---------- */
+  /* Who a post tags, kept in tblIvkConfig as "Name <email>": TagArrival (the RN) and "Tag Dr. Lark" for each provider (provName).
+     Names and emails stay in the workbook, never in the code. */
+  const tagKey = prov => `Tag ${prov}`;
+  function parseTag(v) {
+    const m = txt(v).match(/^(.*?)\s*<\s*([^<>\s@]+@[^<>\s@]+\.[^<>\s@]+)\s*>$/);
+    return m && m[1].trim() ? { name: m[1].trim(), id: m[2].toLowerCase() } : null;
+  }
+  const tagStr = (name, email) => txt(name) && txt(email) ? `${txt(name)} <${txt(email)}>` : "";
+  /* { arrival: tag|null, prov: Map(provName -> tag) } from the config */
+  function tagsOf(cfg) {
+    const prov = new Map();
+    for (const [k, v] of Object.entries(cfg || {})) { const m = /^tag (.+)$/i.exec(k); if (m && !/^arrival$/i.test(m[1])) { const t = parseTag(v); if (t) prov.set(m[1].trim(), t); } }
+    return { arrival: parseTag(cfg && cfg.TagArrival), prov };
+  }
+  /* the provider a protocol ask goes to: today's visit, else the next booked one, else the last one seen */
+  const askProvider = (v, a) => provName(v?.a?.provider || a?.next?.provider || a?.last?.provider || "");
+
+  /* tblIvkReplies: one row per card that takes an answer in Teams. The add-in writes Ref..SentAt before posting; the Teams
+     workflow fills Reply (the card's answer as JSON), ReplyBy, ReplyEmail and RepliedAt; the add-in applies it and fills Applied.
+     Kind chair: Value = the chair the card was sent with. Kind protocol: Value = the frequency on file. The card carries only Ref. */
+  const REPLY_COLS = ["Ref", "Kind", "Key", "MRN", "Patient", "Value", "SentBy", "SentAt", "Reply", "ReplyBy", "ReplyEmail", "RepliedAt", "Applied"];
+  function replyRows(values) {
+    return byHeader(values).rows.map(x => {
+      const g = x.get, raw = txt(g("reply")); let data = null;
+      if (raw) { try { data = JSON.parse(raw); } catch (e) { data = { bad: raw }; } }
+      return { i: x.i, ref: txt(g("ref")), kind: txt(g("kind")).toLowerCase(), key: txt(g("key")), mrn: mrnKey(g("mrn")), patient: txt(g("patient")),
+        value: txt(g("value")), sentAt: txt(g("sentat")), data, by: txt(g("replyby")), email: txt(g("replyemail")).toLowerCase(), at: txt(g("repliedat")), applied: txt(g("applied")) };
+    }).filter(r => r.ref);
+  }
+  /* what an answered card asks the tracker to do, or why it can't. chairs = the chair ids; freqs = the frequency list;
+     providers = the tagged providers' emails (only they can confirm a protocol). */
+  function replyAction(r, o) {
+    const d = r.data || {};
+    if (!r.data || d.bad) return { skip: "the answer couldn’t be read" };
+    if (r.kind === "chair") {
+      const ch = txt(d.chair);
+      if (!ch) return { skip: "no chair picked" };
+      if (o.chairs && o.chairs.length && !o.chairs.includes(ch)) return { skip: `Chair ${ch} isn’t on the chair map` };
+      return { chair: ch };
+    }
+    if (r.kind === "protocol") {
+      const f = txt(/^pick$/i.test(d.act) ? d.pick : d.freq);
+      if (!f) return { skip: "no protocol picked" };
+      if (o.freqs && o.freqs.length && !o.freqs.some(x => x.toLowerCase() === f.toLowerCase())) return { skip: `“${f}” isn’t on the frequency list` };
+      if (!o.providers || !o.providers.includes(r.email)) return { skip: `${r.by || r.email || "Someone"} isn’t a tagged provider, so the protocol wasn’t saved` };
+      return { freq: o.freqs && o.freqs.find(x => x.toLowerCase() === f.toLowerCase()) || f };
+    }
+    return { skip: "unknown card" };
+  }
+  const repliesDue = R => (R || []).filter(r => r.data && !r.applied);
 
   /* ---------- NextGen "Appointments Listing" export -> Appt List rows ---------- */
   /* Report headers (row 7 of the export): MRN | Location | Appointment Date | Time | Provider | Appointment Type | Patient | Status.
@@ -1314,6 +1380,7 @@
     fullPlan, eligibleStarts, memoX, indexState, indexShort, nextStart, XFER_COLS, xferRows, xferState, elsewhere, visitCounts, SOONER_COLS, soonerRows, soonerKey, soonerMatch, openSlots, freedTimes, ELSE_COLS, elseRows, sameLoc, isOurs, bookedAt, prefCols, indexN: cfg => Math.max(1, Math.round(+cfg.IndexPerWeek * +cfg.IndexWeeks)),
     treatments, txNo, isOak, oakState, WAIT_ON, waitlist, waitMove, provFull, fullName, firstName, scheduleOf, START_TPL, longWhen,
     lasfir, provName, mrnKey, pickRow, eventShort, freqDays, byHeader, patients, appts, isCancelled, visitKey, visitRows, phase, isActive, futureOf, asks,
+    lastSeen, tagKey, parseTag, tagStr, tagsOf, askProvider, REPLY_COLS, replyRows, replyAction, repliesDue,
     today, code, chairState, chairStatus, askDue, chairList, chairCount, needs, loud, consults, isStartedStage, keptStartOf, START_COLS, startKey, startRows, consultStarts, startList, fill, protoWords, arrivalText, askText,
     parseReport, shrink, week, DAYS5, dayNum, sameProv, OTHER_COLS, otherRows, isIvkVisit, FLAG_COLS, flagRows, PLAN_COLS, planRows, HOLD_COLS, holdRows,
     onList, holding, holdState, holdConfirm, EX_COLS, CLOSED, exRows, exFor, closureOn, closureClashes, withExceptions, exClashes, MISS_COLS, missRows, isKpVa, missList, lateKeys, newCancels, missImpact, missByPatient, stepDue, daySlots, postCheckSlots, availOf, availText, fits, planIndex, altSlots, capacity, plannerLayout, plannerGrid };
