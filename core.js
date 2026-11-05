@@ -30,7 +30,9 @@
     CmStage: "6. Started", StartBackDays: 14,
     /* cancellations: a visit cancelled on its own day is always a late cancel; one cancelled up to LateCancelDays before it goes to
        the desk to say whether it was late. MissWeeks: how many past weeks the no-show and late-cancel rate is taken from */
-    LateCancelDays: 1, MissWeeks: 8 };
+    LateCancelDays: 1, MissWeeks: 8,
+    /* RN functions: the desk's Start treatment step between check-in and check-out. Off: check-in starts the visit */
+    RnFunctions: "FALSE" };
   const ACTIVE = ["ongoing", "induction"];
   const DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
   const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
