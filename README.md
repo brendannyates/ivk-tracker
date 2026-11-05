@@ -60,7 +60,9 @@ LASFIR code, status (Induction for a new start), protocol, who covers what
 (insurance for both, self pay for both, or one of each), the payer and what the patient pays each visit for the **provider visit
 (99214/99215)** and for the **infusion**, and the latest Sohar benefits (payer, plan, network, coverage dates, copay, coinsurance,
 deductible and OOP max with what's left, status, verified date, reference). The Sohar fields can be typed or filled from the Sohar
-Eligibility add-in's benefits CSV by MRN. Saving adds the patient to the Master Patient Tracker (Patient Name is the code; Copay,
+Eligibility add-in's benefits CSV by MRN. Settings › **Sohar benefits** › Import Sohar benefits takes the add-in's whole IVN export (pick
+this clinic there) and fills every matched profile at once: patients on the tracker or the appointment list, by MRN; a newer saved
+verification is kept, the same date and ref is left alone, MRNs not here are counted, not added (`core.planSoharImport`, `excel.upsertMany`). Saving adds the patient to the Master Patient Tracker (Patient Name is the code; Copay,
 Infusion, Primary Encounter Insurance, Infusion Insurance, Status, Frequency, Primary Location, Tx Start Date; the table's formula
 columns fill themselves) and the rest to tblIvkProfile. For a patient already on the tracker, Benefits › **Edit coverage and
 benefits** opens the same form.
