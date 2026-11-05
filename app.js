@@ -21,7 +21,7 @@
   const hm = () => C.fmtT(nowMin());
   const plural = (n, a, b) => `${n} ${n === 1 ? a : b || a + "s"}`;
 
-  const S = { view: "today", raw: null, sig: "", live: false, err: "", sel: null, bSel: null, pSel: null, chip: "need", q: "", wk: 0, ipView: "plan", ipSel: null, ipPins: {}, ipAlt: null, ipWk: 0, tg: 0, tsel: null, te: null,
+  const S = { view: "today", raw: null, sig: "", live: false, err: "", sel: null, pSel: null, chip: "need", q: "", wk: 0, ipView: "plan", ipSel: null, ipPins: {}, ipAlt: null, ipWk: 0, tg: 0, tsel: null, te: null,
     modal: null, m: {}, loading: false, name: LS.get("ivkName", ""), theme: LS.get("ivkTheme", "light") };
   document.documentElement.dataset.theme = S.theme;
 
@@ -44,7 +44,7 @@
     let plan = null; try { plan = r.plan ? bpCheck(r.plan).plan || null : null; } catch (e) { plan = null; }
     S.plan = plan; S.planErr = r.plan && !plan ? "The saved chair map can’t be read. Load the map file again." : "";
     S.x = { today: T, cfg, appts: S.A, patients: S.P, visits: S.V, clinic: cfg.Clinic };
-    S.list = C.today(S.x); S.chairs = C.chairList(cfg, plan);
+    S.list = C.today(S.x); S.chairs = C.chairList(plan);
     /* a protocol ask posted today counts as asked even if saving the time on the visit failed */
     for (const v of S.list) if (v.st.asked == null) { const l = sentToday("protocol", C.code(v)); if (l) v.st = Object.assign({}, v.st, { asked: C.toMin(timeOf(l.at)) }); }
     S.plans = C.planRows(r.tblIvkPlans); S.holds = C.holdRows(r.tblIvkHolds); S.others = C.otherRows(r.tblIvkOther);
@@ -76,7 +76,7 @@
     /* provider time off: their template slots go on those days, or become the covering provider's */
     S.EX = C.exRows(r.tblIvkExceptions);
     const gridKeys = new Set(S.grids.map(g => g.key));
-    S.X = Object.assign({ appts: S.A, holds: S.holds, others: S.others, cfg, chairs: S.chairs.length, listAt: r.apptUpdated, needsPost, hasGrid: k => gridKeys.has(k) }, C.withExceptions(TM.onDays(S.grids, S.types, +cfg.PostCheckMin), S.EX));
+    S.X = Object.assign({ appts: S.A, holds: S.holds, others: S.others, cfg, chairs: C.chairCount(cfg, plan), listAt: r.apptUpdated, needsPost, hasGrid: k => gridKeys.has(k) }, C.withExceptions(TM.onDays(S.grids, S.types, +cfg.PostCheckMin), S.EX));
     const pv = new Map(), addPv = n => { const k = TM.provKey(n); if (n && k && !pv.has(k)) pv.set(k, n); };
     S.A.forEach(a => addPv(a.provider)); S.others.forEach(o => addPv(o.provider));
     S.providers = [...pv.values()].sort((a, b) => TM.provKey(a).localeCompare(TM.provKey(b)));
@@ -94,19 +94,19 @@
   const routeTo = ev => S.routes[ev]?.to || (ev === "arrival" ? "the RN" : "the group chat");
 
   function floor() {
-    const now = nowMin(), L = S.list, cfg = S.cfg;
-    const chairs = S.chairs.map(id => Object.assign({ id }, C.chairState(id, L, now, cfg)));
+    const now = nowMin(), L = S.list;
+    const chairs = S.chairs.map(id => Object.assign({ id }, C.chairState(id, L)));
     const by = ph => L.filter(v => v.ph === ph);
-    const waiting = by("waiting").sort((a, b) => a.st.arr - b.st.arr), late = waiting.filter(v => C.isLate(v, now, cfg));
-    const seated = by("chair"), off = seated.filter(v => !S.chairs.includes(v.st.chair));
+    const tx = by("tx").sort((a, b) => a.st.seat - b.st.seat), inn = by("in").sort((a, b) => a.st.arr - b.st.arr);
+    /* a chair kept on a visit that isn't on the loaded map (the map changed under it) */
+    const off = S.plan ? L.filter(v => (v.ph === "tx" || v.ph === "in") && v.st.chair && !S.chairs.includes(v.st.chair)) : [];
     const asks = L.filter(v => !["gone", "noshow", "done"].includes(v.ph) && v.ask.any && v.st.asked == null);
     const openBook = by("done").filter(v => v.st.booked === "later" && v.ask.book);
-    return { now, chairs, waiting, late, seated, off, coming: by("booked"), done: by("done"), noshow: by("noshow"), gone: by("gone"), asks, openBook,
-      ready: chairs.filter(c => c.state === "ready"), soon: chairs.filter(c => c.state === "soon") };
+    return { now, chairs, tx, inn, off, coming: by("booked"), done: by("done"), noshow: by("noshow"), gone: by("gone"), asks, openBook, askNow: tx.filter(C.askDue) };
   }
-  /* the visit to show when nothing is picked: waiting too long, ready to check out, out soon, waiting, in a chair, next to arrive */
+  /* the visit to show when nothing is picked: an ask due in treatment, checked in, in treatment, next to arrive */
   function pickVisit(F) {
-    return F.late[0] || F.ready[0]?.v || F.soon[0]?.v || F.waiting[0] || F.seated[0] || F.coming.find(v => (v.a.time ?? 0) >= F.now - 30) || F.coming[0] || F.done[F.done.length - 1] || null;
+    return F.askNow[0] || F.inn[0] || F.tx[0] || F.coming.find(v => (v.a.time ?? 0) >= F.now - 30) || F.coming[0] || F.done[F.done.length - 1] || null;
   }
   const visitBy = key => S.list.find(v => v.key === key) || null;
 
@@ -212,11 +212,27 @@
   async function readOnce(force) {
     try {
       await X.refreshDoc();
-      const raw = await X.load(); raw.plan = X.getDoc(MAP_KEY) || null;
+      const raw = await X.load(S.raw ? null : bootStep); raw.plan = X.getDoc(MAP_KEY) || null;
       const sig = hash(JSON.stringify(raw));
       S.live = true; S.err = "";
-      if (force || sig !== S.sig) { S.sig = sig; S.raw = raw; derive(); toChild({ k: "snap", raw }); if (!S.modal && !typing()) render(); }
+      if (force || sig !== S.sig) { const first = !S.raw; S.sig = sig; S.raw = raw; derive(); if (first) bootDone(); toChild({ k: "snap", raw }); if (!S.modal && !typing()) render(); }
     } catch (e) { console.error(e); S.err = "Couldn’t read the workbook. Check you’re still signed in; the tracker tries again in a few seconds."; render(); }
+  }
+
+  /* the loading screen on open: each step ticks as its read finishes (excel.js load), then the chair map is drawn */
+  const BOOT = ["Connecting to the workbook", "Reading Master Patient Tracker", "Reading Appt List", "Reading IVK Tracker Data", "Drawing the chair map"];
+  const rowsIn = v => v && v.length > 1 ? v.length - 1 : 0;
+  function bootStep(i, o) {
+    const B = S.boot || (S.boot = { i: 0, m: [] });
+    B.m[i] = i === 0 ? "Connected" : i === 1 ? (o.mpt ? plural(rowsIn(o.mpt), "patient") : "No Master Patient Tracker table") : i === 2 ? (o.appt ? plural(rowsIn(o.appt), "visit") + " on the list" : "No Appt List table")
+      : "Check-ins, holds, payments";
+    B.i = i + 1; render();
+  }
+  function bootDone() { const B = S.boot || (S.boot = { i: 0, m: [] }); B.m[4] = S.plan ? plural(S.chairs.length, "chair") : "No map loaded"; B.i = 5; }
+  function bootHTML() {
+    const B = S.boot || { i: 0, m: [] }, steps = FULL ? ["Getting the workbook from the task pane"] : BOOT;
+    return `<div class="boot" role="status" aria-live="polite"><div class="bootin"><div class="spinner" aria-hidden="true"></div><h1>IVK Tracker</h1><p class="muted">${S.err ? esc(S.err) : "Reading the workbook."}</p>
+      <ol class="steps">${steps.map((t, i) => `<li class="step ${B.i > i ? "done" : B.i === i ? "now" : "next"}"><span class="k">${B.i > i ? "✓" : ""}</span><span><span class="t">${t}</span><span class="m">${esc(B.m[i] || "")}</span></span><span></span></li>`).join("")}</ol></div></div>`;
   }
 
   /* ---------- frame ---------- */
@@ -227,7 +243,8 @@
   const navOn = k => k === "access" ? inAccess(S.view) : S.view === k;
   function badges() {
     const F = floor(), b = {};
-    const t = F.late.length + F.ready.length; if (t) b.today = { n: t, bad: F.late.length > 0 };
+    /* Today counts the visits in treatment whose providers still need asking */
+    if (F.askNow.length) b.today = { n: F.askNow.length };
     /* Patients counts only what blocks the next infusion; the amber needs live under the Needs attention chip */
     const pn = S.P.filter(p => C.needs(p, S.x).some(y => y.bad)).length; if (pn) b.patients = { n: pn, bad: true };
     const ca = S.CS.filter(c => c.state === "act").length; if (ca) b.consults = { n: ca };
@@ -242,23 +259,24 @@
   }
   function render() {
     const page = $(".page"), top = page ? page.scrollTop : 0;
-    if (!S.raw) { $("#app").innerHTML = `<div class="landing"><h1>IVK Tracker</h1><p class="muted">${S.err ? esc(S.err) : "Reading the workbook…"}</p></div>`; return; }
+    if (!S.raw) { $("#app").innerHTML = bootHTML(); return; }
     const B = badges(), item = ([k, label]) => `<button class="item" data-act="nav" data-v="${k}"${navOn(k) ? ' aria-current="page"' : ""}>${label}${B[k] ? `<span class="count${B[k].bad ? " bad" : ""}" aria-label="${B[k].n} need attention">${B[k].n}</span>` : ""}</button>`;
     /* the patient view takes the page while it's open (as the TMS Tracker's does); the rail closes it */
     const pv = S.pv && (S.PM.get(S.pv) || null);
     if (S.pv && !pv) S.pv = null;
     const body = pv ? ptViewHTML(pv) : { today: todayHTML, schedule: scheduleHTML, access: demandHTML, index: indexHTML, template: templatePageHTML, patients: patientsHTML, consults: consultsHTML, avail: availPageHTML, settings: settingsHTML }[S.view]();
-    /* the pane's own title bar already says IVK Tracker, so the rail doesn't; Settings sits at the bottom, above full screen
-       (in full screen) or on its own (in the pane, where full screen is with refresh and dark mode at the top right) */
+    /* Settings sits at the bottom, above full screen (in full screen) or on its own (in the pane, where full screen is with
+       refresh and dark mode at the top right). While a refresh reads the workbook the page dims and can't be pressed. */
     $("#app").innerHTML = `<div class="app">
       <nav class="rail" aria-label="IVK Tracker">
+        <div class="brand">IVK Tracker<small>${esc(S.cfg.Clinic)} · IV ketamine</small></div>
         ${NAV.map(item).join("")}
         <div class="spacer"></div>
         ${item(["settings", "Settings"])}
         ${FULL ? `<button class="item" data-act="full">Exit full screen</button>` : ""}
-        <div class="conn${S.err ? " off" : ""}"><span class="cdot"></span>${S.err ? "Not connected" : S.busy ? esc(S.busy) : FULL ? "Saving through the task pane" : `${esc(S.cfg.Clinic)}: connected to the workbook`}</div>
+        <div class="conn${S.err ? " off" : ""}"><span class="cdot"></span>${S.err ? "Not connected" : S.busy ? esc(S.busy) : FULL ? "Saving through the task pane" : esc(C.txt(S.raw.wbName).replace(/\.xls[xmb]?$/i, "") || `${S.cfg.Clinic}: connected to the workbook`)}</div>
       </nav>
-      <main class="page" id="main">${S.err ? `<div class="msg bad">${esc(S.err)}</div>` : ""}${body}</main></div>
+      <main class="page" id="main">${S.reading ? `<div class="pbar" aria-hidden="true"><span></span></div>` : ""}${S.err ? `<div class="msg bad">${esc(S.err)}</div>` : ""}<div class="pagein"${S.reading ? " inert" : ""}>${body}</div></main></div>
       ${S.modal ? `<div class="scrim" data-act="scrim"><div class="modal" role="dialog" aria-modal="true" aria-labelledby="mh">${MODALS[S.modal]()}</div></div>` : ""}`;
     const p2 = $(".page"); if (p2) p2.scrollTop = top;
     if (S.modal) { const f = $(".modal [autofocus]") || $(".modal button.primary"); if (f && !$(".modal").contains(document.activeElement)) f.focus(); }
@@ -266,7 +284,7 @@
   let toastT = null;
   function toast(msg, bad) {
     const t = $("#toast"); if (!t) return; t.textContent = msg; t.classList.toggle("bad", !!bad); t.classList.add("show");
-    clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove("show"), bad ? 6000 : 3200);
+    clearTimeout(toastT); toastT = setTimeout(() => t.classList.remove("show"), bad ? 6000 : 3600);
   }
   /* top right of every screen: read the workbook again (circular arrow), and light or dark (the moon switches to dark, the sun back) */
   const ICON = {
@@ -277,7 +295,7 @@
   };
   const tools = () => { const dark = S.theme === "dark", busy = !!S.reading;
     const full = FULL ? "" : `<button class="ibtn" data-act="full" title="${pop.dlg ? "Full screen is open" : "Full screen"}" aria-label="${pop.dlg ? "Full screen is open" : "Full screen"}">${ICON.full}</button>`;
-    return `<div class="tools">${full}<button class="ibtn${busy ? " spin" : ""}" data-act="reload" title="Refresh: read the workbook again" aria-label="Refresh from the workbook"${busy ? " disabled" : ""}>${ICON.refresh}</button>
+    return `<div class="tools">${busy ? `<span class="busyl">Reading the workbook…</span>` : ""}${full}<button class="ibtn${busy ? " spin" : ""}" data-act="reload" title="Refresh: read the workbook again" aria-label="Refresh from the workbook"${busy ? " disabled" : ""}>${ICON.refresh}</button>
       <button class="ibtn" data-act="theme" title="${dark ? "Light mode" : "Dark mode"}" aria-label="${dark ? "Switch to light mode" : "Switch to dark mode"}" aria-pressed="${dark}">${dark ? ICON.sun : ICON.moon}</button></div>`; };
   const head = (title, sub, clock) => `<div class="top"><div><h1>${title}</h1>${sub ? `<p class="sub">${sub}</p>` : ""}</div><div class="topr">${tools()}${clock ? `<div class="clock"><div class="t">${hm()}</div><div class="d">${esc(C.fmtDay(todayS()))}</div></div>` : ""}</div></div>`;
   const TABLE_WHAT = { tblIvkPlans: "index plans", tblIvkHolds: "holds", tblIvkOther: "the providers’ other visits", tblIvkFlags: "post-check flags", tblIvkPatient: "payment flags, Oakland, availability and the waitlist order", tblIvkPay: "payments and balance reminders", tblIvkExceptions: "provider time off and coverage", tblIvkProfile: "patient profiles (who pays, Sohar benefits)", tblIvkTransfers: "transfers to another clinic", tblIvkElsewhere: "visits at the other clinics (transfer and Oakland hand-offs)", tblIvkSooner: "the sooner waitlist" };
@@ -292,27 +310,27 @@
 
   /* ---------- Today ---------- */
   function todayHTML() {
-    const F = floor(), sub = [];
-    if (F.seated.length) sub.push(`${F.seated.length} in ${F.seated.length === 1 ? "a chair" : "chairs"}`);
-    if (F.late.length) sub.push(`<strong>${F.late.length} waiting ${C.waitMin(F.late[0], F.now)}+ min for a chair</strong>`);
-    else if (F.waiting.length) sub.push(`${F.waiting.length} checked in, waiting`);
-    if (F.ready.length) sub.push(`${F.ready.length} ready to check out`);
-    if (F.coming.length) sub.push(`${F.coming.length} still to come`);
-    if (F.asks.length) sub.push(`${F.asks.length} to ask about protocol or booking`);
-    if (!sub.length) sub.push(S.list.length ? "Everyone has been seen today" : "No IVK visits on the list today");
+    const F = floor();
+    const sub = S.list.length ? `${F.tx.length} in treatment, ${F.inn.length} checked in, ${F.coming.length} still to come.` : "No IVK visits on the list today.";
     if (!S.sel || !visitBy(S.sel)) { const v = pickVisit(F); S.sel = v ? v.key : null; }
-    return `${setupBanner()}${apptStale()}${head("Today", sub.join(", "), true)}
-      <div class="cols"><div class="stack">${chairsHTML(F)}${waitingHTML(F)}${comingHTML(F)}${gapsHTML(6)}${doneHTML(F)}</div>
-      <div>${S.bSel && !F.chairs.find(c => c.id === S.bSel)?.v ? openChairHTML(F, S.bSel) : visitCardHTML(visitBy(S.sel), F)}</div></div>`;
+    return `${setupBanner()}${apptStale()}${head("Today", sub, true)}
+      <div class="today"><div class="tmain">${S.plan ? chairsHTML(F) : planErrHTML()}
+        ${listHTML("In treatment", `${F.tx.length} now`, F.tx, "Nobody is in treatment.")}
+        ${listHTML("Checked in", `${F.inn.length} today`, F.inn, "Nobody is checked in.")}
+        ${listHTML("Still to come", F.coming.length ? `${F.coming.length} more today` : "", F.coming, "Nobody else is booked today.")}
+        ${doneHTML(F)}${gapsHTML(6)}</div>
+      <div class="tside">${visitCardHTML(visitBy(S.sel), F)}</div></div>`;
   }
+  const planErrHTML = () => S.planErr ? `<div class="msg warn">${esc(S.planErr)}</div>` : "";
   /* patients on the appointment list without a profile (treatment starts first): the tech makes one before they come */
   function gapsHTML(max) {
     const G = S.gaps; if (!G.length) return "";
-    const rows = G.slice(0, max).map(g => `<div class="row grow" data-state="${g.start ? "soon" : ""}"><span class="p">${esc(g.code || "—")}</span><span class="w">${dshort(g.first.date)}</span>
-      <span class="i">${g.start ? `<span class="f">Treatment start</span>, ` : ""}not on the Master Patient Tracker, ${C.fmtT(g.first.time)}</span><button class="btn ghost sm" data-act="profile" data-m="${esc(g.mrn)}">Create profile</button></div>`).join("");
-    return `<section class="card list"><div class="lh"><h2>New patients to add</h2><span>${G.length}</span></div>${rows}
-      ${G.length > max ? `<p class="note" style="padding:0 14px 10px">And ${plural(G.length - max, "more")} in the next 4 weeks. <button class="btn mute sm" data-act="nav" data-v="patients">See them on Patients</button></p>` : ""}
-      ${S.profOn ? "" : `<p class="note warn" style="padding:0 14px 10px">Profiles need the newer table. Use <b>Update the workbook</b> in Settings.</p>`}</section>`;
+    const rows = G.slice(0, max).map(g => `<div class="nrow"><b>${esc(g.code || "—")}</b>
+      <span class="i">${g.start ? `<span class="ktab st"></span>Treatment start` : "Visit"} ${dshort(g.first.date)} ${C.fmtT(g.first.time)} · ${esc(C.provName(g.first.provider) || "")} · MRN ${esc(g.mrn)}</span>
+      <button class="btn line sm" data-act="profile" data-m="${esc(g.mrn)}">Create profile</button></div>`).join("");
+    return `<section class="card list"><div class="lh"><h2>New patients to add</h2><span>On the appointment list in the next 4 weeks, not on the tracker</span></div>${rows}
+      ${G.length > max ? `<p class="note">And ${plural(G.length - max, "more")} in the next 4 weeks. <button class="btn mute sm" data-act="nav" data-v="patients">See them on Patients</button></p>` : ""}
+      ${S.profOn ? "" : `<p class="note warn">Profiles need the newer table. Use <b>Update the workbook</b> in Settings.</p>`}</section>`;
   }
   function apptStale() {
     const u = S.raw.apptUpdated, T = todayS();
@@ -320,171 +338,152 @@
     return `<div class="msg warn"><b>${u == null ? "No record of when the appointment list was last updated." : `The appointment list was last updated ${C.fmtD(Math.floor(u))}.`}</b> Upload a fresh NextGen export so today’s list is right. <button class="btn ghost sm" data-act="nav" data-v="settings">Upload in Settings</button></div>`;
   }
   const chairTxt = id => `Chair ${id}`;
+  /* the chair map: only once a Bay Map Builder file is loaded (Settings › Chair map) */
   function chairsHTML(F) {
-    const P = S.plan, used = F.chairs.filter(c => c.v).length;
-    const hd = `<div class="hd"><h2>Chairs</h2><span>${used} of ${F.chairs.length} in use${F.ready.length ? `, ${F.ready.length} ready to check out` : ""}</span></div>`;
-    const key = `<ul class="key" aria-label="Key"><li><span class="sw open"></span>Open</li><li><span class="sw track"></span>In chair</li><li><span class="sw soon"></span>Out within ${S.cfg.SoonMin} min</li><li><span class="sw ready"></span>Ready to check out</li></ul>`;
-    const label = c => `${chairTxt(c.id)}, ${c.v ? `${C.code(c.v)}, ${C.chairStatus(c).replace(/min\b/, "minutes")}` : "open"}`;
-    const cur = c => S.bSel ? S.bSel === c.id : !!(c.v && c.v.key === S.sel);
+    const P = S.plan, used = F.chairs.filter(c => c.v).length, W = P.w, H = P.h;
+    const label = c => `${chairTxt(c.id)}, ${c.v ? `${C.code(c.v)}, ${C.chairStatus(c)}` : "open"}`;
+    const cur = c => !!(c.v && c.v.key === S.sel);
     const chairOf = id => F.chairs.find(c => c.id === id) || { id, state: "open", v: null };
     const off = F.off.length ? `<p class="boff">In a chair that isn’t on the map: ${F.off.map(v => `${esc(C.code(v))} (${esc(chairTxt(v.st.chair))})`).join(", ")}.</p>` : "";
-    if (!P) {
-      const tiles = F.chairs.map(c => `<button class="ctile" data-act="bSel" data-b="${esc(c.id)}" data-state="${c.state}" aria-pressed="${cur(c)}" aria-label="${esc(label(c))}">
-        <span class="n"><span class="num">${esc(c.id)}</span>${c.v ? esc(C.code(c.v)) : "Open"}</span><span class="s"><span class="dot"></span>${c.v ? esc(C.chairStatus(c)) : F.waiting.length ? `${esc(C.code(F.waiting[0]))} waiting` : "Nobody waiting"}</span></button>`).join("");
-      /* no map yet: the chairs stay folded (one line) until someone opens them or loads a map in Settings */
-      return `<section class="card mapcard mini"><details class="fold" id="chairFold"${S.chairsOpen ? " open" : ""}><summary>Chairs <span>${used} of ${F.chairs.length} in use${F.ready.length ? `, ${F.ready.length} ready to check out` : ""}</span></summary>
-        <div class="strip">${tiles}</div>${key}${off}${S.planErr ? `<p class="boff">${esc(S.planErr)}</p>` : ""}<p class="note">No chair map yet. Load one in Settings › Chair map and the chairs show as the room.</p></details></section>`;
-    }
-    const W = P.w, H = P.h;
-    const bays = P.bays.map(b => { const c = chairOf(b.id); return Object.assign({}, b, { c, st: c.state, title: c.v ? C.code(c.v) : "Open", s: c.v ? C.chairStatus(c) : "" }); });
+    const bays = P.bays.map(b => { const c = chairOf(b.id); return Object.assign({}, b, { c, st: c.state, title: c.v ? C.code(c.v) : "Open", s: C.chairStatus(c) }); });
     const lit = b => !!b.c.v, usedB = id => lit(bays.find(b => b.id === id) || { c: {} });
     const pos = b => `left:${bpPct(b.cx - b.r, W)};top:${bpPct(b.cy - b.r, H)};width:${bpPct(2 * b.r, W)}`;
     const tag = b => `<div class="btag" data-state="${b.st}" style="left:${bpPct(b.tag[0], W)};top:${bpPct(b.tag[1], H)}" aria-hidden="true"><div class="n"><span class="num">${esc(b.id)}</span>${esc(b.title)}</div>${b.s ? `<div class="s"><span class="dot"></span><span class="tx">${esc(b.s)}</span></div>` : ""}</div>`;
-    const bay = b => `<button class="bay" data-act="bSel" data-b="${esc(b.id)}" data-state="${b.st}" aria-pressed="${cur(b.c)}" aria-current="${cur(b.c)}" aria-label="${esc(label(b.c))}" style="${pos(b)}"></button>`;
-    return `<section class="card mapcard">${hd}<div class="bplan" style="aspect-ratio:${W}/${H}">
+    const bay = b => `<button class="bay" data-act="bSel" data-b="${esc(b.id)}" data-state="${b.st}" aria-current="${cur(b.c)}" aria-label="${esc(label(b.c))}" style="${pos(b)}"></button>`;
+    return `<section class="card mapcard"><div class="hd"><h2>Chairs</h2><span>${used} of ${F.chairs.length} in use · tap a chair for its visit</span></div>
+      <div class="bplan" style="aspect-ratio:${W}/${H}">
       <svg viewBox="0 0 ${W} ${H}" aria-hidden="true">${bpUnder(P, usedB)}</svg>
-      ${bpRooms(P)}${bays.map(bay).join("")}
+      ${bays.map(bay).join("")}
       <svg viewBox="0 0 ${W} ${H}" aria-hidden="true">${bpOver(P, bays, lit)}</svg>
-      ${bays.map(tag).join("")}</div>${key}${off}</section>`;
+      ${bpRooms(P)}${bays.map(tag).join("")}</div>
+      <ul class="bkey" aria-label="Key"><li><span class="bsw" data-k="open"></span>Open</li><li><span class="bsw" data-k="track"></span>Checked in or in treatment</li><li><span class="bsw" data-k="soon"></span>Ask the providers</li><li><span class="lamp"></span>Lantern on: someone is in the chair</li></ul>${off}</section>`;
   }
-  /* what the row says it needs, in amber; red only for a too-long wait */
-  function askFlag(v) {
-    if (!v.p) return `<span class="f">Not on the Master Patient Tracker</span>`;
-    /* a treatment start without the rest of index booked behind it comes first */
-    const ish = C.indexShort(v.p, S.A, v.a, S.cfg);
-    return (ish ? `<span class="f">Index not fully booked (${ish.booked} of ${ish.need})</span>, ` : "") + askRest(v);
+  /* what the row says it needs, in amber */
+  function rowFlag(v) {
+    if (!v.p) return "Not on the Master Patient Tracker";
+    if (C.askDue(v)) return "Ask providers";
+    const ish = C.indexShort(v.p, S.A, v.a, S.cfg); if (ish) return `Index not fully booked (${ish.booked} of ${ish.need})`;
+    if (v.ph === "booked" && v.st.asked == null) return v.ask.book ? "Book out" : v.ask.proto ? "Confirm protocol" : "";
+    return "";
   }
-  function askRest(v) {
-    if (v.st.asked != null) return `<span class="ok">Asked the group chat at ${C.fmtT(v.st.asked)}</span>`;
-    const a = v.ask, t = a.book && a.proto ? "Confirm protocol, book at discharge" : a.book ? (a.thru == null ? "Nothing booked after today" : `Booked through ${C.fmtD(a.thru)}`) : a.proto ? "Confirm protocol" : "";
-    return t ? `<span class="f">${t}</span>` : `<span>Booked through ${C.fmtD(a.thru)}</span>`;
+  /* treatment start (blue tab), index (lavender), follow-up (grey) and "Index 3 of 6" for an Induction patient */
+  const kindOf = v => visitKind(v.a) || "fu";
+  const KIND_TXT = { st: "Treatment start", ix: "Index", fu: "Follow-up" };
+  function kindTxt(v) {
+    const ix = v.p ? C.indexState(v.p, S.A, todayS(), S.cfg) : null;
+    return ix && !ix.complete ? `Index ${Math.min(ix.N, ix.done + 1)} of ${ix.N}` : KIND_TXT[kindOf(v)];
   }
+  const hasPc = v => !!S.X.needsPost(v.a.mrn, v.a.event || "");
+  function rowHTML(v) {
+    const w = v.ph === "tx" ? `Since ${C.fmtT(v.st.seat)}` : v.ph === "in" ? `At ${C.fmtT(v.st.arr)}` : v.ph === "done" ? `Out ${C.fmtT(v.st.out)}` : v.ph === "noshow" ? "No-show" : v.ph === "gone" ? "Not coming" : inTxt(v.a.time);
+    const info = [kindTxt(v), C.provName(v.a.provider), hasPc(v) ? "PC" : "", v.p && ptOf(v.p.mrn)?.oak ? "Oakland" : ""].filter(Boolean).join(" · ");
+    const flag = v.ph === "done" ? (v.st.booked === "later" && v.ask.book ? "Next visit not booked" : "") : rowFlag(v);
+    const right = S.plan && v.st.chair && (v.ph === "tx" || v.ph === "in") ? chairTxt(v.st.chair) : "";
+    return `<button class="row${v.ph === "done" || v.ph === "gone" || v.ph === "noshow" ? " past" : ""}" data-act="sel" data-k="${esc(v.key)}" aria-pressed="${S.sel === v.key}">
+      <span class="tm">${C.fmtT(v.a.time).replace(/ ?[AP]M$/, "")}</span><span class="w">${w}</span>
+      <span class="i"><span class="ktab ${kindOf(v)}"></span><b>${esc(C.code(v))}</b>${mrnTag(v.a.mrn)}<span class="m">${esc(info)}</span>${flag ? `<span class="f">${esc(flag)}</span>` : ""}</span>
+      <span class="r">${esc(right)}</span></button>`;
+  }
+  const inTxt = t => { if (t == null) return ""; const d = t - nowMin(); return d <= 0 ? "Due now" : d >= 60 ? `In ${Math.floor(d / 60)} h${d % 60 ? ` ${d % 60} min` : ""}` : `In ${d} min`; };
+  const listHTML = (title, count, L, empty) => `<section class="card list"><div class="lh"><h2>${title}</h2><span>${count}</span></div>${L.map(rowHTML).join("") || `<p class="empty">${empty}</p>`}</section>`;
   const mrnTag = m => m ? `<small class="pm">${esc(m)}</small>` : "";
   /* in a window title */
   const mrnH = m => m ? ` <span class="mrn">MRN ${esc(m)}</span>` : "";
-  const rowBtn = (v, act, label) => `<button class="btn ghost sm" data-act="${act}" data-k="${esc(v.key)}">${label}</button>`;
-  function waitingHTML(F) {
-    if (!F.waiting.length) return "";
-    const rows = F.waiting.map(v => { const w = C.waitMin(v, F.now), late = C.isLate(v, F.now, S.cfg);
-      return `<div class="row" role="button" tabindex="0" data-act="sel" data-k="${esc(v.key)}" data-state="${late ? "late" : "track"}" aria-pressed="${S.sel === v.key && !S.bSel}">
-        <span class="p">${esc(C.code(v))}${mrnTag(v.a.mrn)}</span><span class="w">${C.fmtT(v.a.time)}</span><span class="i">${late ? `<span class="f bad">Waiting ${w} min for a chair</span>` : `Checked in ${C.fmtT(v.st.arr)}, ${askFlag(v)}`}</span>${rowBtn(v, "seat", "Seat")}</div>`; }).join("");
-    return `<section class="card list"><div class="lh"><h2>Checked in, waiting for a chair</h2><span>${F.waiting.length}</span></div>${rows}</section>`;
-  }
-  function comingHTML(F) {
-    const rows = F.coming.map(v => { const late = v.a.time != null && F.now - v.a.time > 15;
-      return `<div class="row" role="button" tabindex="0" data-act="sel" data-k="${esc(v.key)}" aria-pressed="${S.sel === v.key && !S.bSel}">
-        <span class="p">${esc(C.code(v))}${mrnTag(v.a.mrn)}</span><span class="w">${C.fmtT(v.a.time)}</span><span class="i">${late ? `<span class="f">Not here yet</span>, ` : ""}${esc(C.provName(v.a.provider))}${v.a.event && /start/i.test(v.a.event) ? ", treatment start" : ""}, ${askFlag(v)}</span>${rowBtn(v, "checkin", "Check in")}</div>`; }).join("");
-    return `<section class="card list"><div class="lh"><h2>Still to come</h2><span>${F.coming.length ? F.coming.length : ""}</span></div>${rows || `<p class="empty">Nobody else is booked today.</p>`}</section>`;
-  }
   function doneHTML(F) {
     const L = [...F.done, ...F.noshow, ...F.gone];
     if (!L.length) return "";
-    const what = v => v.ph === "noshow" ? "No-show in NextGen" : v.ph === "gone" ? "Not coming today" : v.st.booked === "later" && v.ask.book ? `<span class="f">Out ${C.fmtT(v.st.out)}, next visit not booked</span>` : `Out ${C.fmtT(v.st.out)}${v.st.booked === "yes" || !v.ask.book ? ", next visit booked" : ""}`;
-    const rows = L.map(v => `<div class="row" role="button" tabindex="0" data-act="sel" data-k="${esc(v.key)}" aria-pressed="${S.sel === v.key && !S.bSel}"><span class="p">${esc(C.code(v))}${mrnTag(v.a.mrn)}</span><span class="w">${C.fmtT(v.a.time)}</span><span class="i">${what(v)}</span><span></span></div>`).join("");
-    return `<section class="card list"><details class="fold"${F.openBook.length ? " open" : ""}><summary>Done for today <span>${L.length}${F.openBook.length ? `, ${F.openBook.length} still to book` : ""}</span></summary>${rows}</details></section>`;
-  }
-  function openChairHTML(F, id) {
-    const w = F.waiting[0];
-    return `<aside class="card detail" aria-label="${esc(chairTxt(id))}"><div class="dh"><div><div class="name">${esc(chairTxt(id))}<span class="loc">open</span></div></div></div>
-      <p class="body">${w ? `${esc(C.code(w))} checked in at ${C.fmtT(w.st.arr)} and is waiting.` : F.coming[0] ? `Nobody is waiting. Next to arrive: ${esc(C.code(F.coming[0]))} at ${C.fmtT(F.coming[0].a.time)}.` : "Nobody is waiting."}</p>
-      ${w ? `<button class="btn primary" data-act="seatHere" data-k="${esc(w.key)}" data-b="${esc(id)}">Seat ${esc(C.code(w))} in ${esc(chairTxt(id))}</button>` : ""}
-      ${F.waiting.length > 1 ? `<div class="actions">${F.waiting.slice(1).map(v => `<button class="btn ghost" data-act="seatHere" data-k="${esc(v.key)}" data-b="${esc(id)}">Seat ${esc(C.code(v))} here</button>`).join("")}</div>` : ""}</aside>`;
+    return `<section class="card list"><div class="lh"><h2>Checked out</h2><span>${F.done.length} today${F.openBook.length ? `, ${F.openBook.length} still to book` : ""}</span></div>${L.map(rowHTML).join("")}</section>`;
   }
 
-  /* the visit card: lead, timeline, steps, the one next step */
-  function visitState(v, F) {
-    const cs = v.ph === "chair" ? F.chairs.find(c => c.id === v.st.chair) || C.chairState(v.st.chair, S.list, F.now, S.cfg) : null;
-    const askDue = v.ask.any && v.st.asked == null && !!v.p;
-    if (v.ph === "booked") { const late = v.a.time != null && F.now - v.a.time > 15;
-      return { cls: late ? "soon" : "", lead: late ? `${C.fmtT(v.a.time)} visit, not checked in yet` : `Booked at ${C.fmtT(v.a.time)}`, pri: ["checkin", "Check in"] }; }
-    if (v.ph === "waiting") { const w = C.waitMin(v, F.now), late = C.isLate(v, F.now, S.cfg);
-      return { cls: late ? "late" : "", lead: late ? `Waiting ${w} min for a chair` : `Checked in at ${C.fmtT(v.st.arr)}, waiting for a chair`, pri: ["seat", `Seat ${C.code(v)} in a chair`] }; }
-    if (v.ph === "chair") {
-      const lead = cs.state === "ready" ? `Due out at ${C.fmtT(cs.end)}. Check out at the desk` : cs.state === "soon" ? `Out in ${cs.left} min, around ${C.fmtT(cs.end)}` : `In ${chairTxt(v.st.chair)} since ${C.fmtT(v.st.seat)}, out around ${C.fmtT(cs.end)}`;
-      return { cls: cs.state === "track" ? "" : cs.state, lead, cs, pri: askDue && cs.state === "track" ? ["ask", "Ask the group chat"] : ["checkout", "Check out"] };
+  /* the visit card: status, tags, lead, steps, facts and the one next step */
+  function visitState(v) {
+    const p = v.p, pc = hasPc(v), post = v.st.seat != null && pc ? v.st.seat + +S.cfg.PostCheckMin : null, prov = C.provName(v.a.provider) || "the provider";
+    const why = !p ? "" : v.ask.proto ? `The protocol hasn’t been confirmed since ${p.protoAt != null ? C.fmtD(p.protoAt) : "it was set"}.` : v.ask.thru != null ? `Booked through ${C.fmtD(v.ask.thru)}.` : "Nothing is booked after today.";
+    if (v.ph === "booked") { const late = v.a.time != null && nowMin() - v.a.time > 15;
+      return { lead: late ? `${C.fmtT(v.a.time)} visit, not checked in yet` : inTxt(v.a.time) || `Booked at ${C.fmtT(v.a.time)}`, body: `Expected at ${C.fmtT(v.a.time)}.${p && v.ask.any ? " The group chat gets the ask at check-in." : ""}`, pri: ["checkin", "Check in"] }; }
+    if (v.ph === "in") return { lead: "Checked in", body: `Checked in at ${C.fmtT(v.st.arr)} for a ${C.fmtT(v.a.time)} visit.`, pri: ["start", "Start treatment"] };
+    if (v.ph === "tx") {
+      if (C.askDue(v)) return { warn: true, lead: "Ask the group chat", body: `${why} Ask now so the provider can answer before discharge.`, pri: ["ask", "Ask the group chat"] };
+      return { lead: "In treatment", body: `Since ${C.fmtT(v.st.seat)}.${post != null ? ` Requires a post-check at ${C.fmtT(post)} with ${prov}.` : " Nothing needed from the desk until check-out."}`, pri: ["checkout", "Check out"] };
     }
     if (v.ph === "done") { const open = v.st.booked === "later" && v.ask.book;
-      return { cls: open ? "soon" : "ready", lead: open ? `Checked out at ${C.fmtT(v.st.out)}. Next visit not booked yet` : `Checked out at ${C.fmtT(v.st.out)}`, pri: open ? ["markBooked", "Mark next visit booked"] : null }; }
-    if (v.ph === "noshow") return { cls: "", lead: "NextGen has this visit as a no-show", pri: ["checkin", "Check in anyway"] };
-    return { cls: "", lead: "Taken off today’s list", pri: ["undoGone", "Put back on today’s list"] };
+      return { warn: open, lead: `Checked out at ${C.fmtT(v.st.out)}`, body: open ? "Next visit not booked yet." : "Nothing left for this visit.", pri: open ? ["markBooked", "Mark next visit booked"] : v.p ? ["printSched", "Print schedule"] : null }; }
+    if (v.ph === "noshow") return { lead: "NextGen has this visit as a no-show", body: "", pri: ["checkin", "Check in anyway"] };
+    return { lead: "Taken off today’s list", body: "NextGen wasn’t changed.", pri: ["undoGone", "Put back on today’s list"] };
   }
-  function visitCardHTML(v, F) {
-    if (!v) return `<aside class="card detail"><div class="name">No visit picked</div><p class="body">${S.list.length ? "Pick a chair or a row to see the visit." : "Nobody is on today’s IVK list. Upload a fresh appointment list in Settings if that looks wrong."}</p></aside>`;
-    const vs = visitState(v, F), k = esc(v.key), c = C.code(v), p = v.p;
-    const meta = [C.fmtT(v.a.time), v.a.event ? C.eventShort(v.a.event).toLowerCase() : "", C.provName(v.a.provider), p?.freq, p?.reqPost ? "requires post-check" : ""].filter(Boolean).join(", ");
-    const loc = v.ph === "chair" ? chairTxt(v.st.chair) : v.ph === "waiting" ? "lobby" : "";
-    const arr = sentToday("arrival", c), ask = sentToday("protocol", c);
-    /* timeline while in a chair: in chair, provider check (SOP: within the first 30 min), expected out */
-    let tl = "";
-    if (vs.cs) {
-      const s0 = v.st.seat, e0 = vs.cs.end, span = Math.max(1, e0 - s0), at = t => Math.min(100, Math.max(0, (t - s0) / span * 100));
-      tl = `<div class="tl" aria-hidden="true"><div class="bar"></div><div class="fill" style="width:${at(F.now)}%"></div>
-        <div class="mark done" style="left:0"></div><div class="mark${F.now >= vs.cs.check ? " done" : ""}" style="left:${at(vs.cs.check)}%"></div><div class="mark${F.now >= e0 ? " done" : ""}" style="left:100%"></div>
-        <div class="now" style="left:${at(F.now)}%"></div>
-        <span class="lbl" style="left:${at(vs.cs.check)}%">Provider check ${C.fmtT(vs.cs.check)}</span><span class="lbl end" style="left:100%">Out ${C.fmtT(e0)}</span></div>`;
-    }
+  function visitCardHTML(v) {
+    if (!v) return `<aside class="card detail"><div class="name">No visit picked</div><p class="body">${S.list.length ? "Pick a row or a chair to see the visit." : "Nobody is on today’s IVK list. Upload a fresh appointment list in Settings if that looks wrong."}</p></aside>`;
+    const vs = visitState(v), k = esc(v.key), c = C.code(v), p = v.p, pc = hasPc(v), T = todayS();
+    const where = ({ in: "Checked in", tx: "In treatment", done: "Checked out", noshow: "No-show", gone: "Not coming" })[v.ph] || "";
+    const loc = where + (S.plan && v.st.chair && (v.ph === "in" || v.ph === "tx") ? ` · ${chairTxt(v.st.chair)}` : "");
+    const meta = [`${C.fmtT(v.a.time)} ${kindTxt(v).toLowerCase()}`, C.provName(v.a.provider), `MRN ${v.a.mrn}`].filter(Boolean).join(" · ");
+    const ix = p ? C.indexState(p, S.A, T, S.cfg) : null, kd = kindOf(v), pt = p ? ptOf(p.mrn) : null;
+    const tags = [kd === "st" ? ["st", "Treatment start"] : null, ix && !ix.complete ? ["ix", `Index ${Math.min(ix.N, ix.done + 1)} of ${ix.N}`] : null, pc ? ["ix", "Requires post-check"] : null,
+      pt?.oak ? ["", "Oakland"] : null, p?.freq ? ["", p.freq] : null].filter(Boolean);
+    const arr = sentToday("arrival", c), ask = sentToday("protocol", c), post = v.st.seat != null && pc ? v.st.seat + +S.cfg.PostCheckMin : null;
     const st = (cls, t, m, w) => `<li class="step ${cls}"><span class="k">${cls === "done" ? "✓" : ""}</span><span><span class="t">${t}</span>${m ? `<span class="m">${m}</span>` : ""}</span><span class="w">${w || ""}</span></li>`;
     const steps = [
-      st(v.st.arr != null ? "done" : v.ph === "booked" || v.ph === "noshow" ? "now" : "next", "Checked in", arr ? `${esc(routeTo("arrival"))} told in Teams at ${timeOf(arr.at)}` : v.st.arr != null ? (teamsReady("arrival") ? `${esc(routeTo("arrival"))} not told in Teams` : "Teams not set up for arrivals") : "", v.st.arr != null ? C.fmtT(v.st.arr) : ""),
-      st(v.st.seat != null ? "done" : v.ph === "waiting" ? (C.isLate(v, F.now, S.cfg) ? "late" : "now") : "next", v.st.chair ? `In ${chairTxt(v.st.chair)}` : "In a chair", v.ph === "waiting" && C.isLate(v, F.now, S.cfg) ? `Waiting ${C.waitMin(v, F.now)} min` : "", v.st.seat != null ? C.fmtT(v.st.seat) : ""),
-      v.ask.any || v.st.asked != null ? st(v.st.asked != null ? "done" : v.ph === "chair" || v.ph === "waiting" ? "now" : "next", v.ask.book && v.ask.proto ? "Ask to confirm protocol and book at discharge" : v.ask.book ? "Ask to send to the desk for booking" : "Ask to confirm protocol",
-        v.st.asked != null ? (ask ? `Sent to ${esc(routeTo("protocol"))}` : "Marked asked") : teamsReady("protocol") ? `Goes to ${esc(routeTo("protocol"))}` : "Teams not set up for the group chat", v.st.asked != null ? C.fmtT(v.st.asked) : "") : "",
-      st(v.st.out != null ? (vs.cls === "soon" ? "soon" : "done") : vs.cs && vs.cs.state !== "track" ? (vs.cs.state === "soon" ? "soon" : "now") : "next", "Checked out",
-        v.st.out != null ? (v.st.booked === "yes" ? "Next visit booked" : v.st.booked === "no" ? "No next visit needed" : v.ask.book ? "Next visit not booked yet" : "Next visit on the list") : vs.cs ? `Expected around ${C.fmtT(vs.cs.end)}` : "", v.st.out != null ? C.fmtT(v.st.out) : "")
+      v.st.arr != null ? st("done", "Checked in", arr ? `${esc(routeTo("arrival"))} told in Teams at ${timeOf(arr.at)}` : teamsReady("arrival") ? `${esc(routeTo("arrival"))} not told in Teams` : "Teams not set up for arrivals", C.fmtT(v.st.arr))
+        : st(v.ph === "booked" || v.ph === "noshow" ? "now" : "next", "Check in", `${esc(routeTo("arrival"))} is told in Teams`, C.fmtT(v.a.time)),
+      v.st.seat != null ? st("done", "In treatment", [S.plan && v.st.chair ? chairTxt(v.st.chair) : "", post != null ? `Post check at ${C.fmtT(post)}` : ""].filter(Boolean).join(" · "), `since ${C.fmtT(v.st.seat)}`)
+        : st(v.ph === "in" ? "now" : "next", "Start treatment", "", ""),
+      p && (v.ask.any || v.st.asked != null) ? (v.st.asked != null ? st("done", "Asked the providers", ask ? esc(routeTo("protocol")) : "Marked asked", C.fmtT(v.st.asked))
+        : st(v.ph === "tx" ? "soon" : "next", "Ask the providers", v.ask.proto ? `Protocol not confirmed since ${p.protoAt != null ? C.fmtD(p.protoAt) : "it was set"}` : v.ask.thru != null ? `Booked through ${C.fmtD(v.ask.thru)}` : "Nothing booked after today", "")) : "",
+      v.st.out != null ? st("done", "Checked out", v.st.booked === "yes" ? "Next visit booked" : v.st.booked === "no" ? "No next visit needed" : v.ask.book ? "Next visit not booked yet" : "Next visit on the list", C.fmtT(v.st.out))
+        : st(v.ph === "tx" && !C.askDue(v) ? "now" : "next", "Check out", "Next visit, protocol, payment", "")
     ].join("");
-    /* secondary steps as ghost buttons; corrections and lookups as quiet ones underneath */
-    const ghosts = [], quiet = [];
-    if (v.ph === "chair" && vs.pri[0] === "ask") ghosts.push(["checkout", "Check out"]);
-    if ((v.ph === "chair" || v.ph === "waiting") && vs.pri[0] !== "ask" && v.ask.any && v.st.asked == null && v.p) ghosts.push(["ask", "Ask the group chat"]);
-    if (v.ph === "waiting") ghosts.push(["remind", "Remind the RN"]);
-    if (v.ph === "chair") ghosts.push(["seat", "Move to another chair"]);
+    /* secondary steps as quiet buttons under the primary; corrections and lookups underneath them */
+    const sec = [], quiet = [];
+    if (v.ph === "tx" && vs.pri?.[0] === "ask") sec.push(["checkout", "Check out"]);
+    if ((v.ph === "tx" || v.ph === "in") && vs.pri?.[0] !== "ask" && p) sec.push(["ask", "Ask the group chat"]);
+    if (p && vs.pri?.[0] !== "printSched") sec.push(["printSched", "Print schedule"]);
+    if (v.ph === "in") sec.push(["remind", `Remind ${routeTo("arrival")}`]);
+    if (v.ph === "tx" && S.plan) sec.push(["seat", v.st.chair ? "Move to another chair" : "Pick a chair"]);
+    if (p && ix?.complete) sec.push(["idxDone", "Move to Ongoing"]);
+    const oak = p ? C.oakState(p, pt, S.A, T, S.cfg) : null;
+    if (oak && oak.task && v.ph !== "booked") sec.push(["oakTask", "Mark OAK tasked"]);
+    const xs = p ? C.xferState(S.XF.get(p.mrn), S.A, T, S.x.E) : null;
+    if (xs && xs.due && v.ph !== "booked") sec.push(["xfer", `Confirm transfer to ${xs.to}`]);
     if (v.ph === "booked") quiet.push(["gone", "Not coming today"]);
-    if (v.ph === "waiting") quiet.push(["undoIn", "Undo check-in"]);
-    if (v.ph === "chair") quiet.push(["undoSeat", "Back to waiting"]);
+    if (v.ph === "in") quiet.push(["undoIn", "Undo check-in"]);
+    if (v.ph === "tx") quiet.push(["undoSeat", "Back to checked in"]);
     if (v.ph === "done") quiet.push(["undoOut", "Undo check-out"]);
-    if (v.p) quiet.push(["openPt", "Patient view"]);
-    if (v.p && C.indexState(v.p, S.A, todayS(), S.cfg)?.complete) ghosts.push(["idxDone", "Move to Ongoing"]);
-    /* start paperwork is for a treatment start only; the start email goes out before it, so it's on the patient view, not today's card */
-    if (v.p) { (v.ph === "chair" || v.ph === "done" ? ghosts : quiet).push(["printSched", "Print schedule"]); if (/start/i.test(v.a.event)) quiet.push(["startForms", "Start paperwork"]); }
+    /* start paperwork is for a treatment start only; the start email goes out before it, so it's on the patient view */
+    if (p && /start/i.test(v.a.event)) quiet.push(["startForms", "Start paperwork"]);
     /* today's payment: recorded at check-in or any time before check-out, and changed after it */
-    if (v.p && S.payOn && v.ph !== "booked" && v.ph !== "gone") quiet.push(["payEdit", ["prov", "inf"].some(k => C.payOf(S.pays, v.key, k)) ? "Change today’s payment" : "Record today’s payment"]);
-    const oak = v.p ? C.oakState(v.p, ptOf(v.p.mrn), S.A, todayS(), S.cfg) : null;
-    if (oak && oak.task && v.ph !== "booked") ghosts.push(["oakTask", "Mark OAK tasked"]);
-    const xs = v.p ? C.xferState(S.XF.get(v.p.mrn), S.A, todayS(), S.x.E) : null;
-    if (xs && xs.due && v.ph !== "booked") ghosts.push(["xfer", `Confirm transfer to ${xs.to}`]);
-    const ish = v.p ? C.indexShort(v.p, S.A, v.a, S.cfg) : null;
-    const bt = (cls, [a, l]) => `<button class="btn ${cls}" data-act="${a}" data-k="${k}" data-m="${esc(v.a.mrn)}">${l}</button>`;
-    return `<aside class="card detail" aria-label="${esc(c)}"><div class="dh"><div><div class="name">${esc(c)}<span class="mrn">MRN ${esc(v.a.mrn)}</span>${loc ? `<span class="loc">${esc(loc)}</span>` : ""}</div><div class="meta">${esc(meta)}</div></div></div>
-      <p class="lead ${vs.cls}">${esc(vs.lead)}</p>${tl}
-      ${ish ? `<div class="msg warn"><b>Index not fully booked.</b> ${ish.booked} of the ${ish.need} visits after this start are on the list, and ${esc(c)} is in Induction at ${esc(v.p.freq || "the index protocol")}. <button class="btn ghost sm" data-act="pvPlan" data-m="${esc(v.a.mrn)}">Plan index visits</button></div>` : ""}
+    if (p && S.payOn && v.ph !== "booked" && v.ph !== "gone") quiet.push(["payEdit", PARTS.some(x => C.payOf(S.pays, v.key, x)) ? "Change today’s payment" : "Record today’s payment"]);
+    const ish = p ? C.indexShort(p, S.A, v.a, S.cfg) : null;
+    const bt = (cls, [a, l]) => `<button class="btn ${cls}" data-act="${a}" data-k="${k}" data-m="${esc(v.a.mrn)}">${esc(l)}</button>`;
+    return `<aside class="card detail" aria-label="${esc(c)}"><div class="dh"><div><div class="name">${esc(c)}${loc ? `<span class="loc">${esc(loc)}</span>` : ""}</div><div class="meta">${esc(meta)}</div></div>
+        ${p ? `<button class="btn mute sm" data-act="openPt" data-m="${esc(v.a.mrn)}">Patient view</button>` : ""}</div>
+      ${tags.length ? `<div class="tags">${tags.map(([t, l]) => `<span class="tag${t ? ` ${t}` : ""}">${esc(l)}</span>`).join("")}</div>` : ""}
+      <p class="lead${vs.warn ? " soon" : ""}">${esc(vs.lead)}</p>${vs.body ? `<p class="body">${esc(vs.body)}</p>` : ""}
+      ${ish ? `<div class="msg warn"><b>Index not fully booked.</b> ${ish.booked} of the ${ish.need} visits after this start are on the list, and ${esc(c)} is in Induction at ${esc(p.freq || "the index protocol")}. <button class="btn ghost sm" data-act="pvPlan" data-m="${esc(v.a.mrn)}">Plan index visits</button></div>` : ""}
       ${xs && !xs.due ? `<p class="note">Transfer to ${esc(xs.to)}${xs.date != null ? ` on ${C.fmtD(xs.date)}` : ""}; confirm it at their last visit here${xs.last ? ` (${C.fmtD(xs.last.date)})` : ""}.${thereTxt(xs.there, xs.to)}</p>` : ""}
       <ol class="steps">${steps}</ol>
-      ${vs.pri ? `<button class="btn primary" data-act="${vs.pri[0]}" data-k="${k}"${S.busy ? " disabled" : ""}>${esc(vs.pri[1])}</button>` : ""}
-      ${ghosts.length ? `<div class="actions">${ghosts.map(g => bt("ghost", g)).join("")}</div>` : ""}
-      ${quiet.length ? `<div class="actions">${quiet.map(g => bt("mute sm", g)).join("")}</div>` : ""}
-      ${p ? factsHTML(p, v) : `<p class="note warn">This patient isn’t on the Master Patient Tracker yet, so there’s no protocol, auth or payment to check.</p><button class="btn ghost" data-act="profile" data-m="${esc(v.a.mrn)}">Create their profile</button>`}</aside>`;
+      ${p ? factsHTML(p, v) : `<p class="note warn">This patient isn’t on the Master Patient Tracker yet, so there’s no protocol, auth or payment to check.</p><button class="btn ghost" data-act="profile" data-m="${esc(v.a.mrn)}">Create their profile</button>`}
+      ${vs.pri ? `<button class="btn primary big" data-act="${vs.pri[0]}" data-k="${k}" data-m="${esc(v.a.mrn)}"${S.busy ? " disabled" : ""}>${esc(vs.pri[1])}</button>` : ""}
+      ${sec.length ? `<div class="actions mid">${sec.map(g => bt("mute", g)).join("")}</div>` : ""}
+      ${quiet.length ? `<div class="actions mid">${quiet.map(g => bt("mute sm", g)).join("")}</div>` : ""}</aside>`;
   }
-  /* before they leave: booking, protocol, auth and cost, read from the Master Patient Tracker and the appointment list */
+  /* Protocol, Last confirmed, Booked through, Owes today; auth and balance only when they need attention */
   function factsHTML(p, v) {
-    const a = v ? v.ask : C.asks(p, S.x, null), fut = C.futureOf(S.A, p.mrn, todayS()), T = todayS();
+    const a = v ? v.ask : C.asks(p, S.x, null), T = todayS(), d = C.dueOf(p);
     const dd = (t, cls) => `<dd${cls ? ` class="${cls}"` : ""}>${t}</dd>`;
-    const auth = p.authExp == null ? dd("No end date", C.isActive(p) ? "flag" : "") : dd(`Ends ${C.fmtD(p.authExp)}${p.authNo ? `, ${esc(p.authNo)}` : ""}`, p.authExp < T ? "bad" : p.authExp <= T + +S.cfg.AuthWarnDays ? "flag" : "");
-    const enc = p.encLeft != null ? dd(`${p.encLeft}${p.encAuth != null ? ` of ${p.encAuth}` : ""} left`, p.encLeft <= 0 ? "bad" : p.encLeft <= +S.cfg.EncountersWarn ? "flag" : "") : dd(esc(p.encLeftTxt || p.encAuthTxt || "Not tracked"));
-    const lastAsk = lastSent("protocol", p.code);
-    return `<div class="section"><div class="h"><h2>${v ? "Before they leave" : "Visits"}</h2><span>${fut.length ? `${plural(fut.length, "visit")} booked after today` : "nothing booked after today"}</span></div>
-      <dl class="facts">
+    const paid = v && S.payOn ? PARTS.map(k => [k, C.payOf(S.pays, v.key, k)]).filter(x => x[1]) : [];
+    const owes = paid.length ? paid.map(([k, x]) => `${PART_WORD[k]} ${C.money(x.amount)} ${x.kind === "collected" ? "collected" : "not collected"}`).join(" · ")
+      : [d.copay > 0 ? `Provider visit ${C.money(d.copay)}` : "", d.infusion > 0 ? `Infusion ${C.money(d.infusion)}` : ""].filter(Boolean).join(" · ") || "Nothing";
+    const authBad = p.authExp != null && p.authExp < T, authSoon = p.authExp != null && !authBad && p.authExp <= T + +S.cfg.AuthWarnDays, encLow = p.encLeft != null && p.encLeft <= +S.cfg.EncountersWarn;
+    const L = v && S.payOn ? C.ledger(p.mrn, S.pays) : null, t = ptOf(p.mrn);
+    return `<dl class="facts vfacts">
         <dt>Protocol</dt>${dd(esc(p.freq || "No frequency"), p.freq ? "" : "flag")}
-        <dt>Confirmed</dt>${dd(p.protoAt != null ? C.fmtD(p.protoAt) : "Not yet", a.proto ? "flag" : "")}
-        <dt>Next visit</dt>${dd(fut[0] ? `${C.fmtD(fut[0].date)} at ${C.fmtT(fut[0].time)}` : "None booked", fut.length ? "" : C.isActive(p) && !/prn/i.test(p.freq) ? "bad" : "")}
-        <dt>Booked through</dt>${dd(a.thru != null ? C.fmtD(a.thru) : "—", a.book && a.thru != null ? "flag" : "")}
-        ${lastAsk ? `<dt>Last asked</dt>${dd(`${dateOfIso(lastAsk.at)} at ${timeOf(lastAsk.at)}${lastAsk.by ? `, ${esc(lastAsk.by)}` : ""}`)}` : ""}
-        <dt>Auth</dt>${auth}<dt>Visits on auth</dt>${enc}
-        <dt>Infusion</dt>${dd(esc([p.infusion && p.infusion !== "0" ? `$${p.infusion}` : "", p.ins2].filter(Boolean).join(", ") || "—"))}
-        <dt>Copay</dt>${dd(esc(p.copay && p.copay !== "0" ? `$${p.copay}` : p.copay === "0" ? "None" : "—"))}
-        ${v && S.payOn ? (() => { const r = ["prov", "inf"].map(k => [k, C.payOf(S.pays, v.key, k)]).filter(x => x[1]);
-          return `<dt>Today</dt>${dd(r.length ? r.map(([k, x]) => `${PART_WORD[k].toLowerCase()} ${C.money(x.amount)} ${x.kind === "collected" ? "collected" : "not collected"}`).join(", ") : C.dueOf(p).total > 0 ? "Payment not recorded yet" : "Nothing due", r.length || C.dueOf(p).total <= 0 ? "" : "flag")}`; })() : ""}
-        ${v && S.payOn ? (() => { const L = C.ledger(p.mrn, S.pays), t = ptOf(p.mrn); return `<dt>Balance</dt>${dd(L.balance > 0 ? `${C.money(L.balance)}${t?.card ? `, card on file${t.okCollect ? ", okay to charge" : ""}` : ""}` : "None", L.balance > 0 ? "flag" : "")}`; })() : ""}
-      </dl></div>`;
+        <dt>Last confirmed</dt>${dd(p.protoAt != null ? C.fmtD(p.protoAt) : "Not yet", a.proto ? "flag" : "")}
+        <dt>Booked through</dt>${dd(a.thru != null ? C.fmtD(a.thru) : "Nothing after today", a.book ? (a.thru == null && C.isActive(p) && !/prn/i.test(p.freq) ? "bad" : "flag") : "")}
+        <dt>Owes today</dt>${dd(esc(owes), !paid.length && d.total > 0 && v && v.ph !== "booked" ? "flag" : "")}
+        ${authBad || authSoon ? `<dt>Auth</dt>${dd(`Ends ${C.fmtD(p.authExp)}${p.authNo ? `, ${esc(p.authNo)}` : ""}`, authBad ? "bad" : "flag")}` : ""}
+        ${encLow ? `<dt>Visits on auth</dt>${dd(`${p.encLeft}${p.encAuth != null ? ` of ${p.encAuth}` : ""} left`, p.encLeft <= 0 ? "bad" : "flag")}` : ""}
+        ${L && L.balance > 0 ? `<dt>Balance</dt>${dd(`${C.money(L.balance)}${t?.card ? `, card on file${t.okCollect ? ", okay to charge" : ""}` : ""}`, "flag")}` : ""}
+      </dl>`;
   }
 
   /* ---------- Schedule ---------- */
@@ -514,8 +513,8 @@
       if (a.date > T) return "";
       const v = S.list.find(x => x.a === a || (x.a.mrn === a.mrn && x.a.time === a.time)); if (!v) return "";
       if (v.ph === "done" || v.ph === "gone") return "past";
-      if (v.ph === "chair") { const c = F.chairs.find(c => c.id === v.st.chair); return c ? (c.state === "track" ? "track" : c.state) : "track"; }
-      return v.ph === "waiting" ? "track" : "";
+      if (v.ph === "tx") return C.askDue(v) ? "soon" : "track";
+      return v.ph === "in" ? "track" : "";
     };
     const blk = a => { const s = stateOf(a), p = a.p, flag = p && a.date >= T && C.futureOf(S.A, p.mrn, a.date).length === 0 && C.isActive(p) && !/prn/i.test(p.freq);
       const k = visitKind(a), bk = bookOf(a), miss = !!bk?.miss, pc = !!p?.reqPost, pk = bk?.post ? `${a.date}|${bk.postAt}|${bk.pkey}` : "";
@@ -963,7 +962,7 @@
      computer. */
   const PV_SECT = [["sched", "Schedule"], ["proto", "Protocol"], ["ben", "Benefits"], ["fin", "Financial"]];
   const pvSect = () => { const v = S.pvSect || LS.get("ivkPtSect", "sched"); return PV_SECT.some(s => s[0] === v) ? v : "sched"; };
-  const PH_WORD = { booked: "booked", waiting: "checked in, waiting", chair: "in a chair", done: "checked out", noshow: "no-show", gone: "not coming today" };
+  const PH_WORD = { booked: "booked", in: "checked in", tx: "in treatment", done: "checked out", noshow: "no-show", gone: "not coming today" };
   function ptViewHTML(p) {
     const n = C.needs(p, S.x), L = C.loud(n), first = L[0], tv = S.list.find(v => v.a.mrn === p.mrn), on = pvSect(), m = esc(p.mrn);
     const meta = [p.status || "No status", p.freq || "no frequency", p.loc, p.start != null ? `started ${C.fmtD(p.start)}` : "", p.reqPost ? "requires post-check" : ""].filter(Boolean).join(" · ");
@@ -974,7 +973,8 @@
     const back = { patients: "Patients", schedule: "Schedule", today: "Today" }[S.pvFrom] || "the list";
     return `<div class="top"><div><h1>${esc(p.code)} <span class="mrn">MRN ${esc(p.mrn)}</span></h1><p class="sub">${esc(meta)}</p></div><div class="topr">${tools()}<button class="btn ghost sm line" data-act="pvClose">Back to ${esc(back)}</button></div></div>
       <div class="pview">
-      ${tv ? `<div class="pvtoday"><span><b>Today</b> ${C.fmtT(tv.a.time)}, ${esc(PH_WORD[tv.ph] || "")}${tv.ph === "chair" ? ` (${esc(chairTxt(tv.st.chair))})` : ""}</span><button class="btn ghost sm" data-act="toToday" data-k="${esc(tv.key)}">Today’s visit</button></div>` : ""}
+      ${tv && ["in", "tx"].includes(tv.ph) ? `<div class="pvtoday"><span><b>Here today</b> · ${S.plan && tv.st.chair ? `${esc(chairTxt(tv.st.chair))} · ` : ""}${tv.ph === "tx" ? `In treatment since ${C.fmtT(tv.st.seat)}` : `Checked in ${C.fmtT(tv.st.arr)}`}</span><button class="btn ghost sm" data-act="toToday" data-k="${esc(tv.key)}">Open visit</button></div>`
+        : tv ? `<div class="pvtoday quiet"><span><b>Today</b> ${C.fmtT(tv.a.time)}, ${esc(PH_WORD[tv.ph] || "")}</span><button class="btn ghost sm" data-act="toToday" data-k="${esc(tv.key)}">Today’s visit</button></div>` : ""}
       <p class="lead ${first ? (first.bad ? "late" : "soon") : ""}">${esc(first ? first.t : "Nothing needed right now")}</p>${quiet ? `<div class="tags">${quiet}</div>` : ""}
       ${first && first.act ? `<button class="btn primary" ${A(first)}>${esc(first.act[0])}</button>` : ""}
       ${also ? `<div class="section needs"><div class="h"><h2>Also needs</h2><span>${L.length - 1} more</span></div>${also}</div>` : ""}
@@ -1206,20 +1206,20 @@
           <li>Save, then Send test. “Accepted (202)” means the card is on its way to the chat.</li></ol></details></section>
 
       <section class="card set"><h3>Messages</h3><p>{patient} is the code, {time} the visit time, {provider} the provider, {chair} the chair, {protocol} the frequency (“every 2 week”).</p>
-        ${tplF("arrival", "Arrival")}${tplF("seated", "Seated")}${tplF("protocol", "Confirm protocol and book")}${tplF("protocolOnly", "Confirm protocol only")}${tplF("bookOnly", "Book only")}
+        ${tplF("arrival", "Arrival")}${tplF("seated", "Chair picked at the start of treatment")}${tplF("protocol", "Confirm protocol and book")}${tplF("protocolOnly", "Confirm protocol only")}${tplF("bookOnly", "Book only")}
         <label class="fld">Start email subject<input id="tp_startSubject" value="${esc(S.tpl.startSubject)}"></label>
         <label class="fld">Start email (HTML)<textarea id="tp_startEmail" rows="9" spellcheck="false">${esc(S.tpl.startEmail)}</textarea><span class="hint">The Castro desk’s “Upcoming Appointment(s)” email. {mrn}, {first} (first name), {clinic}, {firstVisit} (“Wednesday, November 4th, 2026, at 10:00 AM”), {address}, and {schedule} where the appointment table goes.</span></label>
         <label class="fld">Clinic address in the start email<input id="cf_ClinicAddress" value="${esc(S.cfg.ClinicAddress)}"></label>
         <div class="two"><label class="fld">CC on every start email<input id="cf_StartCc" value="${esc(S.cfg.StartCc)}" autocomplete="off"></label><label class="fld">BCC on every start email<input id="cf_StartBcc" value="${esc(S.cfg.StartBcc)}" autocomplete="off"></label></div>
         <div class="actions"><button class="btn ghost sm line" data-act="saveTpl">Save messages</button><button class="btn mute sm" data-act="resetTpl">Use the standard wording</button></div></section>
 
-      <section class="card set"><h3>Chair map</h3><p>${P ? `${esc(P.name || "Map")} with ${plural(P.bays.length, "chair")}: ${P.bays.map(b => esc(b.id)).join(", ")}.` : "No chair map in this workbook. Today shows chair tiles instead."} Draw one in the <a href="${BUILDER}" target="_blank" rel="noopener">Bay Map Builder</a>, download it, and load the file here. Bay numbers become chair numbers.</p>
-        <div class="actions"><label class="btn ghost sm line" style="cursor:pointer">Load a map file<input type="file" id="mapFile" accept=".json,application/json" hidden></label>${P ? `<button class="btn ghost sm line" data-act="mapDown">Download this map</button><button class="btn mute sm" data-act="mapRemove">Remove the map</button>` : ""}</div>
-        ${P ? "" : `<label class="fld">Chairs without a map<input id="cfgChairs" value="${esc(c.Chairs)}"><span class="hint">Chair numbers, separated by commas</span></label><div class="actions"><button class="btn ghost sm line" data-act="saveChairs">Save chairs</button></div>`}</section>
+      <section class="card set"><h3>Chair map</h3><p>A file from the <a href="${BUILDER}" target="_blank" rel="noopener">Bay Map Builder</a>. Until a map is loaded, visits are tracked without chairs and Today shows no chair map. Bay numbers become chair numbers.</p>
+        <div class="status${P ? " ok" : ""}"><span class="dot"></span>${P ? `${esc(P.name || "Map")} · ${plural(P.bays.length, "chair")} (${P.bays.map(b => esc(b.id)).join(", ")})` : "No map loaded. Visits are tracked without chairs."}</div>
+        <div class="actions"><label class="btn ghost sm line" style="cursor:pointer">Load a map file<input type="file" id="mapFile" accept=".json,application/json" hidden></label>${P ? `<button class="btn ghost sm line" data-act="mapDown">Download this map</button><button class="btn mute sm" data-act="mapRemove">Remove the map</button>` : ""}</div></section>
 
-      <section class="card set"><h3>Visit timing and flags</h3>
-        <div class="two"><label class="fld">Visit length, min<input id="cf_VisitMin" inputmode="numeric" value="${esc(c.VisitMin)}"></label><label class="fld">Provider check within, min<input id="cf_ProviderCheckMin" inputmode="numeric" value="${esc(c.ProviderCheckMin)}"></label>
-        <label class="fld">Waiting too long after, min<input id="cf_LateMin" inputmode="numeric" value="${esc(c.LateMin)}"></label><label class="fld">“Out soon” within, min<input id="cf_SoonMin" inputmode="numeric" value="${esc(c.SoonMin)}"></label>
+      <section class="card set"><h3>Timing</h3>
+        <div class="two"><label class="fld">Visit length, min<input id="cf_VisitMin" inputmode="numeric" value="${esc(c.VisitMin)}"></label>
+        <label class="fld">Chairs in the room<input id="cf_Chairs" inputmode="numeric" value="${esc(C.chairCount(c, P))}"${P ? " disabled" : ""}><span class="hint">${P ? "From the chair map" : "For open slots on the Schedule"}</span></label>
         <label class="fld">Ask to book when booked less than, weeks<input id="cf_AheadWeeks" inputmode="numeric" value="${esc(c.AheadWeeks)}"></label><label class="fld">Confirm protocol every, days<input id="cf_ProtocolDays" inputmode="numeric" value="${esc(c.ProtocolDays)}"></label>
         <label class="fld">Auth ending within, days<input id="cf_AuthWarnDays" inputmode="numeric" value="${esc(c.AuthWarnDays)}"></label><label class="fld">Visits left on auth, at most<input id="cf_EncountersWarn" inputmode="numeric" value="${esc(c.EncountersWarn)}"></label></div>
         <label class="fld">Clinic<input id="cf_Clinic" value="${esc(c.Clinic)}"></label>
@@ -1253,7 +1253,7 @@
   const chairPick = (cur, allowNone) => {
     const F = floor();
     return `<div class="pick" role="group" aria-label="Chair">${F.chairs.map(c => { const busy = !!c.v && c.v.key !== S.m.key;
-      return `<button data-act="mPick" data-b="${esc(c.id)}" aria-pressed="${cur === c.id}"${busy ? " disabled" : ""}>${esc(chairTxt(c.id))}<small>${busy ? esc(C.code(c.v)) : "open"}</small></button>`; }).join("")}${allowNone ? `<button data-act="mPick" data-b="" aria-pressed="${!cur}">Not yet<small>lobby</small></button>` : ""}</div>`;
+      return `<button data-act="mPick" data-b="${esc(c.id)}" aria-pressed="${cur === c.id}"${busy ? " disabled" : ""}>${esc(chairTxt(c.id))}<small>${busy ? esc(C.code(c.v)) : "Open"}</small></button>`; }).join("")}${allowNone ? `<button data-act="mPick" data-b="" aria-pressed="${!cur}">No chair yet<small>Pick at start</small></button>` : ""}</div>`;
   };
   /* the patient's own frequency first; with none on file, a blank choice is shown first so nothing is written by default */
   const freqOpts = (p, cur) => (p.freq ? "" : `<option value=""${cur ? "" : " selected"}>Choose the protocol</option>`)
@@ -1345,20 +1345,21 @@
   const MODALS = {
     checkin() {
       const v = visitBy(S.m.key), m = S.m, c = C.code(v), aOk = teamsReady("arrival"), pOk = teamsReady("protocol");
-      const arrTxt = C.arrivalText(v, m.chair, S.tpl.arrival), askTxt = C.askText(v.p, v.ask, S.tpl, v.p?.freq);
-      return `<h2 id="mh">Check in ${esc(c)}${mrnH(v.a.mrn)}</h2><p class="sub muted">${C.fmtT(v.a.time)} with ${esc(C.provName(v.a.provider) || "the provider")}</p>
-        <div class="fld">Chair${chairPick(m.chair, true)}</div>
-        <label class="opt"><input type="checkbox" id="mRn"${m.rn && aOk ? " checked" : ""}${aOk ? "" : " disabled"}> Tell ${esc(routeTo("arrival"))} in Teams<small>${aOk ? `“${esc(arrTxt)}”` : "Arrivals aren’t set up yet (Settings › Teams)."}</small></label>
-        ${v.p && v.ask.any ? `<label class="opt"><input type="checkbox" id="mAsk"${m.ask && pOk ? " checked" : ""}${pOk ? "" : " disabled"}> Ask ${esc(routeTo("protocol"))}<small>${pOk ? `“${esc(askTxt)}”` : "The group chat isn’t set up yet (Settings › Teams)."}</small></label>` : ""}
+      const arrTxt = C.arrivalText(v, S.plan ? m.chair : "", S.tpl.arrival), askTxt = C.askText(v.p, v.ask, S.tpl, v.p?.freq);
+      return `<h2 id="mh">Check in ${esc(c)}${mrnH(v.a.mrn)}</h2><p class="sub muted">${C.fmtT(v.a.time)} visit with ${esc(C.provName(v.a.provider) || "the provider")}</p>
+        ${S.plan ? `<div class="fld">Chair${chairPick(m.chair, true)}</div>` : ""}
+        <label class="preview opt"><input type="checkbox" id="mRn"${m.rn && aOk ? " checked" : ""}${aOk ? "" : " disabled"}><span><small>To ${esc(routeTo("arrival"))}</small>${aOk ? esc(arrTxt) : "Arrivals aren’t set up yet (Settings › Teams)."}</span></label>
+        ${v.p && v.ask.any ? `<label class="preview opt"><input type="checkbox" id="mAsk"${m.ask && pOk ? " checked" : ""}${pOk ? "" : " disabled"}><span><small>To ${esc(routeTo("protocol"))}, at the same time</small>${pOk ? esc(askTxt) : "The group chat isn’t set up yet (Settings › Teams)."}</span></label>` : ""}
         ${payPickHTML(v, m, "in")}
         <div class="foot"><button class="btn mute" data-act="close">Cancel</button><button class="btn primary inl" data-act="doCheckin"${S.busy || amtBad(m) ? " disabled" : ""}>Check in</button></div>`;
     },
+    /* start treatment in a chair (only with a chair map), or move to another one */
     seat() {
-      const v = visitBy(S.m.key), c = C.code(v), aOk = teamsReady("arrival"), moving = v.ph === "chair";
-      return `<h2 id="mh">${moving ? `Move ${esc(c)} to another chair` : `Seat ${esc(c)}`}${mrnH(v.a.mrn)}</h2><p class="sub muted">${moving ? `Now in ${esc(chairTxt(v.st.chair))}` : `Checked in at ${C.fmtT(v.st.arr)}`}</p>
+      const v = visitBy(S.m.key), c = C.code(v), aOk = teamsReady("arrival"), moving = v.ph === "tx";
+      return `<h2 id="mh">${moving ? `Move ${esc(c)} to another chair` : `Start treatment for ${esc(c)}`}${mrnH(v.a.mrn)}</h2><p class="sub muted">${moving && v.st.chair ? `Now in ${esc(chairTxt(v.st.chair))}` : "Pick the chair they are in."}</p>
         <div class="fld">Chair${chairPick(S.m.chair, false)}</div>
-        <label class="opt"><input type="checkbox" id="mRn"${S.m.rn && aOk ? " checked" : ""}${aOk ? "" : " disabled"}> Tell ${esc(routeTo("arrival"))} which chair<small>${aOk ? `“${esc(C.fill(S.tpl.seated, { patient: c, chair: S.m.chair || "…" }))}”` : "Arrivals aren’t set up yet (Settings › Teams)."}</small></label>
-        <div class="foot"><button class="btn mute" data-act="close">Cancel</button><button class="btn primary inl" data-act="doSeat"${S.m.chair && !S.busy ? "" : " disabled"}>${S.m.chair ? `Seat ${esc(c)} in ${esc(chairTxt(S.m.chair))}` : "Choose a chair"}</button></div>`;
+        <label class="preview opt"><input type="checkbox" id="mRn"${S.m.rn && aOk ? " checked" : ""}${aOk ? "" : " disabled"}><span><small>Tell ${esc(routeTo("arrival"))} which chair</small>${aOk ? esc(C.fill(S.tpl.seated, { patient: c, chair: S.m.chair || "…" })) : "Arrivals aren’t set up yet (Settings › Teams)."}</span></label>
+        <div class="foot"><button class="btn mute" data-act="close">Cancel</button><button class="btn primary inl" data-act="doSeat"${S.m.chair && !S.busy ? "" : " disabled"}>${!S.m.chair ? "Choose a chair" : moving ? "Move" : "Start treatment"}</button></div>`;
     },
     ask() {
       const p = S.PM.get(S.m.mrn), ok = teamsReady("protocol");
@@ -1371,7 +1372,7 @@
     checkout() {
       const v = visitBy(S.m.key), c = C.code(v), m = S.m, p = v.p;
       const bk = (k, t, s) => `<button data-act="mBook" data-v="${k}" aria-pressed="${m.booked === k}">${t}<small>${s}</small></button>`;
-      return `<h2 id="mh">Check out ${esc(c)}${mrnH(v.a.mrn)}</h2><p class="sub muted">${v.st.seat != null ? `In ${esc(chairTxt(v.st.chair))} since ${C.fmtT(v.st.seat)}` : `Checked in at ${C.fmtT(v.st.arr)}`}</p>
+      return `<h2 id="mh">Check out ${esc(c)}${mrnH(v.a.mrn)}</h2><p class="sub muted">${C.fmtT(v.a.time)} visit · ${esc(C.provName(v.a.provider) || "the provider")}${v.st.seat != null ? ` · in treatment since ${C.fmtT(v.st.seat)}` : ""}</p>
         <div class="fld">Next visit${v.ask.next ? ` <span class="muted">(on the list: ${C.fmtD(v.ask.next.date)})</span>` : ""}<div class="pick">${bk("yes", "Booked", "in NextGen")}${bk("later", "Book later", "keep reminding")}${bk("no", "Not needed", "PRN or ending")}</div></div>
         ${p ? `<label class="opt"><input type="checkbox" id="mProto"${m.proto ? " checked" : ""}> The provider confirmed the protocol<small>Writes Protocol Updated ${C.fmtD(todayS())}${m.freq && m.freq !== p.freq ? ` and Frequency “${esc(m.freq)}”` : ""} on the Master Patient Tracker</small></label>
         <label class="fld">Protocol<select id="mFreq">${freqOpts(p, m.freq)}</select></label>` : ""}
@@ -1861,12 +1862,12 @@
     await write("Saving…", () => Store.savePt(p.mrn, ptPatch(p, { [k]: on ? "TRUE" : "FALSE" })), `${p.code}: ${words[on ? 0 : 1].toLowerCase()}.`);
   }
   const ACT = {
-    nav: e => { S.view = e.dataset.v === "access" && inAccess(S.view) ? "access" : e.dataset.v === "access" ? (S.acLast || "access") : e.dataset.v; if (inAccess(S.view)) S.acLast = S.view; S.bSel = null; S.pv = null; render(); },
-    async reload() { S.reading = true; render(); try { await refresh(true); toast("Read the workbook again: up to date."); } finally { S.reading = false; render(); } },
+    nav: e => { S.view = e.dataset.v === "access" && inAccess(S.view) ? "access" : e.dataset.v === "access" ? (S.acLast || "access") : e.dataset.v; if (inAccess(S.view)) S.acLast = S.view; S.pv = null; render(); },
+    async reload() { S.reading = true; render(); try { await refresh(true); toast(S.err ? S.err : `Up to date. Read ${plural(S.list.length, "visit")} today and ${plural(S.P.length, "patient")} at ${hm()}.`, !!S.err); } finally { S.reading = false; render(); } },
     theme: () => { S.theme = S.theme === "dark" ? "light" : "dark"; LS.set("ivkTheme", S.theme); document.documentElement.dataset.theme = S.theme; render(); },
     full: () => openFull(),
-    sel: e => { S.sel = e.dataset.k; S.bSel = null; render(); const v = visitBy(S.sel); if (v) follow("mpt", v.a.mrn); },
-    bSel: e => { const F = floor(), c = F.chairs.find(x => x.id === e.dataset.b); if (c && c.v) { S.sel = c.v.key; S.bSel = null; follow("mpt", c.v.a.mrn); } else S.bSel = e.dataset.b; render(); },
+    sel: e => { S.sel = e.dataset.k; render(); const v = visitBy(S.sel); if (v) follow("mpt", v.a.mrn); },
+    bSel: e => { const c = floor().chairs.find(x => x.id === e.dataset.b); if (c && c.v) { S.sel = c.v.key; render(); follow("mpt", c.v.a.mrn); } else toast(`${chairTxt(e.dataset.b)} is open.`); },
     pSel: e => { S.pSel = e.dataset.m; render(); follow("mpt", S.pSel); },
     chip: e => { S.chip = e.dataset.v; render(); },
     wk: e => { const d = +e.dataset.v; S.wk = d === 0 ? 0 : S.wk + d; render(); },
@@ -1892,7 +1893,7 @@
       const mrn = e.dataset.m, r = S.SO.get(mrn); if (!r) return;
       if (await write("Saving…", () => Store.saveSooner(mrn, { Status: "done", By: S.name, Updated: new Date().toISOString() }), `${r.code}: off the sooner waitlist.`) && S.modal === "sooner") closeModal();
     },
-    toToday: e => { S.sel = e.dataset.k; S.bSel = null; S.view = "today"; S.pv = null; render(); },
+    toToday: e => { S.sel = e.dataset.k; S.view = "today"; S.pv = null; render(); },
     openPt: e => openPv(e.dataset.m),
     pOpen: e => openPv(e.dataset.m),
     pvClose: () => { const m = S.pv; S.pv = null; render(); const b = document.querySelector(`[data-act="pOpen"][data-m="${CSS.escape(m || "")}"]`); if (b) b.focus(); },
@@ -1957,37 +1958,45 @@
       await write("Filling the Index Planner tab…", () => Store.fillPlanner());
     },
     setup: async () => { const r = await write("Setting up…", () => Store.setup()); if (r && r.blocked?.length) toast(`Couldn’t add ${r.blocked.join(", ")}: cells on the ${X.DATA_SHEET} tab already hold something.`, true); else if (r) toast("Workbook set up. Check-ins and Teams settings now save here."); },
-    /* the lobby by default: a chair is picked here or later with Seat */
-    checkin: e => { if (needName()) return; const v = visitBy(e.dataset.k); if (!v) return; openModal("checkin", Object.assign({ key: v.key, chair: "", rn: true, ask: true }, payInit(v))); },
-    seat: e => { const v = visitBy(e.dataset.k); if (!v) return; openModal("seat", { key: v.key, chair: v.ph === "chair" ? "" : freeChair(), rn: true }); },
-    seatHere: e => { const v = visitBy(e.dataset.k); if (!v) return; openModal("seat", { key: v.key, chair: e.dataset.b, rn: true }); },
+    /* a chair is only asked for when a chair map is loaded: the first open one, or none yet (picked at the start of treatment) */
+    checkin: e => { if (needName()) return; const v = visitBy(e.dataset.k); if (!v) return; openModal("checkin", Object.assign({ key: v.key, chair: S.plan ? freeChair() : "", rn: true, ask: true }, payInit(v))); },
+    /* Start treatment: straight away with no map or a chair already picked; else which chair */
+    start: async e => {
+      const v = visitBy(e.dataset.k); if (!v) return;
+      if (S.plan && !v.st.chair) return openModal("seat", { key: v.key, chair: freeChair(), rn: true });
+      const t = hm();
+      await write("Saving…", () => Store.saveVisit(v.key, visitBase(v), Object.assign({ Seated: t, Arrived: v.st.arr != null ? C.fmtT(v.st.arr) : t }, stamp())), `${C.code(v)} is in treatment${S.plan && v.st.chair ? ` in ${chairTxt(v.st.chair)}` : ""}.`);
+    },
+    seat: e => { const v = visitBy(e.dataset.k); if (!v) return; openModal("seat", { key: v.key, chair: v.ph === "tx" ? "" : freeChair(), rn: true }); },
     mPick: e => { keepPay(); S.m.chair = e.dataset.b; render(); },
     mBook: e => { keepPay(); S.m.booked = e.dataset.v; render(); },
     close: () => closeModal(),
     scrim: (e, ev) => { if (ev.target === e) closeModal(); },
     async doCheckin() {
-      keepPay(); const m = S.m, v = visitBy(m.key), chair = m.chair, rn = $("#mRn")?.checked, ask = $("#mAsk")?.checked, t = hm();
+      keepPay(); const m = S.m, v = visitBy(m.key), chair = S.plan ? m.chair : "", rn = $("#mRn")?.checked, ask = $("#mAsk")?.checked, t = hm();
       if (!v) return closeModal();
-      const ok = await write("Saving check-in…", () => Store.saveVisit(v.key, visitBase(v), Object.assign({ Arrived: t, Chair: chair, Seated: chair ? t : "", Out: "", Status: "" }, stamp()), "Arrived"));
+      const ok = await write("Saving check-in…", () => Store.saveVisit(v.key, visitBase(v), Object.assign({ Arrived: t, Chair: chair, Seated: "", Out: "", Status: "" }, stamp()), "Arrived"));
       if (!ok) return;
-      closeModal(); S.sel = v.key; S.bSel = null;
+      closeModal(); S.sel = v.key;
       await savePay(v, m, `${C.code(v)} is checked in`);
       const msgs = [`${C.code(v)} checked in${chair ? ` to ${chairTxt(chair)}` : ""}.`];
       if (rn) { const r = await sendArrival(v, chair); msgs.push(teamsWord(r, routeTo("arrival"))); }
       if (ask && v.p) { const r = await sendAsk(v.p, C.askText(v.p, v.ask, S.tpl, v.p.freq), v.p.freq, v.key); msgs.push(r.ok ? `Asked ${routeTo("protocol")}.` : r.reason); }
       toast(msgs.join(" "), msgs.some(x => /answered|couldn’t|No Teams|off/i.test(x)));
     },
+    /* the chair picked at the start of treatment (it starts now), or a move to another chair (the start time stays) */
     async doSeat() {
       const v = visitBy(S.m.key), chair = S.m.chair, rn = $("#mRn")?.checked, t = hm(); if (!v || !chair) return;
-      const ok = await write("Seating…", () => Store.saveVisit(v.key, visitBase(v), Object.assign({ Chair: chair, Seated: v.ph === "chair" ? (C.fmtT(v.st.seat) || t) : t, Arrived: v.st.arr != null ? C.fmtT(v.st.arr) : t }, stamp())));
-      if (!ok) return; closeModal(); S.sel = v.key; S.bSel = null;
-      let msg = `${C.code(v)} is in ${chairTxt(chair)}.`;
+      const moving = v.ph === "tx";
+      const ok = await write("Saving…", () => Store.saveVisit(v.key, visitBase(v), Object.assign({ Chair: chair, Seated: moving ? (C.fmtT(v.st.seat) || t) : t, Arrived: v.st.arr != null ? C.fmtT(v.st.arr) : t }, stamp())));
+      if (!ok) return; closeModal(); S.sel = v.key;
+      let msg = moving ? `${C.code(v)} is in ${chairTxt(chair)}.` : `${C.code(v)} is in treatment in ${chairTxt(chair)}.`;
       if (rn) { const r = await sendArrival(v, chair, true); msg += " " + teamsWord(r, routeTo("arrival")); }
       toast(msg);
     },
     async remind(e) {
       if (needName()) return; const v = visitBy(e.dataset.k); if (!v) return;
-      const r = await sendArrival(v, v.st.chair || "", v.ph === "chair"); toast(teamsWord(r, routeTo("arrival")), !r.ok); render();
+      const r = await sendArrival(v, S.plan ? v.st.chair || "" : ""); toast(teamsWord(r, routeTo("arrival")), !r.ok); render();
     },
     ask: e => {
       if (needName()) return;
@@ -2034,8 +2043,8 @@
     gone: e => { const v = visitBy(e.dataset.k); openModal("confirm", { title: `Take ${C.code(v)} off today’s list?`, body: "NextGen isn’t changed. Cancel or reschedule the visit there too.", yes: "Take off today’s list", run: () => Store.saveVisit(v.key, visitBase(v), Object.assign({ Status: "cancelled" }, stamp())) }); },
     undoGone: async e => { const v = visitBy(e.dataset.k); await write("Saving…", () => Store.saveVisit(v.key, visitBase(v), Object.assign({ Status: "" }, stamp()))); },
     undoIn: e => { const v = visitBy(e.dataset.k); openModal("confirm", { title: `Undo ${C.code(v)}’s check-in?`, body: "They go back to Still to come. A Teams post already sent stays in the chat.", yes: "Undo check-in", run: () => Store.saveVisit(v.key, visitBase(v), Object.assign({ Arrived: "", Chair: "", Seated: "" }, stamp())) }); },
-    undoSeat: async e => { const v = visitBy(e.dataset.k); await write("Saving…", () => Store.saveVisit(v.key, visitBase(v), Object.assign({ Chair: "", Seated: "" }, stamp())), `${C.code(v)} is back to waiting.`); },
-    undoOut: async e => { const v = visitBy(e.dataset.k); await write("Saving…", () => Store.saveVisit(v.key, visitBase(v), Object.assign({ Out: "", Booked: "" }, stamp())), `${C.code(v)} is back in ${v.st.chair ? chairTxt(v.st.chair) : "the lobby"}.`); },
+    undoSeat: async e => { const v = visitBy(e.dataset.k); await write("Saving…", () => Store.saveVisit(v.key, visitBase(v), Object.assign({ Seated: "" }, stamp())), `${C.code(v)} is back to checked in.`); },
+    undoOut: async e => { const v = visitBy(e.dataset.k); await write("Saving…", () => Store.saveVisit(v.key, visitBase(v), Object.assign({ Out: "", Booked: "" }, stamp())), `${C.code(v)} is back ${v.st.seat != null ? "in treatment" : "to checked in"}.`); },
     async doConfirm() { const run = S.m.run; closeModal(); await write("Saving…", run); },
     proto: e => { const p = S.PM.get(e.dataset.m); if (p) openModal("proto", { mrn: p.mrn, freq: p.freq || "" }); },
     idxDone: e => { const p = S.PM.get(e.dataset.m); if (p) openModal("idxDone", { mrn: p.mrn, freq: S.cfg.AfterIndex }); },
@@ -2062,10 +2071,10 @@
       const bad = ["StartCc", "StartBcc"].find(k => cf[k] && !cf[k].split(/[;,]\s*/).every(a => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(a))); if (bad) return toast(`${bad === "StartCc" ? "CC" : "BCC"} needs email addresses, separated by commas.`, true);
       await write("Saving messages…", async () => { await Store.saveKeyed("tblIvkTemplates", o); await Store.saveKeyed("tblIvkConfig", cf); }, "Messages saved."); },
     async resetTpl() { await write("Saving messages…", () => Store.saveKeyed("tblIvkTemplates", Object.assign({}, C.TEMPLATES, C.START_TPL)), "Standard wording restored."); },
-    async saveChairs() { await write("Saving chairs…", () => Store.saveKeyed("tblIvkConfig", { Chairs: $("#cfgChairs").value.trim() || C.DEFAULTS.Chairs }), "Chairs saved."); },
     async saveCfg() {
-      const o = {}; for (const k of ["VisitMin", "ProviderCheckMin", "LateMin", "SoonMin", "AheadWeeks", "ProtocolDays", "AuthWarnDays", "EncountersWarn"]) { const n = C.num($(`#cf_${k}`).value); if (n == null || n < 0) return toast(`${k} needs a number.`, true); o[k] = n; }
+      const o = {}; for (const k of ["VisitMin", "AheadWeeks", "ProtocolDays", "AuthWarnDays", "EncountersWarn"]) { const n = C.num($(`#cf_${k}`).value); if (n == null || n < 0) return toast(`${k} needs a number.`, true); o[k] = n; }
       o.Clinic = $("#cf_Clinic").value.trim() || C.DEFAULTS.Clinic;
+      if (!S.plan) { const n = C.num($("#cf_Chairs").value); if (n == null || n < 1) return toast("Chairs in the room needs a number.", true); o.Chairs = String(n); }
       await write("Saving…", () => Store.saveKeyed("tblIvkConfig", o), "Timing saved.");
     },
     mapDown: () => { const P = S.raw.plan, a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([JSON.stringify(P, null, 1)], { type: "application/json" })); a.download = `Chair map - ${S.cfg.Clinic} IVK.json`; a.click(); },
@@ -2247,7 +2256,7 @@
     if ($("#apName")) m.name = v("#apName"); if ($("#apTyped")) m.typed = v("#apTyped"); if ($("#apStart")) m.start = +v("#apStart"); if ($("#apEnd")) m.end = +v("#apEnd");
     if ($("#apFrom")) m.from = v("#apFrom"); if ($("#apCopy")) m.copy = v("#apCopy"); };
   const savePlanOf = (o, patch) => write("Saving…", () => Store.savePlan(o.mrn, Object.assign({ Patient: o.code, By: S.name, Updated: new Date().toISOString() }, patch)));
-  function openPv(mrn) { if (!S.PM.get(mrn)) return; if (!S.pv) S.pvFrom = S.view; S.pv = mrn; S.bSel = null; render(); $(".page") && ($(".page").scrollTop = 0); follow("mpt", mrn); }
+  function openPv(mrn) { if (!S.PM.get(mrn)) return; if (!S.pv) S.pvFrom = S.view; S.pv = mrn; render(); $(".page") && ($(".page").scrollTop = 0); follow("mpt", mrn); }
   /* a new patient by LASFIR and MRN, checked against the tracker and the planner; null (with a toast) when it doesn't add up */
   function newPt(codeIn, mrnIn) {
     const code = C.txt(codeIn).toUpperCase(), mrn = C.mrnKey(mrnIn);
@@ -2377,7 +2386,6 @@
     document.querySelectorAll(`[data-pc="${CSS.escape(k)}"],[data-pck="${CSS.escape(k)}"]`).forEach(x => x.classList.toggle("pair", on)); };
   for (const [ev, on] of [["mouseover", true], ["focusin", true], ["mouseout", false], ["focusout", false]]) document.addEventListener(ev, e => { const el = pairOf(e.target); if (el) shade(el, on); });
   /* the folded chair tiles stay as they were left across re-renders */
-  document.addEventListener("toggle", e => { if (e.target.id === "chairFold") S.chairsOpen = e.target.open; }, true);
   /* the template grid: press and drag across half hours (mouse, pen or touch) to select a rectangle; Shift-click or Enter extends it */
   let drag = null;
   const paintSel = () => document.querySelectorAll(".tc").forEach(b => b.classList.toggle("sel", inRect(S.tsel, +b.dataset.d, +b.dataset.t)));

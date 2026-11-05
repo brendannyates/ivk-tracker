@@ -10,7 +10,7 @@
 
   /* Defaults for tblIvkConfig. Castro: 4 chairs, each IVK visit holds a chair 2 hours. The SOP has the clinician check in within
      the first 30 min and again in the last 5-10 min. */
-  const DEFAULTS = { Enabled: "TRUE", Clinic: "Castro", Chairs: "1, 2, 3, 4", VisitMin: 120, ProviderCheckMin: 30, LateMin: 10, SoonMin: 10,
+  const DEFAULTS = { Enabled: "TRUE", Clinic: "Castro", Chairs: "4", VisitMin: 120,
     AheadWeeks: 6, ProtocolDays: 90, AuthWarnDays: 14, EncountersWarn: 3,
     /* index: 2 visits in each 7 days from treatment 1, for 3 weeks; at least a day off between visits, no more than 5 days apart
        when the slots allow; the provider's post check is in the last 30 min of the 2 hours; a hold is booked in NextGen within 10 min */
@@ -155,12 +155,13 @@
   }
 
   /* ---------- today's floor ---------- */
-  /* phase of one visit: gone (not coming), noshow (NextGen says so), done (checked out), chair, waiting (checked in), booked */
+  /* phase of one visit: gone (not coming), noshow (NextGen says so), done (checked out), tx (in treatment: the Seated column
+     holds when it started), in (checked in), booked. A chair is only kept when a chair map is loaded. */
   function phase(v) {
     if (v.st.status === "cancelled") return "gone";
     if (v.st.out != null) return "done";
-    if (v.st.seat != null && v.st.chair) return "chair";
-    if (v.st.arr != null) return "waiting";
+    if (v.st.seat != null) return "tx";
+    if (v.st.arr != null) return "in";
     if (/no ?show/i.test(v.a.status)) return "noshow";
     return "booked";
   }
@@ -198,27 +199,21 @@
   }
   const code = v => v.p?.code || v.a.code || "Patient";
 
-  /* Chair state on the map. open: empty; track: in the chair, more than SoonMin left; soon: SoonMin or less left;
-     ready: the expected end has passed, so check-out is the next step. Red is never on a chair: only a patient checked in and
-     waiting LateMin+ for a chair is waiting on staff. */
-  function chairState(chair, list, now, cfg) {
-    const v = list.find(y => y.ph === "chair" && y.st.chair === chair);
+  /* in treatment with a protocol or booking ask nobody has sent yet: the providers need asking before discharge */
+  const askDue = v => v.ph === "tx" && !!v.p && v.ask.any && v.st.asked == null;
+  /* Chair state on the map. open: empty; track: someone checked in or in treatment there; soon: in treatment and the providers
+     still need asking. Nothing on a chair is red: waiting time isn't tracked. */
+  function chairState(chair, list) {
+    const v = list.find(y => (y.ph === "tx" || y.ph === "in") && y.st.chair === chair);
     if (!v) return { state: "open", v: null };
-    const end = v.st.seat + +cfg.VisitMin, left = end - now, check = v.st.seat + +cfg.ProviderCheckMin;
-    if (left <= 0) return { state: "ready", v, end, left, check };
-    return { state: left <= +cfg.SoonMin ? "soon" : "track", v, end, left, check };
+    return { state: askDue(v) ? "soon" : "track", v };
   }
-  function chairStatus(cs) {
-    if (cs.state === "ready") return cs.left < -2 ? `Due out ${-cs.left} min ago` : "Ready to check out";
-    if (cs.state === "soon") return `Out in ${cs.left} min`;
-    if (cs.state === "track") return `Out around ${fmtT(cs.end)}`;
-    return "";
-  }
-  const waitMin = (v, now) => v.st.arr == null ? 0 : now - v.st.arr;
-  const isLate = (v, now, cfg) => v.ph === "waiting" && waitMin(v, now) >= +cfg.LateMin;
+  const chairStatus = cs => !cs.v ? "" : cs.state === "soon" ? "Ask providers" : cs.v.ph === "tx" ? "In treatment" : "Checked in";
 
-  /* chairs: the map's bays when a map is loaded, else the Chairs setting ("1, 2, 3") */
-  const chairList = (cfg, plan) => plan ? plan.bays.map(b => b.id) : txt(cfg.Chairs).split(/[,;\s]+/).filter(Boolean);
+  /* chairs only come from a loaded chair map; with none, visits are tracked without chairs */
+  const chairList = plan => plan ? plan.bays.map(b => b.id) : [];
+  /* how many visits can run at once, for open slots: the map's chairs, else the Chairs setting (a number, or the old list "1, 2, 3") */
+  const chairCount = (cfg, plan) => { if (plan) return plan.bays.length; const t = txt(cfg.Chairs); return /^\d+$/.test(t) ? +t : t.split(/[,;\s]+/).filter(Boolean).length || 4; };
 
   /* ---------- needs (Patients) ---------- */
   /* What one patient needs, sorted red, amber, then quiet. Red is kept for what blocks the next infusion: an expired
@@ -1046,7 +1041,7 @@
     fullPlan, eligibleStarts, memoX, indexState, indexShort, nextStart, XFER_COLS, xferRows, xferState, elsewhere, visitCounts, SOONER_COLS, soonerRows, soonerKey, soonerMatch, openSlots, freedTimes, ELSE_COLS, elseRows, sameLoc, isOurs, bookedAt, prefCols, indexN: cfg => Math.max(1, Math.round(+cfg.IndexPerWeek * +cfg.IndexWeeks)),
     treatments, txNo, isOak, oakState, WAIT_ON, waitlist, waitMove, provFull, fullName, firstName, scheduleOf, START_TPL, longWhen,
     lasfir, provName, mrnKey, pickRow, eventShort, freqDays, byHeader, patients, appts, isCancelled, visitKey, visitRows, phase, isActive, futureOf, asks,
-    today, code, chairState, chairStatus, waitMin, isLate, chairList, needs, loud, consults, fill, protoWords, arrivalText, askText,
+    today, code, chairState, chairStatus, askDue, chairList, chairCount, needs, loud, consults, fill, protoWords, arrivalText, askText,
     parseReport, shrink, week, DAYS5, dayNum, sameProv, OTHER_COLS, otherRows, isIvkVisit, FLAG_COLS, flagRows, PLAN_COLS, planRows, HOLD_COLS, holdRows,
     onList, holding, holdState, holdConfirm, EX_COLS, exRows, exFor, withExceptions, exClashes, daySlots, postCheckSlots, availOf, availText, fits, planIndex, altSlots, capacity, plannerLayout, plannerGrid };
 });

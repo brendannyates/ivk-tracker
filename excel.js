@@ -82,9 +82,12 @@
   }
 
   /* Everything the screens need, in a few syncs. Missing pieces come back null so the app can say what's missing. */
-  async function load() {
+  /* step(i, what) reports each part as it finishes, for the loading screen: 0 connected, 1 Master Patient Tracker, 2 Appt List, 3 IVK Tracker Data */
+  async function load(step) {
+    const tick = step || (() => {});
     return Excel.run(async ctx => {
-      const tm = await tableMap(ctx), out = { tables: tm, missing: SPEC.filter(s => !tm.own[s.name]).map(s => s.name) };
+      const tm = await tableMap(ctx); tick(0, tm);
+      const out = { tables: tm, missing: SPEC.filter(s => !tm.own[s.name]).map(s => s.name) };
       const wb = ctx.workbook; wb.load("name");
       const small = {};
       for (const k of ["mpt", "consults"]) if (tm[k]) small[k] = readTable(ctx, tm[k]);
@@ -96,6 +99,7 @@
       await ctx.sync();
       out.wbName = wb.name;
       for (const [k, r] of Object.entries(small)) out[k] = r.values;
+      tick(1, out);
       out.apptUpdated = null; out.freqs = []; out.planner = null;
       if (!ipSheet.isNullObject) { const r = ipSheet.getRange(IP_RANGE); r.load("values"); await ctx.sync(); out.planner = r.values; }
       /* the provider templates and their slot types (null when the tabs aren't there yet) */
@@ -108,6 +112,7 @@
         if (fr) out.freqs = fr.values.map(r => C.txt(r[0])).filter(Boolean);
       }
       if (tm.appt) { const r = readTable(ctx, tm.appt); await ctx.sync(); out.appt = r.values; }
+      tick(2, out);
       /* the newest rows only: today's check-ins and Teams posts are always among them */
       for (const [n, b] of bodies) {
         const h = wb.tables.getItem(n).getHeaderRowRange(); h.load("values");
@@ -115,6 +120,7 @@
         await ctx.sync();
         out[n === "tblIvkVisits" ? "visits" : n] = cnt ? [h.values[0], ...part.values] : [h.values[0]];
       }
+      tick(3, out);
       return out;
     });
   }
