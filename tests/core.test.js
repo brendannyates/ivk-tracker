@@ -81,30 +81,34 @@ test("today: phases from the desk's rows, cancelled visits dropped", () => {
   V.set(k2, { key: k2, arr: 740, chair: "2", seat: 745, out: null, booked: "", asked: 746, proto: "", status: "" });
   V.set(k3, { key: k3, arr: 530, chair: "1", seat: 535, out: 630, booked: "no", asked: null, proto: "", status: "" });
   const L = C.today(world({ visits: V })), ph = Object.fromEntries(L.map(v => [C.code(v), v.ph]));
-  assert.deepEqual(ph, { ROEMAR: "done", DOEJON: "chair", TESANN: "waiting" });
+  assert.deepEqual(ph, { ROEMAR: "done", DOEJON: "tx", TESANN: "in" });
   assert.equal(L.find(v => v.a.code === "OAKAVA"), undefined);
   assert.deepEqual(L.map(v => C.code(v)), ["ROEMAR", "DOEJON", "TESANN"], "sorted by visit time");
   /* a desk entry whose visit was moved in NextGen still shows while the patient is here */
   const k4 = C.visitKey(T, "990004", 600); V.set(k4, { key: k4, arr: 600, chair: "3", seat: 601, out: null, booked: "", asked: null, proto: "", status: "" });
   const L2 = C.today(world({ visits: V })), off = L2.find(v => v.key === k4);
-  assert.equal(off.ph, "chair"); assert.equal(off.off, true); assert.equal(C.code(off), "LEEKIM");
+  assert.equal(off.ph, "tx"); assert.equal(off.off, true); assert.equal(C.code(off), "LEEKIM");
   V.set(k1, Object.assign({}, V.get(k1), { status: "cancelled" })); assert.equal(C.today(world({ visits: V })).find(v => v.key === k1).ph, "gone");
 });
 
-test("chair states: open, track, soon, ready; waiting is late after LateMin", () => {
+test("chair states: open, track, soon when the providers still need asking; chairs only from a map", () => {
   const V = new Map(), k = C.visitKey(T, "990002", 750);
-  V.set(k, { key: k, arr: 740, chair: "2", seat: 745, out: null, booked: "", asked: null, proto: "", status: "" });
-  const L = C.today(world({ visits: V }));
-  assert.equal(C.chairState("1", L, 800, cfg).state, "open");
-  const tr = C.chairState("2", L, 800, cfg); assert.equal(tr.state, "track"); assert.equal(tr.end, 865); assert.equal(C.chairStatus(tr), "Out around 2:25 PM"); assert.equal(tr.check, 775);
-  const so = C.chairState("2", L, 858, cfg); assert.equal(so.state, "soon"); assert.equal(C.chairStatus(so), "Out in 7 min");
-  const re = C.chairState("2", L, 866, cfg); assert.equal(re.state, "ready"); assert.equal(C.chairStatus(re), "Ready to check out");
-  assert.equal(C.chairStatus(C.chairState("2", L, 875, cfg)), "Due out 10 min ago");
-  const kw = C.visitKey(T, "990001", 810); V.set(kw, { key: kw, arr: 800, chair: "", seat: null, out: null, booked: "", asked: null, proto: "", status: "" });
-  const w = C.today(world({ visits: V })).find(v => v.key === kw);
-  assert.equal(C.isLate(w, 809, cfg), false); assert.equal(C.isLate(w, 810, cfg), true);
-  assert.deepEqual(C.chairList(cfg, null), ["1", "2", "3", "4"]);
-  assert.deepEqual(C.chairList(cfg, { bays: [{ id: "A" }, { id: "B" }] }), ["A", "B"]);
+  V.set(k, { key: k, arr: 740, chair: "2", seat: 745, out: null, booked: "", asked: 746, proto: "", status: "" });
+  let L = C.today(world({ visits: V }));
+  assert.equal(C.chairState("1", L).state, "open");
+  const tr = C.chairState("2", L); assert.equal(tr.state, "track"); assert.equal(C.chairStatus(tr), "In treatment");
+  const kt = C.visitKey(T, "990001", 810); V.set(kt, { key: kt, arr: 800, chair: "3", seat: 805, out: null, booked: "", asked: null, proto: "", status: "" }); L = C.today(world({ visits: V }));
+  const v = L.find(x => x.key === kt); assert.equal(v.ask.any, true, "TESANN has an ask");
+  assert.equal(C.askDue(v), true); const so = C.chairState("3", L); assert.equal(so.state, "soon"); assert.equal(C.chairStatus(so), "Ask providers");
+  /* checked in with a chair holds it; in treatment without a chair (no map) is still in treatment */
+  V.set(k, Object.assign({}, V.get(k), { seat: null })); L = C.today(world({ visits: V }));
+  assert.equal(L.find(x => x.key === k).ph, "in"); assert.equal(C.chairStatus(C.chairState("2", L)), "Checked in");
+  V.set(k, Object.assign({}, V.get(k), { chair: "", seat: 745 })); assert.equal(C.today(world({ visits: V })).find(x => x.key === k).ph, "tx");
+  assert.deepEqual(C.chairList(null), []);
+  assert.deepEqual(C.chairList({ bays: [{ id: "A" }, { id: "B" }] }), ["A", "B"]);
+  /* open slots still count chairs with no map: the setting as a number, the old list, or 4 */
+  assert.equal(C.chairCount({ Chairs: "5" }, null), 5); assert.equal(C.chairCount({ Chairs: "1, 2, 3" }, null), 3); assert.equal(C.chairCount({ Chairs: "" }, null), 4);
+  assert.equal(C.chairCount({ Chairs: "5" }, { bays: [{ id: "A" }, { id: "B" }] }), 2);
 });
 
 test("needs: red only for what blocks the next infusion, sorted red, amber, quiet", () => {

@@ -14,9 +14,10 @@ The hosted files hold no patient data. Patients only ever appear as LASFIR codes
 The rail: Today, Schedule, Access, Patients, Availability, then Settings at the bottom (above Exit full screen in full screen). In
 the task pane, full screen sits at the top right of every page with refresh and dark mode.
 
-- **Today**: the chair map (a file from the [Bay Map Builder](https://brendannyates.github.io/bay-map-builder/)), who's checked
-  in and waiting, who's still to come, and one visit card with the next step. Until a map is loaded the chairs are one folded line
-  that opens to tiles. Red only means a patient has waited 10+ minutes for a chair. **New patients to add** lists everyone on the
+- **Today**: In treatment, Checked in, Still to come and Checked out, and one visit card with the next step. A visit is
+  **Checked in**, then **In treatment**, then **Checked out**; waiting time isn't tracked, so nothing on Today is red. The chair map
+  (a file from the [Bay Map Builder](https://brendannyates.github.io/bay-map-builder/)) only shows once one is loaded in Settings;
+  with no map, visits are tracked without chairs. **New patients to add** lists everyone on the
   appointment list in the next 4 weeks with no row on the Master Patient Tracker, treatment starts first.
 - **Schedule**: the week (Sunday to Saturday) by day and time, from the Appt List tab, with open template slots and holds.
   Treatment starts carry a blue tab and index visits (Induction patients' visits, and holds) a lavender one; **PC** marks a patient
@@ -45,8 +46,11 @@ the task pane, full screen sits at the top right of every page with refresh and 
 - **Availability**: every patient's availability as the IVK Patient Availability Form asks it (each weekday AM and PM: Preferred,
   Mostly, Sometimes, Not available; effective and expiry dates), with how many patients can come each half day above. Needs
   updating: no form on file, expired, only the tracker's AM/PM columns, or fewer than the 3 days the form asks for.
-- **Settings**: your first name, the NextGen upload, Teams workflows and message wording, the chair map, timing, dark mode,
-  workbook setup.
+- **Settings**: your first name, the NextGen upload, Teams workflows and message wording, the chair map, timing (visit length,
+  chairs in the room for open slots when there's no map, booking and protocol rules), dark mode, workbook setup.
+
+On open, a loading screen ticks off each read (Connecting, Master Patient Tracker, Appt List, IVK Tracker Data, the chair map).
+Refresh dims the page while it reads and then says how many visits and patients it read.
 
 ## Patient profiles
 
@@ -74,10 +78,11 @@ the add-in asks the desk to print it and saves the day they tick it. The start e
 
 ## The visit, at the desk
 
-1. **Check in.** They go to the lobby unless a chair is picked. Payment can be recorded here (optional). The RN's chat gets "SMIJAN is here for their 1:30 PM IVK visit with
-   Dr. Rivera. Chair 2." If the patient needs booking out or a protocol confirmation, the group chat gets the ask at the same time.
-2. **Seat.** Picking a chair later tells the RN which one.
-3. **Ask.** While they're in the chair, the card's next step is to ask the group chat (if it wasn't sent at check-in). The message
+1. **Check in.** With a chair map loaded, pick the chair (or No chair yet). Payment can be recorded here (optional). The RN's chat
+   gets "SMIJAN is here for their 1:30 PM IVK visit with Dr. Rivera." (plus "Chair 2." with a map). If the patient needs booking
+   out or a protocol confirmation, the group chat gets the ask at the same time.
+2. **Start treatment.** Straight away with no map; with a map and no chair yet, it asks which chair and can tell the RN.
+3. **Ask.** While they're in treatment, the card's next step is to ask the group chat (if it wasn't sent at check-in). The message
    can be edited before it goes.
 4. **Check out.** Say whether the next visit is booked, book later, or not needed. Ticking "The provider confirmed the protocol"
    writes Protocol Updated (today) and, if it changed, Frequency on the Master Patient Tracker.
@@ -210,7 +215,7 @@ Index planner gets the newer tables from Update the workbook):
 
 | Table | What |
 |---|---|
-| tblIvkVisits | One row per visit the desk touched: arrived, chair, seated, out, booked, asked, protocol, who, when |
+| tblIvkVisits | One row per visit the desk touched: arrived, chair (only with a map), seated (when treatment started), out, booked, asked, protocol, who, when |
 | tblIvkConfig | Clinic, chairs, visit length, thresholds, Teams on/off |
 | tblIvkRoutes | arrival → the RN's chat, protocol → the Castro IVK group chat, each with its Teams workflow URL |
 | tblIvkTemplates | The message wording |
