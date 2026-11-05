@@ -87,3 +87,14 @@ test("signatures: from Outlook's files, cleaned, added only when there is one", 
   assert.equal(C.withSignature("Hi", "Sam R.<br>Desk &amp; more", false), "Hi\n\nSam R.\nDesk & more");
   assert.equal(C.withSignature("Hi", "", false), "Hi");
 });
+
+test("full screen on open: each person's choice; the workbook opens the add-in while anyone has it on", () => {
+  const users = [{ name: "Sam", set: { autoFull: true } }, { name: "Ana", set: {} }, { name: "Lee", set: { autoFull: "yes" } }];
+  assert.equal(C.AUTO_SHOW, "Office.AutoShowTaskpaneWithDocument");
+  assert.equal(C.autoFullOf(users[0]), true); assert.equal(C.autoFullOf(users[1]), false); assert.equal(C.autoFullOf(users[2]), false); assert.equal(C.autoFullOf(null), false);
+  assert.equal(C.autoAny(users), true);
+  assert.equal(C.autoAny(users, "sam", false), false);   // Sam turns it off: nobody else has it
+  assert.equal(C.autoAny(users, "Ana", true), true);
+  assert.equal(C.autoAny([], "New", true), true);         // not on the list yet
+  assert.equal(C.autoAny([], "New", false), false);
+});

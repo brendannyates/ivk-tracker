@@ -1344,6 +1344,12 @@
   function whoRec(json) { try { const o = JSON.parse(json || "{}"); return { day: txt(o.day), name: txt(o.name), used: Array.isArray(o.used) ? o.used.map(txt).filter(Boolean) : [] }; } catch (e) { return { day: "", name: "", used: [] }; } }
   const whoToday = (rec, dayIso) => rec && rec.day === dayIso ? rec.name : "";
   const whoPick = (rec, name, dayIso) => ({ day: dayIso, name, used: [name].concat((rec?.used || []).filter(n => userKey(n) !== userKey(name))).slice(0, 20) });
+  /* "Open in full screen whenever I open this workbook": each person's own choice (autoFull in their settings). Excel can only open
+     the add-in with the workbook for everyone (document setting Office.AutoShowTaskpaneWithDocument), so it's on while anyone has
+     theirs on. users = userRows(); name/on = a change not saved yet. */
+  const AUTO_SHOW = "Office.AutoShowTaskpaneWithDocument";
+  const autoFullOf = u => !!(u && u.set && u.set.autoFull === true);
+  const autoAny = (users, name, on) => (users || []).some(u => name != null && userKey(u.name) === userKey(name) ? !!on : autoFullOf(u)) || (name != null && !!on);
   /* Admin: code 0582 unlocks on any workbook. Compared as a salted SHA-256 so the code isn't written here in plain text. The repo is
      public, so this keeps honest people from changing clinic-wide settings by accident; it is not a security control. */
   const ADMIN_SALT = "ivk-tracker-admin", ADMIN_HASH = "14068cdf14b0b225199c46811cd9623fd862c9bee291adc30e89c36649a1bf77", ADMIN_MIN = 15;
@@ -1399,7 +1405,7 @@
     return b.includes("{signature}") ? b.replace("{signature}", "{map}\n{signature}") : b + "\n{map}";
   }
 
-  return { DEFAULTS, VISIT_COLS, TEMPLATES, norm, clinicFromName, USER_COLS, userKey, userRows, pickOrder, cleanName, wbKeyOf, whoRec, whoToday, whoPick, ADMIN_MIN, adminOk, CLINIC_WIDE, lockedCfg, sigFromFile, withSignature, tplImages, withMap, txt, num, serialOf, dateOf, isoOf, fromIso, toSerial, toMin, fmtT, fmtD, fmtDay, weekday, weekStart,
+  return { DEFAULTS, VISIT_COLS, TEMPLATES, norm, clinicFromName, USER_COLS, userKey, userRows, pickOrder, cleanName, wbKeyOf, whoRec, whoToday, whoPick, AUTO_SHOW, autoFullOf, autoAny, ADMIN_MIN, adminOk, CLINIC_WIDE, lockedCfg, sigFromFile, withSignature, tplImages, withMap, txt, num, serialOf, dateOf, isoOf, fromIso, toSerial, toMin, fmtT, fmtD, fmtDay, weekday, weekStart,
     PT_COLS, ptRows, AV_LEVELS, avName, availGrid, availStr, canCome, prefCells, awayList, awayStr, awayOn, PAY_COLS, REMIND_METHODS, money, amt, payRows, dueOf, payOf, ledger, toConfirm,
     PARTS, partKey, dueParts, visitAnswered, PROFILE_COLS, COVER_MODES, modeOf, modeParts, isSelf, SOHAR_KEYS, profileRows, coverage, profileGaps, parseSohar, planSoharImport, demand,
     fullPlan, eligibleStarts, memoX, indexState, indexShort, nextStart, XFER_COLS, xferRows, xferState, elsewhere, visitCounts, SOONER_COLS, soonerRows, soonerKey, soonerMatch, openSlots, freedTimes, ELSE_COLS, elseRows, sameLoc, isOurs, bookedAt, prefCols, indexN: cfg => Math.max(1, Math.round(+cfg.IndexPerWeek * +cfg.IndexWeeks)),
