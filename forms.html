@@ -294,7 +294,7 @@ table.av .half{color:var(--accent);font-weight:700}
       ["BCC", true, D.email.bcc || "None (optional)"],
       ["Clinic details", !(D.email.blanks || []).length, (D.email.blanks || []).length ? `Add ${D.email.blanks.join(", ")} in Settings › Messages` : "Filled in"],
       ["Start email template", !/\[Start email template/i.test(D.email.body), /\[Start email template/i.test(D.email.body) ? "Still the placeholder: paste the template in Settings › Messages" : "Filled in"],
-      ["Directions map", true, D.email.map ? "In the email" : "None loaded (optional): add it in Settings › Messages"],
+      ["Location/parking map", true, D.email.map ? "In the email" : "None loaded (optional): add it in Settings › Messages"],
       ["Schedule in the body and as a PDF", D.sch.rows.length > 0, D.sch.rows.length ? `${D.sch.rows.length} visit${D.sch.rows.length === 1 ? "" : "s"}` : "No visits in the date range"],
       ["IV ketamine consent PDF", !!(D.name && D.dob && D.provider), D.name && D.dob && D.provider ? "Name, DOB, clinic and clinician filled in" : `Missing ${[!D.name && "the name", !D.dob && "the date of birth", !D.provider && "the clinician"].filter(Boolean).join(", ")}: close and open the start email again`],
       ["BIDF", !!X.bidf, X.bidf ? X.bidf.name : "Attach it above"]

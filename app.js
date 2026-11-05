@@ -1462,7 +1462,7 @@
       <section class="card set"><h3>Messages</h3><p>{patient} is the code, {time} the visit time, {provider} the provider, {chair} the chair, {protocol} the frequency (“every 2 week”).</p>
         ${tplF("arrival", "Arrival")}${tplF("seated", "Chair picked at the start of treatment")}${tplF("protocol", "Confirm protocol and book")}${tplF("protocolOnly", "Confirm protocol only")}${tplF("bookOnly", "Book only")}
         <label class="fld">Start email subject<input id="tp_startSubject" value="${esc(S.tpl.startSubject)}"></label>
-        <label class="fld">Start email (HTML)<textarea id="tp_startEmail" rows="9" spellcheck="false">${esc(S.tpl.startEmail)}</textarea><span class="hint">The desk’s “Upcoming Appointment(s)” email. {mrn}, {first} (first name), {clinic}, {firstVisit} (“Wednesday, November 4th, 2026, at 10:00 AM”), {address}, {phone}, {schedule} where the appointment table goes, {map} where the directions map goes, and {signature} where the sender’s signature goes (only when they’ve added one in Settings › You). The MHS logo goes at the top by itself.</span></label>
+        <label class="fld">Start email (HTML)<textarea id="tp_startEmail" rows="9" spellcheck="false">${esc(S.tpl.startEmail)}</textarea><span class="hint">The desk’s “Upcoming Appointment(s)” email. {mrn}, {first} (first name), {clinic}, {firstVisit} (“Wednesday, November 4th, 2026, at 10:00 AM”), {address}, {phone}, {schedule} where the appointment table goes, {map} where the location/parking map goes, and {signature} where the sender’s signature goes (only when they’ve added one in Settings › You). The MHS logo goes at the top by itself.</span></label>
         ${startMapHTML()}
         <div class="two"><label class="fld">Clinic address in the start email<input id="cf_ClinicAddress" value="${esc(S.cfg.ClinicAddress)}" autocomplete="off"${lockA("ClinicAddress")}>${lockH("ClinicAddress")}</label>
         <label class="fld">Clinic phone in the start email<input id="cf_ClinicPhone" value="${esc(S.cfg.ClinicPhone)}" autocomplete="off"${lockA("ClinicPhone")}><span class="hint">${locked("ClinicPhone") ? "Saved for this workbook. Unlock Admin below to change it." : "For example 844-867-8444 ext. 1234"}</span></label></div>
@@ -2456,13 +2456,13 @@
       let note = ""; if (o.startEmail) { const x = C.tplImages(o.startEmail);
         if (x.img) { const held = heldFields(); if (!await saveStartMap(b64Blob(x.img.b64, x.img.type), "Map from the template", "Map taken from the template.")) return; held(); }
         if (x.img || x.lost) { o.startEmail = x.html; const el = $("#tp_startEmail"); if (el) el.value = x.html; }
-        note = x.img ? " The picture in the template is now the directions map ({map})." : x.lost && !S.smap ? " The template’s picture can’t travel in an email: load the map picture below, and it goes where {map} is." : x.lost ? " The template’s picture is now {map}, which shows the loaded map." : "";
+        note = x.img ? " The picture in the template is now the location/parking map ({map})." : x.lost && !S.smap ? " The template’s picture can’t travel in an email: use Upload Location/Parking Map below, and it goes where {map} is." : x.lost ? " The template’s picture is now {map}, which shows the loaded map." : "";
         if (o.startEmail.length > 32000) return toast("The start email is too long for the workbook (a cell holds about 32,000 characters). Take out any pasted pictures or styling and try again.", true); }
       /* the clinic's address, phone, CC and BCC: saved by whoever enters them first; once saved, only an admin changes them */
       const cf = {}; for (const k of ["ClinicAddress", "ClinicPhone", "StartCc", "StartBcc"]) { const el = $(`#cf_${k}`); if (el && !locked(k) && (C.txt(el.value) || C.txt(S.saved?.[k]))) cf[k] = el.value.trim(); }
       const bad = ["StartCc", "StartBcc"].find(k => cf[k] && !cf[k].split(/[;,]\s*/).every(a => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(a))); if (bad) return toast(`${bad === "StartCc" ? "CC" : "BCC"} needs email addresses, separated by commas.`, true);
       await write("Saving messages…", async () => { await Store.saveKeyed("tblIvkTemplates", o); await Store.saveKeyed("tblIvkConfig", cf); }, "Messages saved." + note); },
-    startMapRemove: () => openModal("confirm", { title: "Remove the directions map?", body: "Start emails go out without it. You can load the picture again any time.", yes: "Remove the map",
+    startMapRemove: () => openModal("confirm", { title: "Remove the location/parking map?", body: "Start emails go out without it. You can upload it again any time.", yes: "Remove the map",
       run: async () => { await Store.setDoc(START_MAP_KEY, null); S.smap = null; } }),
     async resetTpl() { await write("Saving messages…", () => Store.saveKeyed("tblIvkTemplates", Object.assign({}, C.TEMPLATES, C.START_TPL)), "Standard wording restored."); },
     async saveCfg() {
@@ -2765,10 +2765,10 @@
   function startMapHTML() {
     if (S.smap === undefined) { S.smap = null; S.smapAsk = true; Store.getStartMap().then(v => { S.smap = okMap(v); S.smapAsk = false; render(); }).catch(() => { S.smapAsk = false; }); }
     const M = S.smap;
-    return `<div class="fld">Directions map in the start email
-        <div class="status${M ? " ok" : ""}"><span class="dot"></span>${M ? `${esc(M.name || "Map")} · ${M.w} × ${M.h}` : S.smapAsk ? "Checking…" : "No map yet. Load the clinic’s entrance and parking map, or paste a template that has the map in it."}</div>
-        ${M ? `<img src="data:${M.type};base64,${M.b64}" alt="The directions map" style="display:block;max-width:180px;height:auto;margin:8px 0;border:1px solid #d5dde3;border-radius:4px">` : ""}
-        <div class="actions"><label class="btn ghost sm line" style="cursor:pointer">${M ? "Load a different map" : "Load a map picture"}<input type="file" id="startMapFile" accept="image/png,image/jpeg,image/gif" hidden></label>${M ? `<button class="btn mute sm" data-act="startMapRemove">Remove the map</button>` : ""}</div>
+    return `<div class="fld">Location/parking map in the start email
+        <div class="status${M ? " ok" : ""}"><span class="dot"></span>${M ? `${esc(M.name || "Map")} · ${M.w} × ${M.h}` : S.smapAsk ? "Checking…" : "No map yet. Upload the clinic’s location/parking map, or paste a template that has the map in it."}</div>
+        ${M ? `<img src="data:${M.type};base64,${M.b64}" alt="The location/parking map" style="display:block;max-width:180px;height:auto;margin:8px 0;border:1px solid #d5dde3;border-radius:4px">` : ""}
+        <div class="actions"><label class="btn ghost sm line" style="cursor:pointer">Upload Location/Parking Map<input type="file" id="startMapFile" accept="image/png,image/jpeg,image/gif" hidden></label>${M ? `<button class="btn mute sm" data-act="startMapRemove">Remove the map</button>` : ""}</div>
         <span class="hint">Goes under the schedule with a “Getting Here” heading, or wherever {map} is in the template. Kept in this workbook, not in the template (a cell can’t hold a picture). Use a map only: nothing about a patient.</span></div>`;
   }
   /* a picture as the map: no wider than MAP_MAX_W, PNG or JPEG, whichever is smaller (a flat map is often smaller as PNG) */
@@ -2783,13 +2783,13 @@
       const png = cv.toDataURL("image/png"), jpg = cv.toDataURL("image/jpeg", 0.9), best = png.length <= jpg.length * 1.2 ? png : jpg;
       const mm = best.match(/^data:(image\/\w+);base64,(.*)$/); if (!mm) throw new Error("Couldn’t read that picture. Try a PNG or JPG.");
       if (mm[2].length > MAP_MAX_B64) throw new Error("That picture is too large to keep in the workbook, even made smaller. Try a smaller copy of the map.");
-      return { name: C.txt(name).replace(/\.[a-z0-9]+$/i, "").slice(0, 60) || "Directions map", type: mm[1], b64: mm[2], w, h };
+      return { name: C.txt(name).replace(/\.[a-z0-9]+$/i, "").slice(0, 60) || "Location/parking map", type: mm[1], b64: mm[2], w, h };
     } finally { URL.revokeObjectURL(url); }
   }
   const b64Blob = (b64, type) => { const s = atob(b64), u = new Uint8Array(s.length); for (let i = 0; i < s.length; i++) u[i] = s.charCodeAt(i); return new Blob([u], { type }); };
   async function saveStartMap(blob, name, done) {
     let m; try { m = await mapPicture(blob, name); } catch (e) { toast(String(e.message || e), true); return false; }
-    const held = heldFields(), r = await write("Saving the directions map…", () => Store.setDoc(START_MAP_KEY, m), done || "Directions map saved. It shows in start emails under the schedule.");
+    const held = heldFields(), r = await write("Saving the location/parking map…", () => Store.setDoc(START_MAP_KEY, m), done || "Location/parking map saved. It shows in start emails under the schedule.");
     if (r) S.smap = m; render(); held(); return !!r;
   }
   /* Messages fields typed but not saved yet survive the re-render after the map is saved or removed */

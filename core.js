@@ -1274,7 +1274,7 @@
   const longWhen = (d, t) => { const x = dateOf(d); return `${DAY_NAMES[x.getDay()]}, ${MONTHS[x.getMonth()]} ${ordinal(x.getDate())}, ${x.getFullYear()}${t != null ? `, at ${fmtT(t)}` : ""}`; };
   /* The desk's start email ("MHS: Upcoming Appointment(s)"), as HTML. {mrn} {first} {clinic} {firstVisit} {address} {phone} are
      filled in; {schedule} is where the appointment table goes and {signature} the sender's own (blank unless they added one in
-     Settings › You: Outlook adds theirs to a new message). {map} is the clinic's directions map (Settings › Messages), with its
+     Settings › You: Outlook adds theirs to a new message). {map} is the clinic's location/parking map (Settings › Messages), with its
      own "Getting Here" heading; nothing shows there until a map is loaded. Edit it in Settings › Messages. */
   const LI = s => `<li style="margin:0">${s}</li>`, UL = a => `<ul style="margin-top:0;margin-bottom:0">${a.map(LI).join("")}</ul>`, H = (s, m) => `<p style="margin:${m || "12pt"} 0 0"><b>${s}</b></p>`;
   const START_TPL = {
