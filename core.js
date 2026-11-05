@@ -8,9 +8,10 @@
 })(typeof self !== "undefined" ? self : this, function (TM) {
   "use strict";
 
-  /* Defaults for tblIvkConfig. Castro: 4 chairs, each IVK visit holds a chair 2 hours. The SOP has the clinician check in within
-     the first 30 min and again in the last 5-10 min. */
-  const DEFAULTS = { Enabled: "TRUE", Clinic: "Castro", Chairs: "4", VisitMin: 120,
+  /* Defaults for tblIvkConfig: 4 chairs, each IVK visit holds a chair 2 hours. The SOP has the clinician check in within
+     the first 30 min and again in the last 5-10 min. Nothing clinic-specific is built in: Clinic comes from the workbook's saved
+     setting, else the workbook name (clinicFromName); the start email's address, phone, CC and BCC are entered once per workbook. */
+  const DEFAULTS = { Enabled: "TRUE", Clinic: "", Chairs: "4", VisitMin: 120,
     AheadWeeks: 6, ProtocolDays: 90, AuthWarnDays: 14, EncountersWarn: 3,
     /* index: 2 visits in each 7 days from treatment 1, for 3 weeks; at least a day off between visits, no more than 5 days apart
        when the slots allow; the provider's post check is in the last 30 min of the 2 hours; a hold is booked in NextGen within 10 min */
@@ -21,8 +22,9 @@
     /* Locations: this clinic's NextGen location names ("SF Castro; Castro IVK"), so a wider report's other clinics are kept apart.
        Blank = any location naming the clinic. ElsewhereAt: when the other clinics' visits were last uploaded */
     Locations: "", ElsewhereAt: "",
-    /* the start email: the clinic's address for "your first treatment at", and who is copied on every one */
-    ClinicAddress: "45 Castro Street Suite 318, San Francisco, CA 94114", StartCc: "helpcastro@mindfulhealthsolutions.com", StartBcc: "amreed@mymhs.com",
+    /* the start email: the clinic's address for "your first treatment at", its phone, and who is copied on every one.
+       Blank until the first person at the clinic enters them (Settings › Messages); after that only an admin changes them */
+    ClinicAddress: "", ClinicPhone: "", StartCc: "", StartBcc: "",
     /* the start checklist: the Case Management stage a kept start moves the patient to in NextGen, and how many days a kept start
        stays on the list while Case Management isn't marked updated */
     CmStage: "6. Started", StartBackDays: 14 };
@@ -1082,8 +1084,9 @@
   /* "Monday, November 4th, 2026, at 10:00 AM", as the start email says it */
   const ordinal = n => n + (n % 100 >= 11 && n % 100 <= 13 ? "th" : ["th", "st", "nd", "rd"][n % 10] || "th");
   const longWhen = (d, t) => { const x = dateOf(d); return `${DAY_NAMES[x.getDay()]}, ${MONTHS[x.getMonth()]} ${ordinal(x.getDate())}, ${x.getFullYear()}${t != null ? `, at ${fmtT(t)}` : ""}`; };
-  /* The Castro desk's start email ("MHS: Upcoming Appointment(s)"), as HTML. {mrn} {first} {clinic} {firstVisit} {address} are
-     filled in; {schedule} is where the appointment table goes. Edit it in Settings › Messages. */
+  /* The desk's start email ("MHS: Upcoming Appointment(s)"), as HTML. {mrn} {first} {clinic} {firstVisit} {address} {phone} are
+     filled in; {schedule} is where the appointment table goes and {signature} the sender's own (blank unless they added one in
+     Settings › You: Outlook adds theirs to a new message). Edit it in Settings › Messages. */
   const LI = s => `<li style="margin:0">${s}</li>`, UL = a => `<ul style="margin-top:0;margin-bottom:0">${a.map(LI).join("")}</ul>`, H = (s, m) => `<p style="margin:${m || "12pt"} 0 0"><b>${s}</b></p>`;
   const START_TPL = {
     startSubject: "SECURE: Upcoming Visit Information | MHS",
@@ -1099,17 +1102,91 @@
         "Our RN will place the IV and monitor your vitals and response throughout treatment, while your provider will connect with you 1:1 and follow up with you during the end of your observation period, prior to discharge.",
         "Normal experiences may include floating sensations, mild dissociation, or visual distortions. These typically resolve shortly after the infusion ends.", "The infusion itself usually lasts 40–60 minutes, followed by a brief recovery period."]),
       H("After Your Treatment:"), UL(["Plan for quiet rest and avoid driving, working, major decisions, or strenuous activity until the next day.", "Continue hydrating and eat light, balanced meals once your stomach feels settled."]),
-      H("How to Contact Us:"), UL(["<b>Email - </b>CC’d is our Castro Help email, for direct access to our team regarding any needs you may have as it pertains to your appointments (best for non-urgent communication)",
-        "<b>Phone -</b> For more immediate communication, any questions before or after your appointment, feel free to contact us directly at <b>844-867-8444 ext. 3400 </b><i>(once the voice prompt begins)</i>",
+      H("How to Contact Us:"), UL(["<b>Email - </b>CC’d is our {clinic} help email, for direct access to our team regarding any needs you may have as it pertains to your appointments (best for non-urgent communication)",
+        "<b>Phone -</b> For more immediate communication, any questions before or after your appointment, feel free to contact us directly at <b>{phone}</b>",
         "<b>Portal –</b> Patient Portal messaging is HIPAA secure, offers appointment visibility, and message history if you prefer to consolidate communication"]),
       `<p style="margin:12pt 0 0"><b>Please note:</b> We ask that patients confirm their appointments or request a reschedule at least 24 <i>business hours </i>prior to their appointment. With our patients’ cooperation, prompt cancellations and reschedules ensure we have appointment availability to accommodate reschedule requests, or make needed adjustments to your schedule. You will receive an electronic confirmation request at least 5 days prior to all appointments.</p>`,
       `<p style="margin:12pt 0 0">Whatever you may need, we’re here to ensure you feel supported and informed every step of the way.</p>`,
-      `<p style="margin:12pt 0 0">Best,<br>Mindful Health Solutions – SF Castro<br>P: (844) 867-8444 (Option #3400) | F: (415) 964-5419<br><br><a href="https://mindfulhealthsolutions.com/">https://mindfulhealthsolutions.com</a></p>`,
+      "{signature}",
       `<p style="margin:12pt 0 0;font-size:10pt">This email communication and any attachments may contain confidential information for the use of the designated recipients named above.  Distribution, reproduction or any other use of this transmission by any party other than the intended recipient is prohibited and may be subject to protection under the law, including the Health Insurance Portability and Accountability Act (HIPAA).  If you receive this e-mail in error, please notify the sender immediately by reply e-mail and permanently delete this e-mail and any attachments.</p>`
     ].join("\n")
   };
 
-  return { DEFAULTS, VISIT_COLS, TEMPLATES, norm, txt, num, serialOf, dateOf, isoOf, fromIso, toSerial, toMin, fmtT, fmtD, fmtDay, weekday, weekStart,
+  /* ---------- who's at the desk, the clinic, admin ---------- */
+  /* the clinic in a tracker's name: "Castro IVK Patient Tracker" -> "Castro", "Walnut Creek IVK Tracker 2026" -> "Walnut Creek".
+     "" when the name doesn't start with one (same rule as the TMS Tracker's) */
+  function clinicFromName(name) {
+    const s = String(name || "").replace(/\.(xlsx|xlsm|xlsb|xls)$/i, "").replace(/[_-]+/g, " ");
+    const W = /^(ivk|iv\s?ketamine|ketamine|tms|esk|pt|patient|master|tracker|mhs|copy of)$/i;
+    const m = s.match(/^(.*?)\s+(ivk|iv\s?ketamine|ketamine|tms|esk|pt|patient|master|tracker)\b/i), c = (m ? m[1] : "").replace(/\s{2,}/g, " ").trim();
+    return W.test(c) ? "" : c.replace(/^copy of\s+/i, "");
+  }
+  /* tblIvkUsers: the people registered on this workbook. Only this list is offered when picking who's at the desk.
+     Settings (JSON) holds their own settings (today only the optional email signature). */
+  const USER_COLS = ["Name", "Added", "Updated", "Settings (JSON)"];
+  const userKey = n => txt(n).toLowerCase();
+  function userRows(values) {
+    const seen = new Set(), out = [];
+    for (const x of byHeader(values).rows) {
+      const name = txt(x.get("name")), k = userKey(name); if (!name || seen.has(k)) continue; seen.add(k);
+      let set = {}; try { const j = JSON.parse(txt(x.get("settingsjson")) || "{}"); if (j && typeof j === "object" && !Array.isArray(j)) set = j; } catch (e) { /* unreadable: no settings */ }
+      out.push({ name, added: txt(x.get("added")), updated: txt(x.get("updated")), set });
+    }
+    return out;
+  }
+  /* the picker's order: the people who have used this computer on this workbook first (most recent first), then everyone else A-Z.
+     here = names this computer remembers for this workbook, newest first. Nobody is picked for them. */
+  function pickOrder(users, here) {
+    const H = (here || []).map(userKey), rank = u => { const i = H.indexOf(userKey(u.name)); return i < 0 ? Infinity : i; };
+    return (users || []).map(u => Object.assign({}, u, { here: rank(u) !== Infinity }))
+      .sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
+  }
+  /* the name typed to register, as Teams posts show it: usually a first name (a last initial when two people share one) */
+  const cleanName = s => txt(s).replace(/\s+/g, " ").slice(0, 30).trim();
+  /* this computer's memory is kept per workbook: a short key from the workbook's URL (or the id saved in it) */
+  function wbKeyOf(s) {
+    let h = 0x811c9dc5; const t = String(s || "").trim().toLowerCase().replace(/[?#].*$/, "");
+    for (let i = 0; i < t.length; i++) { h ^= t.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; }
+    return t ? "w" + h.toString(36) : "";
+  }
+  /* what this computer remembers for one workbook: { day: "2026-11-05", name: "Sam", used: ["Sam", "Ana"] }. The pick lasts the day. */
+  function whoRec(json) { try { const o = JSON.parse(json || "{}"); return { day: txt(o.day), name: txt(o.name), used: Array.isArray(o.used) ? o.used.map(txt).filter(Boolean) : [] }; } catch (e) { return { day: "", name: "", used: [] }; } }
+  const whoToday = (rec, dayIso) => rec && rec.day === dayIso ? rec.name : "";
+  const whoPick = (rec, name, dayIso) => ({ day: dayIso, name, used: [name].concat((rec?.used || []).filter(n => userKey(n) !== userKey(name))).slice(0, 20) });
+  /* Admin: code 0582 unlocks on any workbook. Compared as a salted SHA-256 so the code isn't written here in plain text. The repo is
+     public, so this keeps honest people from changing clinic-wide settings by accident; it is not a security control. */
+  const ADMIN_SALT = "ivk-tracker-admin", ADMIN_HASH = "14068cdf14b0b225199c46811cd9623fd862c9bee291adc30e89c36649a1bf77", ADMIN_MIN = 15;
+  async function adminOk(code) {
+    const c = String(code ?? "").trim(); if (!c) return false;
+    const sub = (typeof crypto !== "undefined" && crypto.subtle) || (typeof require === "function" ? require("crypto").webcrypto.subtle : null); if (!sub) return false;
+    const b = await sub.digest("SHA-256", new TextEncoder().encode(`${ADMIN_SALT}|${c}`));
+    return Array.from(new Uint8Array(b)).map(x => x.toString(16).padStart(2, "0")).join("") === ADMIN_HASH;
+  }
+  /* clinic-wide settings: whoever enters one first saves it for the workbook; once saved, changing it takes admin */
+  const CLINIC_WIDE = ["Clinic", "ClinicAddress", "ClinicPhone", "StartCc", "StartBcc"];
+  const lockedCfg = (saved, k, admin) => CLINIC_WIDE.includes(k) && !admin && txt((saved || {})[k]) !== "";
+  /* An email signature from a file: Outlook keeps each signature as .htm and .txt in %APPDATA%\Microsoft\Signatures. The .htm's
+     body is kept without scripts, styles, event handlers or local pictures (those can't travel in the email); text becomes lines. */
+  const escH = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  function sigFromFile(text, isHtml) {
+    let s = String(text || "").replace(/^\uFEFF/, "");
+    if (!isHtml) return s.trim() ? s.trim().split(/\r?\n/).map(escH).join("<br>") : "";
+    const b = s.match(/<body[^>]*>([\s\S]*)<\/body>/i); if (b) s = b[1];
+    s = s.replace(/<!--[\s\S]*?-->/g, "").replace(/<(script|style|head|xml|object|iframe|embed)[\s\S]*?<\/\1>/gi, "").replace(/<\/?(script|style|object|iframe|embed|link|meta|base|form|input)[^>]*>/gi, "")
+      .replace(/<\/?[a-z]+:[^>]*>/gi, "").replace(/\s+on[a-z]+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, "")
+      .replace(/<img\b[^>]*>/gi, m => /\ssrc\s*=\s*["']?https:\/\//i.test(m) ? m : "")
+      .replace(/(href|src)\s*=\s*(["'])\s*(javascript|vbscript|data):[^"']*\2/gi, "$1=$2#$2").replace(/(href|src)\s*=\s*(javascript|vbscript|data):[^\s>]*/gi, '$1="#"');
+    return s.replace(/\s{2,}/g, " ").trim();
+  }
+  const sigText = h => String(h || "").replace(/<br\s*\/?>|<\/(p|div)>/gi, "\n").replace(/<[^>]+>/g, "").replace(/&nbsp;/g, " ").replace(/&lt;/g, "<").replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, "&").replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+  /* the start email with the sender's signature: at {signature} when the template has it, else at the end; blank removes the token */
+  function withSignature(body, sig, html) {
+    const s = txt(sig), b = String(body || ""), blk = html ? (s ? `<div style="margin:12pt 0 0">${s}</div>` : "") : (s ? `\n\n${sigText(s)}` : "");
+    return b.includes("{signature}") ? b.replace(/\{signature\}/g, blk) : b + blk;
+  }
+
+  return { DEFAULTS, VISIT_COLS, TEMPLATES, norm, clinicFromName, USER_COLS, userKey, userRows, pickOrder, cleanName, wbKeyOf, whoRec, whoToday, whoPick, ADMIN_MIN, adminOk, CLINIC_WIDE, lockedCfg, sigFromFile, withSignature, txt, num, serialOf, dateOf, isoOf, fromIso, toSerial, toMin, fmtT, fmtD, fmtDay, weekday, weekStart,
     PT_COLS, ptRows, AV_LEVELS, avName, availGrid, availStr, canCome, prefCells, awayList, awayStr, awayOn, PAY_COLS, REMIND_METHODS, money, amt, payRows, dueOf, payOf, ledger, toConfirm,
     PARTS, partKey, dueParts, visitAnswered, PROFILE_COLS, COVER_MODES, modeOf, modeParts, isSelf, SOHAR_KEYS, profileRows, coverage, profileGaps, parseSohar, demand,
     fullPlan, eligibleStarts, memoX, indexState, indexShort, nextStart, XFER_COLS, xferRows, xferState, elsewhere, visitCounts, SOONER_COLS, soonerRows, soonerKey, soonerMatch, openSlots, freedTimes, ELSE_COLS, elseRows, sameLoc, isOurs, bookedAt, prefCols, indexN: cfg => Math.max(1, Math.round(+cfg.IndexPerWeek * +cfg.IndexWeeks)),

@@ -526,3 +526,14 @@ button.avrow:hover{background:var(--surface-3)}button.avrow + button.avrow{box-s
 .bootin h1{margin:22px 0 0;font-size:30px}.bootin>p{margin:6px 0 0;font-size:14px}
 .bootin .steps{width:100%;margin-top:24px;text-align:left}.bootin .step{grid-template-columns:22px 1fr;gap:12px;padding:8px 0}.bootin .step .t{font-weight:400;font-size:14px}.bootin .step .m{min-height:17px}
 .spinner{width:44px;height:44px;border-radius:50%;border:4px solid var(--surface-2);border-top-color:var(--accent);animation:ivkspin .9s linear infinite}
+
+/* who's at the desk, Settings › You and Admin */
+.boot.who .bootin{width:min(420px,100%)}
+.wholist{display:flex;flex-direction:column;gap:8px;width:100%;margin-top:20px}
+.wholist .whob{display:flex;justify-content:space-between;align-items:center;width:100%;min-height:48px;font-size:16px;text-align:left}
+.whonew{width:100%;margin-top:14px;text-align:left}
+.item.who{flex-direction:column;align-items:flex-start;justify-content:center;font-weight:600}
+.item.who small{font-weight:400;font-size:12.5px;color:var(--muted)}
+.urow{display:flex;justify-content:space-between;align-items:center;gap:12px;min-height:40px}
+.ulist{list-style:none;margin:6px 0 0;padding:0}.ulist li{border-bottom:1px solid var(--surface-2)}
+.sigprev{margin-top:10px;padding:10px 12px;border-radius:10px;background:var(--surface-3);font-size:13px;overflow:auto;max-height:180px}

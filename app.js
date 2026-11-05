@@ -22,15 +22,56 @@
   const plural = (n, a, b) => `${n} ${n === 1 ? a : b || a + "s"}`;
 
   const S = { view: "today", raw: null, sig: "", live: false, err: "", sel: null, pSel: null, chip: "need", q: "", wk: 0, ipView: "plan", ipSel: null, ipPins: {}, ipAlt: null, ipWk: 0, tg: 0, tsel: null, te: null,
-    modal: null, m: {}, loading: false, name: LS.get("ivkName", ""), theme: LS.get("ivkTheme", "light") };
+    modal: null, m: {}, loading: false, name: "", wb: "", adminUntil: 0, theme: LS.get("ivkTheme", "light") };
   document.documentElement.dataset.theme = S.theme;
+
+  /* ---------- who's at the desk ----------
+     People register on the workbook (tblIvkUsers). This computer remembers, per workbook, who picked today and who has used it here
+     before (localStorage "ivkWho:<workbook key>"); nothing is carried from one workbook to another. The first open each day asks
+     "Who's at the desk?" from that workbook's list only, with nobody picked. The pane decides; full screen takes the pane's pick. */
+  const dayIso = () => C.isoOf(todayS());
+  const whoKey = () => S.wb ? `ivkWho:${S.wb}` : "";
+  const whoRead = () => C.whoRec(whoKey() ? LS.get(whoKey(), "") : "");
+  function workbookKey() {
+    let url = ""; try { url = Office.context.document.url || ""; } catch (e) { /* no document */ }
+    if (url) return C.wbKeyOf(url);
+    let id = X.getDoc("ivkWbId");
+    if (!id) { id = `id${Date.now().toString(36)}${Math.random().toString(36).slice(2, 8)}`; X.setDoc("ivkWbId", id).catch(() => { /* read-only: this session only */ }); }
+    return C.wbKeyOf(id);
+  }
+  /* today's pick on this computer, if any, and only while they're still on the workbook's list */
+  function loadWho() {
+    if (FULL) return;
+    const n = C.whoToday(whoRead(), dayIso()), u = n && (S.users || []).find(x => C.userKey(x.name) === C.userKey(n));
+    S.name = S.usersOn ? (u ? u.name : "") : n;
+  }
+  function setWho(name) {
+    S.name = name || "";
+    if (!FULL && whoKey()) { const rec = whoRead(); LS.set(whoKey(), JSON.stringify(name ? C.whoPick(rec, name, dayIso()) : Object.assign(rec, { day: "", name: "" }))); }
+    toChild({ k: "who", name: S.name });
+  }
+  const me = () => (S.users || []).find(u => C.userKey(u.name) === C.userKey(S.name)) || null;
+  /* the signature is cleaned again whenever it's used: anyone who can edit the workbook can edit the cell */
+  const sigOf = () => C.sigFromFile(me()?.set?.sig || "", true);
+  /* a clinic-wide field already saved: read-only until admin is unlocked */
+  const locked = k => C.lockedCfg(S.saved, k, adminOn());
+  const lockA = k => locked(k) ? ' disabled title="Saved for this workbook. Unlock Admin in Settings to change it."' : "";
+  const lockH = k => locked(k) ? '<span class="hint">Saved for this workbook. Unlock Admin below to change it.</span>' : "";
+  /* the pane asks once the workbook is set up; a workbook that isn't yet shows the setup banner instead */
+  const mustPick = () => !FULL && !!S.raw && !S.name && !!S.raw.tables?.own?.tblIvkConfig;
+  const adminOn = () => S.adminUntil > Date.now();
+  const clinicName = () => S.cfg?.Clinic || "this clinic";
 
   /* ---------- derived model ---------- */
   const kv = vals => { const o = {}; (vals || []).slice(1).forEach(r => { const k = C.txt(r[0]); if (k) o[k] = r[1]; }); return o; };
   function derive() {
     const r = S.raw || {}, T = todayS(), cfg = Object.assign({}, C.DEFAULTS);
-    for (const [k, v] of Object.entries(kv(r.tblIvkConfig))) if (C.txt(v) !== "") cfg[k] = typeof C.DEFAULTS[k] === "number" && C.num(v) != null ? C.num(v) : C.txt(v);
+    S.saved = kv(r.tblIvkConfig);
+    for (const [k, v] of Object.entries(S.saved)) if (C.txt(v) !== "") cfg[k] = typeof C.DEFAULTS[k] === "number" && C.num(v) != null ? C.num(v) : C.txt(v);
+    /* the clinic: what the workbook saved, else the one its name starts with ("Castro IVK Patient Tracker"), else blank (asked on Today) */
+    S.clinicFromName = !C.txt(cfg.Clinic) ? C.clinicFromName(r.wbName) : ""; if (S.clinicFromName) cfg.Clinic = S.clinicFromName;
     S.cfg = cfg;
+    S.users = C.userRows(r.tblIvkUsers); S.usersOn = !!r.tables?.own?.tblIvkUsers;
     S.tpl = Object.assign({}, C.TEMPLATES, C.START_TPL); for (const [k, v] of Object.entries(kv(r.tblIvkTemplates))) if (C.txt(v)) S.tpl[k] = C.txt(v);
     S.routes = {}; C.byHeader(r.tblIvkRoutes).rows.forEach(x => { const ev = C.txt(x.get("event")).toLowerCase(); if (ev) S.routes[ev] = { to: C.txt(x.get("sendsto")), url: C.txt(x.get("flowurl")), on: N.truthy(x.get("enabled")) }; });
     S.log = C.byHeader(r.tblIvkLog).rows.map(x => ({ ev: C.txt(x.get("event")), code: C.txt(x.get("patient")), chair: C.txt(x.get("chair")), msg: C.txt(x.get("message")), at: C.txt(x.get("sentat")), by: C.txt(x.get("sentby")), result: C.txt(x.get("result")) })).filter(l => l.ev);
@@ -124,6 +165,8 @@
     readRow: (k, m) => X.readRow(k, m), saveRow: (k, m, p) => X.saveRow(k, m, p), savePt: (m, p) => X.savePt(m, p), addPays: r => X.addPays(r), saveRanks: (o, by) => X.saveRanks(o, by), saveException: (i, p) => X.saveException(i, p),
     setupTemplate: () => X.setupTemplate(), addGrid: (o, t) => X.addGrid(o, t), setCells: (a, r, c, v, m, s) => X.setCells(a, r, c, v, m, s),
     saveTypes: (t, g) => X.saveTypes(t, g), replaceOther: r => X.replaceOther(r), replaceElse: r => X.replaceElse(r), saveSooner: (m, p) => X.saveSooner(m, p), saveProfile: (m, p) => X.saveProfile(m, p), saveXfer: (m, p) => X.saveXfer(m, p), addMpt: f => X.addMpt(f), saveStart: (k, p) => X.saveStart(k, p),
+    /* the users list, and who's at the desk (full screen's pick is the pane's) */
+    saveUser: (n, s, rm) => X.saveUser(n, s, rm), setWho: async n => { setWho(n); return true; },
     /* the pane reads first so the tab gets every hold anyone has placed, not just this screen's copy */
     fillPlanner: async () => { await refresh(true); return X.fillPlanner(S.A, S.holds, S.raw.apptUpdated); }
   };
@@ -170,7 +213,7 @@
   function onChild(arg) {
     reassemble(arg.message, async m => {
       if (window.DevUpdates && DevUpdates.receive(m)) return;   // a Dev Update dismissed in full screen
-      if (m.k === "ready") return toChild({ k: "snap", raw: S.raw });
+      if (m.k === "ready") return toChild({ k: "snap", raw: S.raw, who: S.name });
       if (m.k === "close") return closeFull();
       if (m.k === "refresh") { await refresh(true); return; }
       if (m.k !== "call" || !PANE[m.fn]) return;
@@ -183,7 +226,8 @@
   }
   function onPane(m) {
     if (window.DevUpdates && DevUpdates.receive(m)) return;
-    if (m.k === "snap") { S.raw = m.raw; S.live = true; derive(); if (!S.modal && !typing()) render(); }
+    if (m.k === "snap") { S.raw = m.raw; S.live = true; if (m.who != null) S.name = m.who; derive(); if (!S.modal && !typing()) render(); }
+    else if (m.k === "who") { S.name = m.name || ""; if (!S.modal && !typing()) render(); }
     else if (m.k === "wait") rpc.wait.get(m.id)?.alive();
     else if (m.k === "ack") { const w = rpc.wait.get(m.id); if (!w) return; rpc.wait.delete(m.id); if (m.ok) w.res(m.result); else w.rej(new Error(m.err || "the task pane couldn’t do that")); }
   }
@@ -220,8 +264,21 @@
       const raw = await X.load(S.raw ? null : bootStep); raw.plan = X.getDoc(MAP_KEY) || null;
       const sig = hash(JSON.stringify(raw));
       S.live = true; S.err = "";
-      if (force || sig !== S.sig) { const first = !S.raw; S.sig = sig; S.raw = raw; derive(); if (first) bootDone(); toChild({ k: "snap", raw }); if (!S.modal && !typing()) render(); }
+      if (force || sig !== S.sig) { const first = !S.raw; S.sig = sig; S.raw = raw; derive(); loadWho(); if (first) bootDone(); toChild({ k: "snap", raw, who: S.name }); if (!S.modal && !typing()) render(); if (first) carryCastro(); }
     } catch (e) { console.error(e); S.err = "Couldn’t read the workbook. Check you’re still signed in; the tracker tries again in a few seconds."; render(); }
+  }
+
+  /* One-time carry-over for the Castro workbook only. Until this version the start email's address, phone, CC and BCC were built
+     into the add-in as Castro's; Castro's workbook never saved them (it used the built-in ones). They are now saved into Castro's own
+     tblIvkConfig, once, when its saved Clinic is Castro and the keys aren't there yet, so its start email doesn't change. No other
+     workbook gets them. Remove this once Castro's IVK Tracker Data holds these rows. */
+  const CASTRO_CARRY = { ClinicAddress: "45 Castro Street Suite 318, San Francisco, CA 94114", ClinicPhone: "844-867-8444 ext. 3400", StartCc: "helpcastro@mindfulhealthsolutions.com", StartBcc: "amreed@mymhs.com" };
+  async function carryCastro() {
+    if (FULL || S.carried || !S.raw?.tables?.own?.tblIvkConfig) return; S.carried = true;
+    if (!/^castro$/i.test(C.txt(S.saved?.Clinic)) || !/castro/i.test(C.txt(S.raw.wbName))) return;
+    const add = {}; for (const [k, v] of Object.entries(CASTRO_CARRY)) if (!(k in (S.saved || {}))) add[k] = v;
+    if (!Object.keys(add).length) return;
+    try { await X.saveKeyed("tblIvkConfig", add); await refresh(true); } catch (e) { console.error(e); /* read-only: tried again next open */ }
   }
 
   /* the loading screen on open: each step ticks as its read finishes (excel.js load), then the chair map is drawn */
@@ -266,6 +323,7 @@
   function render() {
     const page = $(".page"), top = page ? page.scrollTop : 0;
     if (!S.raw) { $("#app").innerHTML = bootHTML(); return; }
+    if (mustPick() || S.picking) { $("#app").innerHTML = pickHTML(); const f = $("#whoNew"); if (f && !(S.users || []).length) f.focus(); return; }
     const B = badges(), item = ([k, label]) => `<button class="item" data-act="nav" data-v="${k}"${navOn(k) ? ' aria-current="page"' : ""}>${label}${B[k] ? `<span class="count${B[k].bad ? " bad" : ""}" aria-label="${B[k].n} need attention">${B[k].n}</span>` : ""}</button>`;
     /* the patient view takes the page while it's open (as the TMS Tracker's does); the rail closes it */
     const pv = S.pv && (S.PM.get(S.pv) || null);
@@ -275,12 +333,13 @@
        refresh and dark mode at the top right). While a refresh reads the workbook the page dims and can't be pressed. */
     $("#app").innerHTML = `<div class="app">
       <nav class="rail" aria-label="IVK Tracker">
-        <div class="brand">IVK Tracker<small>${esc(S.cfg.Clinic)} · IV ketamine</small></div>
+        <div class="brand">IVK Tracker<small>${S.cfg.Clinic ? `${esc(S.cfg.Clinic)} · ` : ""}IV ketamine</small></div>
         ${NAV.map(item).join("")}
         <div class="spacer"></div>
+        ${S.name ? `<button class="item who" data-act="switchUser" title="Switch user">${esc(S.name)}<small>Switch user</small></button>` : ""}
         ${item(["settings", "Settings"])}
         ${FULL ? `<button class="item" data-act="full">Exit full screen</button>` : ""}
-        <div class="conn${S.err ? " off" : ""}"><span class="cdot"></span>${S.err ? "Not connected" : S.busy ? esc(S.busy) : FULL ? "Saving through the task pane" : esc(C.txt(S.raw.wbName).replace(/\.xls[xmb]?$/i, "") || `${S.cfg.Clinic}: connected to the workbook`)}</div>
+        <div class="conn${S.err ? " off" : ""}"><span class="cdot"></span>${S.err ? "Not connected" : S.busy ? esc(S.busy) : FULL ? "Saving through the task pane" : esc(C.txt(S.raw.wbName).replace(/\.xls[xmb]?$/i, "") || "Connected to the workbook")}</div>
       </nav>
       <main class="page" id="main">${S.reading ? `<div class="pbar" aria-hidden="true"><span></span></div>` : ""}${S.err ? `<div class="msg bad">${esc(S.err)}</div>` : ""}<div class="pagein"${S.reading ? " inert" : ""}>${body}</div></main></div>
       ${S.modal ? `<div class="scrim" data-act="scrim"><div class="modal" role="dialog" aria-modal="true" aria-labelledby="mh">${MODALS[S.modal]()}</div></div>` : ""}`;
@@ -304,13 +363,26 @@
     return `<div class="tools">${busy ? `<span class="busyl">Reading the workbook…</span>` : ""}${full}<button class="ibtn${busy ? " spin" : ""}" data-act="reload" title="Refresh: read the workbook again" aria-label="Refresh from the workbook"${busy ? " disabled" : ""}>${ICON.refresh}</button>
       <button class="ibtn" data-act="theme" title="${dark ? "Light mode" : "Dark mode"}" aria-label="${dark ? "Switch to light mode" : "Switch to dark mode"}" aria-pressed="${dark}">${dark ? ICON.sun : ICON.moon}</button></div>`; };
   const head = (title, sub, clock) => `<div class="top"><div><h1>${title}</h1>${sub ? `<p class="sub">${sub}</p>` : ""}</div><div class="topr">${tools()}${clock ? `<div class="clock"><div class="t">${hm()}</div><div class="d">${esc(C.fmtDay(todayS()))}</div></div>` : ""}</div></div>`;
-  const TABLE_WHAT = { tblIvkPlans: "index plans", tblIvkHolds: "holds", tblIvkOther: "the providers’ other visits", tblIvkFlags: "post-check flags", tblIvkPatient: "payment flags, Oakland, availability and the waitlist order", tblIvkPay: "payments and balance reminders", tblIvkExceptions: "provider time off and coverage", tblIvkProfile: "patient profiles (who pays, Sohar benefits)", tblIvkTransfers: "transfers to another clinic", tblIvkElsewhere: "visits at the other clinics (transfer and Oakland hand-offs)", tblIvkSooner: "the sooner waitlist", tblIvkStarts: "the treatment start checklist" };
+  const TABLE_WHAT = { tblIvkUsers: "the list of people who use this workbook", tblIvkPlans: "index plans", tblIvkHolds: "holds", tblIvkOther: "the providers’ other visits", tblIvkFlags: "post-check flags", tblIvkPatient: "payment flags, Oakland, availability and the waitlist order", tblIvkPay: "payments and balance reminders", tblIvkExceptions: "provider time off and coverage", tblIvkProfile: "patient profiles (who pays, Sohar benefits)", tblIvkTransfers: "transfers to another clinic", tblIvkElsewhere: "visits at the other clinics (transfer and Oakland hand-offs)", tblIvkSooner: "the sooner waitlist", tblIvkStarts: "the treatment start checklist" };
+  /* "Who's at the desk?": this workbook's list only, the people who've used this computer here first, nobody picked */
+  function pickHTML() {
+    const L = C.pickOrder(S.users, whoRead().used), cancel = S.picking && S.name;
+    return `<div class="boot who"><div class="bootin"><h1>Who’s at the desk?</h1>
+      <p class="muted">${L.length ? "Pick your name for today. Teams posts and the log say who did what." : "Nobody has added their name to this workbook yet."}</p>
+      ${L.length ? `<div class="wholist" role="group" aria-label="People on this workbook">${L.map(u => `<button class="btn ghost whob" data-act="pickUser" data-v="${esc(u.name)}">${esc(u.name)}${u.here ? `<span class="tag">On this computer</span>` : ""}</button>`).join("")}</div>` : ""}
+      <details class="fold whonew"${L.length ? "" : " open"}><summary>${L.length ? "I’m not on the list" : "Add your name"}</summary>
+        <label class="fld">Your name, as Teams posts show it<input id="whoNew" autocomplete="off" spellcheck="false" maxlength="30"><span class="hint">Usually your first name. Add a last initial if someone here shares it.</span></label>
+        <div class="actions"><button class="btn primary inl" data-act="addUser">Add me and start</button></div></details>
+      ${cancel ? `<div class="actions"><button class="btn mute sm" data-act="pickCancel">Stay as ${esc(S.name)}</button></div>` : ""}</div></div>`;
+  }
   function setupBanner() {
     const miss = S.raw.missing || [], noTabs = ["mpt", "appt"].filter(k => !S.raw.tables?.[k]);
     if (noTabs.length) return `<div class="msg warn"><b>This workbook has no ${noTabs.map(k => k === "mpt" ? "Master Patient Tracker" : "Appt List").join(" or ")} table.</b> Open the IVK Patient Tracker workbook, then the add-in.</div>`;
-    const NEW = ["tblIvkPlans", "tblIvkHolds", "tblIvkOther", "tblIvkFlags", "tblIvkPatient", "tblIvkPay", "tblIvkExceptions", "tblIvkProfile", "tblIvkTransfers", "tblIvkElsewhere", "tblIvkSooner", "tblIvkStarts"];
+    const NEW = ["tblIvkPlans", "tblIvkHolds", "tblIvkOther", "tblIvkFlags", "tblIvkPatient", "tblIvkPay", "tblIvkExceptions", "tblIvkProfile", "tblIvkTransfers", "tblIvkElsewhere", "tblIvkSooner", "tblIvkStarts", "tblIvkUsers"];
     if (miss.length && miss.every(n => NEW.includes(n))) return `<div class="msg warn"><b>This version needs ${miss.length === 1 ? "one more table" : `${miss.length} more tables`}.</b> Updating adds them to the hidden ${esc(X.DATA_SHEET)} tab (${miss.map(n => TABLE_WHAT[n]).join(", ")}); nothing else changes. <div class="actions"><button class="btn primary inl" data-act="setup">Update the workbook</button></div></div>`;
     if (miss.length) return `<div class="msg warn"><b>This workbook isn’t set up for the add-in yet.</b> Setting up adds a hidden IVK Tracker Data tab for check-ins and Teams settings; nothing else changes. <div class="actions"><button class="btn primary inl" data-act="setup">Set up this workbook</button></div></div>`;
+    if (!noTabs.length && !miss.includes("tblIvkConfig") && !S.cfg.Clinic) return `<div class="msg warn"><b>Which clinic is this tracker for?</b> The workbook’s name doesn’t say, so type it once for everyone here (for example Castro).
+      <div class="two"><label class="fld">Clinic<input id="clinicSet" autocomplete="off"></label></div><div class="actions"><button class="btn primary inl" data-act="saveClinic">Save the clinic</button></div></div>`;
     return "";
   }
 
@@ -1155,7 +1227,7 @@
   function oakHTML(p) {
     const t = ptOf(p.mrn), o = C.oakState(p, t, S.A, todayS(), S.cfg), m = esc(p.mrn), auto = t?.oak == null && /oak/i.test(p.loc);
     const note = !o ? "" : o.unknown && o.tasked == null ? "This course started before the appointment list begins, so treatments can't be counted here. Mark OAK tasked once maintenance is booked at Oakland." : o.tasked != null ? `OAK tasked to book maintenance ${C.fmtD(o.tasked)}.${thereTxt(C.bookedAt(S.x.E, p.mrn, "Oakland", todayS()), "Oakland")}` : o.done >= +S.cfg.OakRemindAt ? `<b>Task OAK to book maintenance now.</b>` : `At treatment ${S.cfg.OakRemindAt}, task OAK to book maintenance.`;
-    return `<div class="section"><div class="h"><h2>Oakland</h2><span>${o ? (o.unknown ? "treatments not countable" : `${o.done} of ${o.idx} index treatments done`) : "Castro patient"}</span></div>
+    return `<div class="section"><div class="h"><h2>Oakland</h2><span>${o ? (o.unknown ? "treatments not countable" : `${o.done} of ${o.idx} index treatments done`) : `${esc(clinicName())} patient`}</span></div>
       <label class="opt"><input type="checkbox" data-pt="Oakland" data-m="${m}"${o ? " checked" : ""}${S.raw.tables?.own?.tblIvkPatient ? "" : " disabled"}> Oakland patient<small>Index (the first ${esc(S.cfg.OakIndex)}) at ${esc(S.cfg.Clinic)}, then back to Oakland for maintenance.${auto ? " Ticked because the home clinic is Oakland." : ""}</small></label>
       ${o ? `<p class="note${o.task || o.back ? " warn" : ""}">${note}${o.back ? ` Index is done and ${plural(o.after.length, "visit")} ${o.after.length === 1 ? "is" : "are"} still booked here.` : ""}</p>
         <div class="actions">${o.tasked == null ? `<button class="btn ghost sm line" data-act="oakTask" data-m="${m}">Mark OAK tasked</button>` : `<button class="btn mute sm" data-act="oakUntask" data-m="${m}">Undo OAK tasked</button>`}</div>` : ""}</div>`;
@@ -1215,13 +1287,26 @@
     const tplF = (k, l) => `<label class="fld">${l}<textarea id="tp_${k}" rows="2">${esc(S.tpl[k])}</textarea></label>`;
     const P = S.plan;
     return `${head("Settings", "", false)}${setupBanner()}<div class="sgrid2">
-      <section class="card set"><h3>You</h3><p>Your first name goes on Teams posts and in the log. It’s kept on this computer.</p>
-        <label class="fld">First name<input id="myName" value="${esc(S.name)}" autocomplete="given-name"></label><div class="actions"><button class="btn ghost sm line" data-act="saveName">Save name</button></div></section>
+      <section class="card set"><h3>You</h3><p>${S.name ? `At the desk today: <b>${esc(S.name)}</b>. Your name goes on Teams posts and in the log.` : "Nobody picked yet."} The tracker asks who’s at the desk the first time it opens each day.</p>
+        <div class="actions"><button class="btn ghost sm line" data-act="switchUser">Switch user</button></div>
+        <details class="fold"><summary>Add a signature <span>only if Outlook doesn’t add yours</span></summary>
+          <p class="small muted">The start email leaves the signature to Outlook: set yours once in Outlook (Settings › Mail › Signatures on the web, or File › Options › Mail › Signatures), then use <b>Copy email</b> and paste it into a new message. The <b>Outlook draft (.eml)</b> file may open without your signature, so add it here if you use the draft.</p>
+          <ol class="how"><li>In File Explorer, click the address bar, paste <code>%APPDATA%\\Microsoft\\Signatures</code> and press Enter.</li><li>Choose the <b>.htm</b> file named after your signature below (the .txt file works too). Pictures in a signature don’t come along.</li></ol>
+          <div class="actions"><label class="btn ghost sm line" style="cursor:pointer">Choose a signature file<input type="file" id="sigFile" accept=".htm,.html,.txt" hidden></label></div>
+          <label class="fld">Or type it<textarea id="sigText" rows="4" spellcheck="false">${esc(C.withSignature("", sigOf(), false).trim())}</textarea><span class="hint">Saved with your name on this workbook. Added to the end of start emails you send.</span></label>
+          ${sigOf() ? `<div class="sigprev">${sigOf()}</div>` : ""}
+          <div class="actions"><button class="btn ghost sm line" data-act="sigSave"${S.name ? "" : " disabled"}>Save signature</button>${sigOf() ? `<button class="btn mute sm" data-act="sigClear">Remove signature</button>` : ""}</div></details></section>
+
+      <section class="card set"><h3>Admin</h3><p>Clinic-wide settings (clinic, address, phone, CC, BCC) are saved by the first person who enters them. After that, changing one, or taking someone off the list of people, takes the admin code.</p>
+        ${adminOn() ? `<div class="urow"><span class="small muted">Unlocked on this screen until ${esc(C.fmtT(nowMin() + Math.ceil((S.adminUntil - Date.now()) / 60000)))}.</span><button class="btn ghost sm line" data-act="admLock">Lock</button></div>`
+          : `<div class="two"><label class="fld">Admin code<input id="admCode" type="password" inputmode="numeric" autocomplete="off"></label></div><div class="actions"><button class="btn ghost sm line" data-act="admUnlock">Unlock</button></div>`}
+        <h4 style="margin:14px 0 0">People on this workbook</h4>
+        ${(S.users || []).length ? `<ul class="ulist">${S.users.map(u => `<li class="urow"><span>${esc(u.name)}${u.added ? ` <small class="muted">added ${esc(dateOfIso(u.added))}</small>` : ""}</span>${adminOn() ? `<button class="btn mute sm" data-act="rmUser" data-v="${esc(u.name)}">Remove</button>` : ""}</li>`).join("")}</ul>` : `<p class="small muted">Nobody yet.</p>`}</section>
 
       <section class="card set"><h3>Appointment list</h3><p>${u != null ? `Last updated ${C.fmtD(Math.floor(u))} at ${C.fmtT(C.toMin(u))}.` : "No record of when it was last updated."} ${plural(S.A.length, "appointment")} on the Appt List tab.</p>
         <div class="actions"><label class="btn primary inl" style="cursor:pointer">Upload a NextGen export<input type="file" id="apptFile" accept=".xls,.xlsx,.xlsm,.xlsb,.csv,.txt,.xml,.htm,.html,.ods" hidden></label></div>
         <details class="fold"><summary>How to run the report</summary><ol class="how">
-          <li>In NextGen PM, open Reports, then Memorized.</li><li>Set Report Type to Appointment Reports and pick the IVK appointment list (Castro Street, IV Ketamine visits).</li>
+          <li>In NextGen PM, open Reports, then Memorized.</li><li>Set Report Type to Appointment Reports and pick your clinic’s IVK appointment list (IV Ketamine visits).</li>
           <li>Select OK to run it, then export with the x icon beside the bar graph <img src="assets/export-icon.png" alt="Export icon" height="16">.</li>
           <li>Choose that file here. It replaces MRN to Location on the Appt List tab; the Name and Lookup Key formulas are left alone.</li>
           <li>The Index Planner tab is then filled with every IVK visit and hold, as plain values.</li></ol></details></section>
@@ -1232,16 +1317,17 @@
         ${route("protocol", "Protocol and scheduling", "Asks the providers to confirm the protocol and send the patient to the desk at discharge.")}
         <div class="actions"><button class="btn primary inl" data-act="saveRoutes">Save Teams settings</button></div>
         <details class="fold"><summary>Set up a workflow</summary><ol class="how">
-          <li>Open the chat in Teams (the Castro IVK group chat, or the RN’s chat).</li><li>Choose More options (…), then Workflows, then <b>Send webhook alerts to a chat</b>.</li>
+          <li>Open the chat in Teams (the clinic’s IVK group chat, or the RN’s chat).</li><li>Choose More options (…), then Workflows, then <b>Send webhook alerts to a chat</b>.</li>
           <li>Name it “IVK Tracker - arrivals” or “IVK Tracker - group chat”, confirm the chat and finish.</li><li>Copy the URL Teams shows and paste it above. Don’t paste it anywhere else.</li>
           <li>Save, then Send test. “Accepted (202)” means the card is on its way to the chat.</li></ol></details></section>
 
       <section class="card set"><h3>Messages</h3><p>{patient} is the code, {time} the visit time, {provider} the provider, {chair} the chair, {protocol} the frequency (“every 2 week”).</p>
         ${tplF("arrival", "Arrival")}${tplF("seated", "Chair picked at the start of treatment")}${tplF("protocol", "Confirm protocol and book")}${tplF("protocolOnly", "Confirm protocol only")}${tplF("bookOnly", "Book only")}
         <label class="fld">Start email subject<input id="tp_startSubject" value="${esc(S.tpl.startSubject)}"></label>
-        <label class="fld">Start email (HTML)<textarea id="tp_startEmail" rows="9" spellcheck="false">${esc(S.tpl.startEmail)}</textarea><span class="hint">The Castro desk’s “Upcoming Appointment(s)” email. {mrn}, {first} (first name), {clinic}, {firstVisit} (“Wednesday, November 4th, 2026, at 10:00 AM”), {address}, and {schedule} where the appointment table goes.</span></label>
-        <label class="fld">Clinic address in the start email<input id="cf_ClinicAddress" value="${esc(S.cfg.ClinicAddress)}"></label>
-        <div class="two"><label class="fld">CC on every start email<input id="cf_StartCc" value="${esc(S.cfg.StartCc)}" autocomplete="off"></label><label class="fld">BCC on every start email<input id="cf_StartBcc" value="${esc(S.cfg.StartBcc)}" autocomplete="off"></label></div>
+        <label class="fld">Start email (HTML)<textarea id="tp_startEmail" rows="9" spellcheck="false">${esc(S.tpl.startEmail)}</textarea><span class="hint">The desk’s “Upcoming Appointment(s)” email. {mrn}, {first} (first name), {clinic}, {firstVisit} (“Wednesday, November 4th, 2026, at 10:00 AM”), {address}, {phone}, {schedule} where the appointment table goes, and {signature} where the sender’s signature goes (only when they’ve added one in Settings › You).</span></label>
+        <div class="two"><label class="fld">Clinic address in the start email<input id="cf_ClinicAddress" value="${esc(S.cfg.ClinicAddress)}" autocomplete="off"${lockA("ClinicAddress")}>${lockH("ClinicAddress")}</label>
+        <label class="fld">Clinic phone in the start email<input id="cf_ClinicPhone" value="${esc(S.cfg.ClinicPhone)}" autocomplete="off"${lockA("ClinicPhone")}><span class="hint">${locked("ClinicPhone") ? "Saved for this workbook. Unlock Admin below to change it." : "For example 844-867-8444 ext. 1234"}</span></label></div>
+        <div class="two"><label class="fld">CC on every start email<input id="cf_StartCc" value="${esc(S.cfg.StartCc)}" autocomplete="off" placeholder="the clinic’s help email"${lockA("StartCc")}>${lockH("StartCc")}</label><label class="fld">BCC on every start email (optional)<input id="cf_StartBcc" value="${esc(S.cfg.StartBcc)}" autocomplete="off"${lockA("StartBcc")}>${lockH("StartBcc")}</label></div>
         <div class="actions"><button class="btn ghost sm line" data-act="saveTpl">Save messages</button><button class="btn mute sm" data-act="resetTpl">Use the standard wording</button></div></section>
 
       <section class="card set"><h3>Chair map</h3><p>A file from the <a href="${BUILDER}" target="_blank" rel="noopener">Bay Map Builder</a>. Until a map is loaded, visits are tracked without chairs and Today shows no chair map. Bay numbers become chair numbers.</p>
@@ -1253,7 +1339,7 @@
         <label class="fld">Chairs in the room<input id="cf_Chairs" inputmode="numeric" value="${esc(C.chairCount(c, P))}"${P ? " disabled" : ""}><span class="hint">${P ? "From the chair map" : "For open slots on the Schedule"}</span></label>
         <label class="fld">Ask to book when booked less than, weeks<input id="cf_AheadWeeks" inputmode="numeric" value="${esc(c.AheadWeeks)}"></label><label class="fld">Confirm protocol every, days<input id="cf_ProtocolDays" inputmode="numeric" value="${esc(c.ProtocolDays)}"></label>
         <label class="fld">Auth ending within, days<input id="cf_AuthWarnDays" inputmode="numeric" value="${esc(c.AuthWarnDays)}"></label><label class="fld">Visits left on auth, at most<input id="cf_EncountersWarn" inputmode="numeric" value="${esc(c.EncountersWarn)}"></label></div>
-        <label class="fld">Clinic<input id="cf_Clinic" value="${esc(c.Clinic)}"></label>
+        <label class="fld">Clinic<input id="cf_Clinic" value="${esc(c.Clinic)}" autocomplete="off"${lockA("Clinic")}>${locked("Clinic") ? lockH("Clinic") : S.clinicFromName ? '<span class="hint">From the workbook’s name. Save to keep it for everyone.</span>' : ""}</label>
         <div class="actions"><button class="btn ghost sm line" data-act="saveCfg">Save timing</button></div></section>
 
       <section class="card set"><h3>Index protocol</h3><p>The standard for new starts. Week 1 begins on the day of treatment 1. A patient’s own protocol can be changed in the Index planner.</p>
@@ -1627,7 +1713,22 @@
   /* ---------- actions ---------- */
   const visitBase = v => ({ Date: C.isoOf(v.a.date), MRN: v.a.mrn, Patient: C.code(v), Appt: C.fmtT(v.a.time) });
   const stamp = () => ({ By: S.name, Updated: new Date().toISOString() });
-  const needName = () => { if (S.name) return false; toast("Add your first name in Settings first, so Teams posts say who sent them."); S.view = "settings"; render(); setTimeout(() => $("#myName")?.focus(), 50); return true; };
+  const needName = () => { if (S.name) return false; toast("Pick who’s at the desk first, so Teams posts say who sent them."); S.picking = true; S.modal = null; render(); return true; };
+  /* the signature is kept with the person on the workbook (tblIvkUsers › Settings), so it follows them to any computer */
+  async function saveSig(sig) {
+    if (!S.name) return toast("Pick who’s at the desk first.", true);
+    if (sig.length > 20000) return toast("That signature is too long to keep in the workbook. Try the .txt file, or type it.", true);
+    await write("Saving your signature…", async () => { if (!S.raw.tables?.own?.tblIvkUsers) await Store.setup(); if (!me()) await Store.saveUser(S.name, {}); return Store.saveUser(S.name, { sig }); }, sig ? "Signature saved. It’s added to the start emails you send." : "Signature removed.");
+  }
+  async function readSig(f) {
+    if (f.size > 200000) return toast("That file is too big for a signature. Choose the .htm or .txt file from the Signatures folder.", true);
+    /* Outlook writes these files as UTF-16 (with a byte-order mark) or the Windows code page, so UTF-8 is only one of the guesses */
+    const b = new Uint8Array(await f.arrayBuffer()), dec = (enc, fatal) => new TextDecoder(enc, { fatal }).decode(b);
+    let t; if (b[0] === 0xFF && b[1] === 0xFE) t = dec("utf-16le"); else if (b[0] === 0xFE && b[1] === 0xFF) t = dec("utf-16be"); else { try { t = dec("utf-8", true); } catch (e) { t = dec("windows-1252"); } }
+    const sig =C.sigFromFile(t, /\.html?$/i.test(f.name) || /<html|<body|<p\b|<div\b/i.test(t));
+    if (!sig) return toast("No signature found in that file.", true);
+    await saveSig(sig);
+  }
   async function sendArrival(v, chair, seatedOnly) {
     const c = C.code(v), text = seatedOnly ? C.fill(S.tpl.seated, { patient: c, chair }) : C.arrivalText(v, chair, S.tpl.arrival);
     return teams("arrival", text, [["Visit", C.fmtT(v.a.time)], ["Provider", C.provName(v.a.provider)], ["Chair", chair ? chairTxt(chair) : ""], ["Desk", S.name]], c, chair);
@@ -1704,14 +1805,16 @@
   function formsData(p, o) {
     const sched = C.scheduleOf(p, S.A, todayS()), c = S.cfg;
     const L = C.treatments(p, S.A), d = o.dob ? C.toSerial(o.dob) : null;
-    /* the template is HTML (the Castro desk's email), so what goes in is escaped */
+    /* the template is HTML (the desk's email), so what goes in is escaped; the sender's signature (already cleaned) goes in as is */
     const first = sched[0], html = /<[a-z]/i.test(S.tpl.startEmail), enc = v => html ? esc(v) : String(v);
-    const nm = o.name || p.name, vals = { first: C.firstName(nm) || "there", clinic: o.loc || c.Clinic, patient: p.code, mrn: p.mrn, address: c.ClinicAddress, firstVisit: first ? C.longWhen(first.date, first.time) : "(no visit booked yet)" };
-    const pt = ptOf(p.mrn), body = String(S.tpl.startEmail).replace(/\{(\w+)\}/g, (x, k) => vals[k] != null ? enc(vals[k]) : x);
+    const nm = o.name || p.name, vals = { first: C.firstName(nm) || "there", clinic: o.loc || c.Clinic, patient: p.code, mrn: p.mrn, address: c.ClinicAddress, phone: c.ClinicPhone, firstVisit: first ? C.longWhen(first.date, first.time) : "(no visit booked yet)" };
+    const pt = ptOf(p.mrn), body = C.withSignature(String(S.tpl.startEmail).replace(/\{(\w+)\}/g, (x, k) => vals[k] != null ? enc(vals[k]) : x), sigOf(), html);
+    /* clinic details the template uses but nobody has entered yet: the checklist holds the draft until they're in */
+    const blanks = [["clinic", "the clinic"], ["address", "the clinic address"], ["phone", "the clinic phone"]].filter(([k]) => String(S.tpl.startEmail).includes(`{${k}}`) && !C.txt(vals[k])).map(x => x[1]);
     return { parts: o.parts, code: p.code, mrn: p.mrn, name: C.fullName(nm), dob: d != null ? `${C.dateOf(d).getMonth() + 1}/${C.dateOf(d).getDate()}/${C.dateOf(d).getFullYear()}` : "",
       clinic: o.loc || c.Clinic, provider: o.prov || "", asOf: `As of ${C.fmtDay(todayS())}, ${C.dateOf(todayS()).getFullYear()}`, sch: schedObj(p, o.from, o.to), index: +c.OakIndex, total: L.length,
       avail: pt ? { grid: pt.avail, eff: pt.availEff != null ? C.fmtD(pt.availEff) : "", exp: pt.availExp != null ? C.fmtD(pt.availExp) : "", note: pt.availNote } : null,
-      email: o.email ? { subject: C.fill(S.tpl.startSubject, { clinic: c.Clinic, patient: p.code }), body, html, cc: C.txt(c.StartCc), bcc: C.txt(c.StartBcc) } : null };
+      email: o.email ? { subject: C.fill(S.tpl.startSubject, { clinic: c.Clinic, patient: p.code }), body, html, cc: C.txt(c.StartCc), bcc: C.txt(c.StartBcc), blanks } : null };
   }
   /* the patient the forms are for: their tracker row, or a new index patient planned by LASFIR and MRN (no name or DOB on file) */
   function formsPatient(mrn) {
@@ -2101,7 +2204,38 @@
     },
     async doProto() { const p = S.PM.get(S.m.mrn), f = $("#mFreq").value; if (!f) return toast("Pick the protocol the provider confirmed.", true); const ok = await write("Saving protocol…", () => Store.confirmProtocol(p.mrn, f, todayS()), `${p.code}’s protocol saved: ${f}, confirmed ${C.fmtD(todayS())}.`); if (ok) { closeModal(); await logConfirm(p, f); } },
     ...ACT2,
-    saveName: () => { S.name = $("#myName").value.trim().split(/\s+/)[0] || ""; LS.set("ivkName", S.name); toast(S.name ? `Saved. Posts will say ${S.name}.` : "Name cleared."); render(); },
+    /* who's at the desk: pick from the workbook's list, or add yourself (the users table is added first on an older workbook) */
+    async pickUser(e) { const n = e.dataset.v; if (!n) return; await Store.setWho(n); S.name = n; S.picking = false; render(); toast(`Hi ${n}. Posts today will say ${n}.`); },
+    async addUser() {
+      const n = C.cleanName($("#whoNew")?.value); if (!n) return toast("Type your name first.", true);
+      const had = (S.users || []).find(u => C.userKey(u.name) === C.userKey(n));
+      if (!had) {
+        const ok = await write("Adding you…", async () => {
+          if (!S.raw.tables?.own?.tblIvkUsers) { const r = await Store.setup(); if (r?.blocked?.includes("tblIvkUsers")) throw new Error(`cells on the ${X.DATA_SHEET} tab where the list of people goes already hold something`); }
+          return Store.saveUser(n, {}); });
+        if (!ok) return;
+      }
+      return ACT.pickUser({ dataset: { v: had ? had.name : n } });
+    },
+    switchUser: () => { S.picking = true; S.modal = null; render(); },
+    pickCancel: () => { S.picking = false; render(); },
+    async saveClinic() {
+      const v = C.txt($("#clinicSet")?.value); if (!v) return toast("Type the clinic’s name.", true); if (locked("Clinic")) return toast("The clinic is already saved for this workbook.", true);
+      await write("Saving…", () => Store.saveKeyed("tblIvkConfig", { Clinic: v }), `Saved: this is ${v}’s tracker.`);
+    },
+    async admUnlock() {
+      const ok = await C.adminOk($("#admCode")?.value); if (!ok) { if ($("#admCode")) $("#admCode").value = ""; return toast("That isn’t the admin code.", true); }
+      S.adminUntil = Date.now() + C.ADMIN_MIN * 60000; render(); toast(`Admin unlocked for ${C.ADMIN_MIN} minutes on this screen.`);
+    },
+    admLock: () => { S.adminUntil = 0; render(); },
+    rmUser: e => { const n = e.dataset.v; if (!adminOn() || !n) return;
+      openModal("confirm", { title: `Take ${n} off the list?`, body: "They won’t be offered when someone picks who’s at the desk. Their name stays on what they already saved.", yes: "Remove",
+        run: async () => { await Store.saveUser(n, null, true); if (C.userKey(n) === C.userKey(S.name)) { await Store.setWho(""); S.name = ""; } } }); },
+    async sigSave() {
+      if (!S.name) return; const t = $("#sigText")?.value || "", cur = sigOf(), same = C.txt(t) === C.withSignature("", cur, false).trim();
+      await saveSig(same ? cur : C.sigFromFile(t, false));
+    },
+    sigClear: () => saveSig(""),
     async saveRoutes() {
       const r = {}; for (const ev of ["arrival", "protocol"]) r[ev] = { to: $(`#rt_${ev}_to`).value.trim(), url: $(`#rt_${ev}_url`).value.trim(), on: $(`#rt_${ev}_on`).checked };
       const bad = Object.entries(r).filter(([, x]) => x.url && !N.flowUrl(x.url)); if (bad.length) return toast("One of the URLs isn’t a Power Automate workflow URL. Copy it again from Teams.", true);
@@ -2113,17 +2247,19 @@
       toast(r.ok ? (r.unconfirmed ? "Sent. The browser couldn’t read the workflow’s answer; check the chat." : `The workflow accepted the test (${r.status}). It should show in the chat within a minute.`) : r.reason, !r.ok);
     },
     async saveTpl() { const o = {}; const D = Object.assign({}, C.TEMPLATES, C.START_TPL); for (const k of Object.keys(D)) { const el = $(`#tp_${k}`); if (el) o[k] = el.value.trim() || D[k]; }
-      const cf = {}; for (const k of ["ClinicAddress", "StartCc", "StartBcc"]) { const el = $(`#cf_${k}`); if (el) cf[k] = el.value.trim(); }
+      /* the clinic's address, phone, CC and BCC: saved by whoever enters them first; once saved, only an admin changes them */
+      const cf = {}; for (const k of ["ClinicAddress", "ClinicPhone", "StartCc", "StartBcc"]) { const el = $(`#cf_${k}`); if (el && !locked(k) && (C.txt(el.value) || C.txt(S.saved?.[k]))) cf[k] = el.value.trim(); }
       const bad = ["StartCc", "StartBcc"].find(k => cf[k] && !cf[k].split(/[;,]\s*/).every(a => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(a))); if (bad) return toast(`${bad === "StartCc" ? "CC" : "BCC"} needs email addresses, separated by commas.`, true);
       await write("Saving messages…", async () => { await Store.saveKeyed("tblIvkTemplates", o); await Store.saveKeyed("tblIvkConfig", cf); }, "Messages saved."); },
     async resetTpl() { await write("Saving messages…", () => Store.saveKeyed("tblIvkTemplates", Object.assign({}, C.TEMPLATES, C.START_TPL)), "Standard wording restored."); },
     async saveCfg() {
       const o = {}; for (const k of ["VisitMin", "AheadWeeks", "ProtocolDays", "AuthWarnDays", "EncountersWarn"]) { const n = C.num($(`#cf_${k}`).value); if (n == null || n < 0) return toast(`${k} needs a number.`, true); o[k] = n; }
-      o.Clinic = $("#cf_Clinic").value.trim() || C.DEFAULTS.Clinic;
+      /* the clinic: saved once by whoever enters it; after that only an admin changes it. Never a built-in clinic */
+      if (!locked("Clinic")) { const cl = C.txt($("#cf_Clinic")?.value); if (cl || C.txt(S.saved?.Clinic)) o.Clinic = cl; }
       if (!S.plan) { const n = C.num($("#cf_Chairs").value); if (n == null || n < 1) return toast("Chairs in the room needs a number.", true); o.Chairs = String(n); }
       await write("Saving…", () => Store.saveKeyed("tblIvkConfig", o), "Timing saved.");
     },
-    mapDown: () => { const P = S.raw.plan, a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([JSON.stringify(P, null, 1)], { type: "application/json" })); a.download = `Chair map - ${S.cfg.Clinic} IVK.json`; a.click(); },
+    mapDown: () => { const P = S.raw.plan, a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([JSON.stringify(P, null, 1)], { type: "application/json" })); a.download = `Chair map - ${S.cfg.Clinic || "IVK"} IVK.json`.replace("IVK IVK", "IVK"); a.click(); },
     mapRemove: () => openModal("confirm", { title: "Remove the chair map?", body: "Today shows chair tiles instead. You can load the file again any time.", yes: "Remove the map", run: () => Store.setDoc(MAP_KEY, null) }),
     async doUpload() {
       const u = S.m; if (u.sh.flag && !$("#mShrink")?.checked || !u.rows.length) return; closeModal();
@@ -2383,6 +2519,7 @@
   document.addEventListener("change", e => {
     const t = e.target;
     if (t.id === "apptFile" && t.files[0]) readAppt(t.files[0]);
+    else if (t.id === "sigFile" && t.files[0]) readSig(t.files[0]).catch(err => toast(String(err.message || err), true));
     else if (t.id === "mapFile" && t.files[0]) readMap(t.files[0]);
     else if (t.id === "sohFile" && t.files[0]) readSohar(t.files[0]);
     else if (t.id === "ipFor") { S.ipFor = t.value; render(); }
@@ -2471,6 +2608,7 @@
   }
   function start(info) {
     if (!info || !info.host) return landing();
+    if (!FULL) S.wb = workbookKey();
     if (FULL) {
       document.body.classList.add("fs");
       const hello = () => { if (S.raw) return; try { toPane({ k: "ready" }); } catch (e) { /* pane not listening yet */ } setTimeout(hello, 2000); };
@@ -2479,12 +2617,13 @@
       refresh(true);
       setInterval(() => { if (pop.dlg || (!S.modal && !typing())) refresh(); }, POLL_MS);
     }
-    setInterval(() => { if (S.raw && !S.modal && !typing()) { derive(); render(); } }, TICK_MS);
+    /* a pane left open overnight asks who's at the desk again on the new day */
+    setInterval(() => { if (S.raw && !S.modal && !typing()) { derive(); loadWho(); render(); } }, TICK_MS);
     render();
     /* Dev Update notices: the bell top right; full screen passes what it dismisses back to the pane */
     if (window.DevUpdates) DevUpdates.init({ app: "ivk", send: FULL ? m => toPane(m) : null });
   }
   window.addEventListener("error", e => console.error(e.message));
   if (window.Office && Office.onReady) Office.onReady(start); else landing();
-  window.IvkApp = { S, render, derive, refresh, ACT, floor, ipList, ipModel };   // for the test harness
+  window.IvkApp = { S, render, derive, refresh, ACT, floor, ipList, ipModel, carryCastro };   // for the test harness
 })();
