@@ -404,13 +404,15 @@
 
   /* ---------- Today ---------- */
   function todayHTML() {
-    const F = floor();
-    const sub = S.list.length ? `${F.tx.length} in treatment, ${F.inn.length} checked in, ${F.coming.length} still to come.` : "No IVK visits on the list today.";
+    const F = floor(), rn = rnOn();
+    /* without RN functions, check-in starts the visit: one "Here now" list (checked in before the switch, or in treatment) */
+    const here = rn ? F.tx : F.tx.concat(F.inn);
+    const sub = !S.list.length ? "No IVK visits on the list today." : rn ? `${F.tx.length} in treatment, ${F.inn.length} checked in, ${F.coming.length} still to come.` : `${here.length} checked in, ${F.coming.length} still to come.`;
     if (!S.sel || !visitBy(S.sel)) { const v = pickVisit(F); S.sel = v ? v.key : null; }
     return `${setupBanner()}${apptStale()}${head("Today", sub, true)}
       <div class="today"><div class="tmain">${S.plan ? chairsHTML(F) : planErrHTML()}
-        ${listHTML("In treatment", `${F.tx.length} now`, F.tx, "Nobody is in treatment.")}
-        ${listHTML("Checked in", `${F.inn.length} today`, F.inn, "Nobody is checked in.")}
+        ${rn ? `${listHTML("In treatment", `${F.tx.length} now`, F.tx, "Nobody is in treatment.")}
+        ${listHTML("Checked in", `${F.inn.length} today`, F.inn, "Nobody is checked in.")}` : listHTML("Checked in", `${here.length} now`, here, "Nobody is checked in.")}
         ${listHTML("Still to come", F.coming.length ? `${F.coming.length} more today` : "", F.coming, "Nobody else is booked today.")}
         ${actionsHTML()}${startsHTML()}${doneHTML(F)}${gapsHTML(6)}</div>
       <div class="tside">${visitCardHTML(visitBy(S.sel), F)}</div></div>`;
@@ -438,6 +440,8 @@
   }
   /* a tblIvkMissed row for a visit */
   const missRow = (m, patch) => Object.assign({ Date: C.isoOf(m.date), Time: m.time != null ? C.fmtT(m.time) : "", MRN: m.mrn, Patient: m.code || "", Provider: m.provider || "", By: S.name, Updated: new Date().toISOString() }, patch);
+  /* RN functions (Settings › Timing): the desk's Start treatment step. Off by default: Check in, then Check out */
+  const rnOn = () => /^(true|yes|1)$/i.test(C.txt(S.cfg.RnFunctions));
   const planErrHTML = () => S.planErr ? `<div class="msg warn">${esc(S.planErr)}</div>` : "";
   /* patients on the appointment list without a profile (treatment starts first): the tech makes one before they come */
   /* the start checklist: a newly booked start needs a profile; on the day, Case Management in NextGen goes to CmStage.
@@ -538,10 +542,10 @@
     const why = !p ? "" : v.ask.proto ? `The protocol hasn’t been confirmed since ${p.protoAt != null ? C.fmtD(p.protoAt) : "it was set"}.` : v.ask.thru != null ? `Booked through ${C.fmtD(v.ask.thru)}.` : "Nothing is booked after today.";
     if (v.ph === "booked") { const late = v.a.time != null && nowMin() - v.a.time > 15;
       return { lead: late ? `${C.fmtT(v.a.time)} visit, not checked in yet` : inTxt(v.a.time) || `Booked at ${C.fmtT(v.a.time)}`, body: `Expected at ${C.fmtT(v.a.time)}.${p && v.ask.any ? " The group chat gets the ask at check-in." : ""}`, pri: ["checkin", "Check in"] }; }
-    if (v.ph === "in") return { lead: "Checked in", body: `Checked in at ${C.fmtT(v.st.arr)} for a ${C.fmtT(v.a.time)} visit.`, pri: ["start", "Start treatment"] };
+    if (v.ph === "in") return { lead: "Checked in", body: `Checked in at ${C.fmtT(v.st.arr)} for a ${C.fmtT(v.a.time)} visit.`, pri: rnOn() ? ["start", "Start treatment"] : ["checkout", "Check out"] };
     if (v.ph === "tx") {
       if (C.askDue(v)) return { warn: true, lead: "Ask the group chat", body: `${why} Ask now so the provider can answer before discharge.`, pri: ["ask", "Ask the group chat"] };
-      return { lead: "In treatment", body: `Since ${C.fmtT(v.st.seat)}.${post != null ? ` Requires a post-check at ${C.fmtT(post)} with ${prov}.` : " Nothing needed from the desk until check-out."}`, pri: ["checkout", "Check out"] };
+      return { lead: rnOn() ? "In treatment" : "Checked in", body: `Since ${C.fmtT(v.st.seat)}.${post != null ? ` Requires a post-check at ${C.fmtT(post)} with ${prov}.` : " Nothing needed from the desk until check-out."}`, pri: ["checkout", "Check out"] };
     }
     if (v.ph === "done") { const open = v.st.booked === "later" && v.ask.book;
       return { warn: open, lead: `Checked out at ${C.fmtT(v.st.out)}`, body: open ? "Next visit not booked yet." : "Nothing left for this visit.", pri: open ? ["markBooked", "Mark next visit booked"] : v.p ? ["printSched", "Print schedule"] : null }; }
@@ -552,7 +556,7 @@
     if (!v) return `<aside class="card detail"><div class="name">No visit picked</div><p class="body">${S.list.length ? "Pick a row or a chair to see the visit." : "Nobody is on today’s IVK list. Upload a fresh appointment list in Settings if that looks wrong."}</p></aside>`;
     const vs = visitState(v), k = esc(v.key), c = C.code(v), p = v.p, pc = hasPc(v), T = todayS();
     const sv = /start/i.test(v.a.event || "") ? S.SL.find(s => s.key === C.startKey(v.a.date, v.a.mrn)) || null : null;
-    const where = ({ in: "Checked in", tx: "In treatment", done: "Checked out", noshow: "No-show", gone: "Not coming" })[v.ph] || "";
+    const where = ({ in: "Checked in", tx: rnOn() ? "In treatment" : "Checked in", done: "Checked out", noshow: "No-show", gone: "Not coming" })[v.ph] || "";
     const loc = where + (S.plan && v.st.chair && (v.ph === "in" || v.ph === "tx") ? ` · ${chairTxt(v.st.chair)}` : "");
     const meta = [`${C.fmtT(v.a.time)} ${kindTxt(v).toLowerCase()}`, C.provName(v.a.provider), `MRN ${v.a.mrn}`].filter(Boolean).join(" · ");
     const ix = p ? C.indexState(p, S.A, T, S.cfg) : null, kd = kindOf(v), pt = p ? ptOf(p.mrn) : null;
@@ -563,12 +567,12 @@
     const steps = [
       v.st.arr != null ? st("done", "Checked in", arr ? `${esc(routeTo("arrival"))} told in Teams at ${timeOf(arr.at)}` : teamsReady("arrival") ? `${esc(routeTo("arrival"))} not told in Teams` : "Teams not set up for arrivals", C.fmtT(v.st.arr))
         : st(v.ph === "booked" || v.ph === "noshow" ? "now" : "next", "Check in", `${esc(routeTo("arrival"))} is told in Teams`, C.fmtT(v.a.time)),
-      v.st.seat != null ? st("done", "In treatment", [S.plan && v.st.chair ? chairTxt(v.st.chair) : "", post != null ? `Post check at ${C.fmtT(post)}` : ""].filter(Boolean).join(" · "), `since ${C.fmtT(v.st.seat)}`)
+      !rnOn() ? "" : v.st.seat != null ? st("done", "In treatment", [S.plan && v.st.chair ? chairTxt(v.st.chair) : "", post != null ? `Post check at ${C.fmtT(post)}` : ""].filter(Boolean).join(" · "), `since ${C.fmtT(v.st.seat)}`)
         : st(v.ph === "in" ? "now" : "next", "Start treatment", "", ""),
       p && (v.ask.any || v.st.asked != null) ? (v.st.asked != null ? st("done", "Asked the providers", ask ? esc(routeTo("protocol")) : "Marked asked", C.fmtT(v.st.asked))
         : st(v.ph === "tx" ? "soon" : "next", "Ask the providers", v.ask.proto ? `Protocol not confirmed since ${p.protoAt != null ? C.fmtD(p.protoAt) : "it was set"}` : v.ask.thru != null ? `Booked through ${C.fmtD(v.ask.thru)}` : "Nothing booked after today", "")) : "",
       v.st.out != null ? st("done", "Checked out", v.st.booked === "yes" ? "Next visit booked" : v.st.booked === "no" ? "No next visit needed" : v.ask.book ? "Next visit not booked yet" : "Next visit on the list", C.fmtT(v.st.out))
-        : st(v.ph === "tx" && !C.askDue(v) ? "now" : "next", "Check out", "Next visit, protocol, payment", ""),
+        : st((v.ph === "tx" || (v.ph === "in" && !rnOn())) && !C.askDue(v) ? "now" : "next", "Check out", "Next visit, protocol, payment", ""),
       sv ? (sv.cmDone ? st("done", "Case Management updated", `In NextGen, ${esc(cmStage())}`, sv.cmAt != null ? C.fmtD(sv.cmAt) : "")
         : st(v.ph === "done" ? "soon" : "next", "Update Case Management", `In NextGen, to “${esc(cmStage())}”, once the start is kept`, "")) : ""
     ].join("");
@@ -586,8 +590,8 @@
     const xs = p ? C.xferState(S.XF.get(p.mrn), S.A, T, S.x.E) : null;
     if (xs && xs.due && v.ph !== "booked") sec.push(["xfer", `Confirm transfer to ${xs.to}`]);
     if (v.ph === "booked") quiet.push(["gone", "Not coming today"]);
-    if (v.ph === "in") quiet.push(["undoIn", "Undo check-in"]);
-    if (v.ph === "tx") quiet.push(["undoSeat", "Back to checked in"]);
+    if (v.ph === "in" || (v.ph === "tx" && !rnOn())) quiet.push(["undoIn", "Undo check-in"]);
+    if (v.ph === "tx" && rnOn()) quiet.push(["undoSeat", "Back to checked in"]);
     if (v.ph === "done") quiet.push(["undoOut", "Undo check-out"]);
     /* start paperwork is for a treatment start only; the start email goes out before it, so it's on the patient view */
     if (p && /start/i.test(v.a.event)) quiet.push(["startForms", "Start paperwork"]);
@@ -1475,6 +1479,7 @@
         <label class="fld">Ask to book when booked less than, weeks<input id="cf_AheadWeeks" inputmode="numeric" value="${esc(c.AheadWeeks)}"></label><label class="fld">Confirm protocol every, days<input id="cf_ProtocolDays" inputmode="numeric" value="${esc(c.ProtocolDays)}"></label>
         <label class="fld">Auth ending within, days<input id="cf_AuthWarnDays" inputmode="numeric" value="${esc(c.AuthWarnDays)}"></label><label class="fld">Visits left on auth, at most<input id="cf_EncountersWarn" inputmode="numeric" value="${esc(c.EncountersWarn)}"></label></div>
         <label class="fld">Clinic<input id="cf_Clinic" value="${esc(c.Clinic)}" autocomplete="off"${lockA("Clinic")}>${locked("Clinic") ? lockH("Clinic") : S.clinicFromName ? '<span class="hint">From the workbook’s name. Save to keep it for everyone.</span>' : ""}</label>
+        <label class="opt"><input type="checkbox" id="cf_RnFunctions"${rnOn() ? " checked" : ""}> RN functions<small>Adds a Start treatment step between Check in and Check out. Off: checking in starts the visit, so the desk only checks in and checks out.</small></label>
         <div class="actions"><button class="btn ghost sm line" data-act="saveCfg">Save timing</button></div></section>
 
       <section class="card set"><h3>Index protocol</h3><p>The standard for new starts. Week 1 begins on the day of treatment 1. A patient’s own protocol can be changed in the Index planner.</p>
@@ -2303,7 +2308,8 @@
     async doCheckin() {
       keepPay(); const m = S.m, v = visitBy(m.key), chair = S.plan ? m.chair : "", rn = $("#mRn")?.checked, ask = $("#mAsk")?.checked, t = hm();
       if (!v) return closeModal();
-      const ok = await write("Saving check-in…", () => Store.saveVisit(v.key, visitBase(v), Object.assign({ Arrived: t, Chair: chair, Seated: "", Out: "", Status: "" }, stamp()), "Arrived"));
+      /* without RN functions, check-in starts the visit (Seated = the check-in time), so it goes straight to check-out */
+      const ok = await write("Saving check-in…", () => Store.saveVisit(v.key, visitBase(v), Object.assign({ Arrived: t, Chair: chair, Seated: rnOn() ? "" : t, Out: "", Status: "" }, stamp()), "Arrived"));
       if (!ok) return;
       closeModal(); S.sel = v.key;
       await savePay(v, m, `${C.code(v)} is checked in`);
@@ -2449,6 +2455,7 @@
       /* the clinic: saved once by whoever enters it; after that only an admin changes it. Never a built-in clinic */
       if (!locked("Clinic")) { const cl = C.txt($("#cf_Clinic")?.value); if (cl || C.txt(S.saved?.Clinic)) o.Clinic = cl; }
       if (!S.plan) { const n = C.num($("#cf_Chairs").value); if (n == null || n < 1) return toast("Chairs in the room needs a number.", true); o.Chairs = String(n); }
+      if ($("#cf_RnFunctions")) o.RnFunctions = $("#cf_RnFunctions").checked ? "TRUE" : "FALSE";
       await write("Saving…", () => Store.saveKeyed("tblIvkConfig", o), "Timing saved.");
     },
     mapDown: () => { const P = S.raw.plan, a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([JSON.stringify(P, null, 1)], { type: "application/json" })); a.download = `Chair map - ${S.cfg.Clinic || "IVK"} IVK.json`.replace("IVK IVK", "IVK"); a.click(); },
