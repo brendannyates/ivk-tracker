@@ -142,11 +142,12 @@ patient's name and date of birth.
   patient who isn't on the Master Patient Tracker yet prints from their MRN; their name is typed for the consent or email, never saved. **Print this week** (Schedule): the clinic's week, codes only.
 - **Print start forms** (start visits, Induction patients): the schedule and the IV ketamine consent with the patient's name, DOB, the
   clinic location and the clinician filled in. Consent wording is verbatim from `assets/ivk-consent.pdf`.
-- **Start email**: the Castro desk's "Upcoming Appointment(s)" email (Settings › Messages, HTML), subject "SECURE: Upcoming Visit
-  Information | MHS", with the MRN, first name, first visit, clinic address and the schedule table filled in. A checklist (patient's
-  email address, CC Castro help desk, BCC amreed@mymhs.com, template, schedule, consent, BIDF attached in the window) has to be
+- **Start email**: the desk's "Upcoming Appointment(s)" email (Settings › Messages, HTML), subject "SECURE: Upcoming Visit
+  Information | MHS", with the MRN, first name, clinic, first visit, clinic address and phone and the schedule table filled in. No
+  signature is built in: Outlook adds the sender's, or they add one under Settings › You ({signature} in the template, else the end).
+  A checklist (patient's email address, CC set, clinic details entered, template, schedule, consent, BIDF attached in the window; BCC optional) has to be
   complete before **Outlook draft (.eml)** unlocks; the draft then has To, CC, BCC, the email and every attachment ({code} Appt
-  {code} schedule m.d.pdf, {code} IVK Consent.pdf, the BIDF and any extras). CC, BCC and the clinic address are in Settings › Messages.
+  {code} schedule m.d.pdf, {code} IVK Consent.pdf, the BIDF and any extras). CC, BCC, the clinic address and phone are in Settings › Messages.
 - The date of birth comes from a DOB column on the tracker if there is one; otherwise the desk types it for the forms.
 
 ## Index planning
@@ -209,6 +210,21 @@ patient's name and date of birth.
   Primary Location (Edit) and Transfer to offer the report's locations as NextGen names them. The patient view's Schedule page shows
   each visit's location, their appointments here (kept and booked) and any booked at other clinics.
 
+## Who's at the desk, the clinic, admin
+
+- **People** register on the workbook (tblIvkUsers). The first time the tracker opens each day on a computer, it asks **Who's at the
+  desk?** from that workbook's list only, nobody picked; the people who've used that computer on that workbook are listed first ("On
+  this computer"). "I'm not on the list" adds a name. The pick lasts the day (Switch user in the rail or Settings › You). This computer
+  remembers picks per workbook (localStorage `ivkWho:<workbook key>`, from the file URL or the workbook's `ivkWbId` setting), so a
+  name never carries from one clinic's workbook to another. Full screen uses the pane's pick.
+- **The clinic** is the workbook's saved Clinic, else the name the workbook starts with ("Castro IVK Patient Tracker" → Castro), else
+  Today asks for it once. Nothing clinic-specific is built in. Clinic, clinic address, phone, CC and BCC are saved by whoever enters
+  them first; after that they're read-only until **Admin** is unlocked (Settings › Admin, 15 minutes on that screen). Admin also takes
+  people off the list. The code is checked as a salted hash, but the repo is public: it keeps settings from being changed by accident,
+  it isn't a security control.
+- Castro only: its workbook relied on the address, phone, CC and BCC that used to be built in; they're saved into Castro's own
+  tblIvkConfig once, on open (`carryCastro` in app.js, to be removed after).
+
 ## Where things are kept
 
 The clinic's tabs are found by sheet name: Master Patient Tracker, Appt List, Consults (and Access R5:R14 for the frequency list).
@@ -218,8 +234,8 @@ Index planner gets the newer tables from Update the workbook):
 | Table | What |
 |---|---|
 | tblIvkVisits | One row per visit the desk touched: arrived, chair (only with a map), seated (when treatment started), out, booked, asked, protocol, who, when |
-| tblIvkConfig | Clinic, chairs, visit length, thresholds, Teams on/off |
-| tblIvkRoutes | arrival → the RN's chat, protocol → the Castro IVK group chat, each with its Teams workflow URL |
+| tblIvkConfig | Clinic, chairs, visit length, thresholds, Teams on/off, start email address / phone / CC / BCC |
+| tblIvkRoutes | arrival → the RN's chat, protocol → the clinic's IVK group chat, each with its Teams workflow URL |
 | tblIvkTemplates | The message wording |
 | tblIvkLog | Every Teams post and its result |
 | tblIvkPlans | One row per patient being planned: preferred start, protocol, availability |
@@ -233,6 +249,7 @@ Index planner gets the newer tables from Update the workbook):
 | tblIvkElsewhere | IVK visits at the other clinics from a wider report: MRN, LASFIR, date, time, provider, event, status, location |
 | tblIvkProfile | Per patient: insurance or self pay and the payer for the provider visit and the infusion, the latest Sohar benefits, BIDF printed |
 | tblIvkPay | Payments due at each visit (collected / missed), later payments and waivers, balance reminders |
+| tblIvkUsers | The people who use this workbook (the "Who's at the desk?" list) and their own settings (an optional email signature); no patient |
 
 The provider templates are on two visible tabs: **IVK Template** (the grids) and **Slot Types** (tblIvkSlotTypes).
 

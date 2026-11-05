@@ -3,7 +3,7 @@ const test = require("node:test"), assert = require("node:assert/strict");
 const C = require("../core.js");
 
 const T = C.serialOf(new Date(2026, 10, 4));   // Wednesday Nov 4 2026
-const cfg = Object.assign({}, C.DEFAULTS);
+const cfg = Object.assign({}, C.DEFAULTS, { Clinic: "Castro" });   // a workbook that saved its clinic (nothing is built in)
 const AP_H = ["MRN", "Patient", "Date", "Time", "Provider", "Event", "Status", "Location"];
 const ap = (mrn, date, min, event = "IV Ketamine Follow Up", status = "Expected") => [mrn, "", date, min / 1440, "Rivera MD, Ana Maria", event, status, "Castro Street"];
 const P = (o) => Object.assign({ mrn: "990101", code: "TESANN", status: "Induction", freq: "2x per week", loc: "Castro", copay: "40", infusion: "300", prefs: [] }, o);
