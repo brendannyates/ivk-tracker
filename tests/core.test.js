@@ -15,7 +15,7 @@ const cfg = Object.assign({}, C.DEFAULTS);
 
 function world(extra = {}) {
   const P = C.patients([MPT_H,
-    pt({ mrn: "990001", code: "TESANN" }),                                         // today, nothing after -> book + proto
+    pt({ mrn: "990001", code: "TESANN", proto: T - 120 }),                         // today, nothing after, protocol 120 days old -> book + proto
     pt({ mrn: "990002", code: "DOEJON", proto: T - 10 }),                           // today, booked 6 weeks out, proto fresh
     pt({ mrn: "990003", code: "ROEMAR", freq: "PRN" }),                             // PRN: never asked to book
     pt({ mrn: "990004", code: "LEEKIM", authExp: T - 1, left: 0, auth: 16, authStart: T - 90 }), // expired auth, none left
@@ -263,4 +263,58 @@ test("time off: an absent provider's slots close; coverage either takes their te
   X = C.withExceptions(D, ex({ cov: "Rivera MD, Ana Maria", use: false }));
   assert.deepEqual(X.slotsOn(T).map(s => `${s.pkey}@${s.time}`), ["rivera@540"], "own template: Chen's slots close, Rivera keeps hers");
   assert.equal(C.exRows([C.EX_COLS, C.EX_COLS.map(h => ({ Id: "x1", Provider: "Chen", From: C.isoOf(T), Status: "removed" }[h] ?? ""))]).length, 0, "removed entries don't apply");
+});
+
+test("the standard protocol ask: expired (not blank) or two intervals without a visit", () => {
+  const x = world(), P = n => x.patients.find(p => p.code === n);
+  const a = C.asks(P("TESANN"), x, null);
+  assert.equal(a.expired, true); assert.equal(a.overdue, false, "seen 14 days ago on every 2 weeks");
+  assert.deepEqual(a.why, ["Protocol last confirmed Jun 23, 120 days ago"]);
+  /* blank Protocol Updated: no ask, but Patients still shows it */
+  const blank = Object.assign({}, P("TESANN"), { protoAt: null }), b = C.asks(blank, x, null);
+  assert.equal(b.proto, false); assert.equal(b.unconfirmed, true);
+  assert.equal(C.needs(blank, x).some(n => n.k === "proto" && n.t === "Protocol not confirmed"), true);
+  /* every 2 weeks, last seen 29 days ago: overdue even with a fresh protocol; 28 days is not */
+  const mk = d => C.appts([AP_H, ap("990001", "TESANN", T - d, 13 * 60 + 30, "Kept"), ap("990001", "TESANN", T - d - 3, 13 * 60 + 30, "Cancelled"), ap("990001", "TESANN", T, 13 * 60 + 30)]);
+  const fresh = Object.assign({}, P("TESANN"), { protoAt: T - 5 });
+  const o = C.asks(fresh, Object.assign({}, x, { appts: mk(29) }), null);
+  assert.equal(o.proto, true); assert.equal(o.overdue, true); assert.deepEqual(o.why, ["Last seen Sep 22, 29 days ago (every 2 weeks)"]);
+  assert.equal(C.asks(fresh, Object.assign({}, x, { appts: mk(28) }), null).proto, false);
+  assert.match(C.needs(fresh, Object.assign({}, x, { appts: mk(29) })).find(n => n.k === "proto").t, /^Not seen since Sep 22/);
+  /* a no-show doesn't count as seen; the desk's confirmation today stops the ask */
+  const ns = C.appts([AP_H, ap("990001", "TESANN", T - 10, 600, "No Show"), ap("990001", "TESANN", T - 40, 600, "Kept")]);
+  assert.equal(C.asks(fresh, Object.assign({}, x, { appts: ns }), null).overdue, true);
+  assert.equal(C.asks(fresh, Object.assign({}, x, { appts: ns }), { booked: "", proto: "every 2 weeks" }).proto, false);
+  assert.equal(C.asks(Object.assign({}, fresh, { freq: "PRN" }), Object.assign({}, x, { appts: ns }), null).overdue, false, "PRN has no interval");
+});
+
+test("tags: Name <email> from the config, per provider", () => {
+  assert.deepEqual(C.parseTag("Robin Lark <RLARK@example.org>"), { name: "Robin Lark", id: "rlark@example.org" });
+  assert.equal(C.parseTag("rlark@example.org"), null); assert.equal(C.parseTag(""), null);
+  assert.equal(C.tagStr(" Robin Lark ", "rlark@example.org"), "Robin Lark <rlark@example.org>"); assert.equal(C.tagStr("Robin", ""), "");
+  const t = C.tagsOf({ TagArrival: "Sam Nurse <snurse@example.org>", "Tag Dr. Rivera": "Ana Rivera <arivera@example.org>", "Tag Dr. Bad": "nope", Clinic: "Castro" });
+  assert.equal(t.arrival.name, "Sam Nurse"); assert.deepEqual([...t.prov.keys()], ["Dr. Rivera"]);
+  assert.equal(C.askProvider({ a: { provider: "Rivera MD, Ana Maria" } }, null), "Dr. Rivera");
+  assert.equal(C.askProvider(null, { next: { provider: "Chen, Paul MD" } }), "Dr. Chen");
+});
+
+test("card replies: read, checked, and only providers confirm a protocol", () => {
+  const H = C.REPLY_COLS, row = o => H.map(h => o[h] ?? "");
+  const R = C.replyRows([H,
+    row({ Ref: "r1", Kind: "chair", Key: "k1", MRN: "0990001", Patient: "TESANN", Value: "2", Reply: '{"act":"chair","chair":"3"}', ReplyBy: "Sam Nurse", ReplyEmail: "SNurse@example.org" }),
+    row({ Ref: "r2", Kind: "protocol", MRN: "990001", Value: "every 2 weeks", Reply: '{"act":"confirm","freq":"every 2 weeks","pick":"1x per week"}', ReplyEmail: "arivera@example.org" }),
+    row({ Ref: "r3", Kind: "protocol", MRN: "990001", Reply: '{"act":"pick","pick":"1X PER WEEK"}', ReplyBy: "Desk", ReplyEmail: "desk@example.org" }),
+    row({ Ref: "r4", Kind: "protocol", MRN: "990001", Reply: "", Applied: "" }),
+    row({ Ref: "r5", Kind: "chair", Reply: "{oops", Applied: "" }),
+    row({ Ref: "r6", Kind: "chair", Reply: '{"chair":"1"}', Applied: "Chair 1 saved" }), row({})]);
+  assert.equal(R.length, 6); assert.equal(R[0].mrn, "990001"); assert.equal(R[0].email, "snurse@example.org");
+  assert.deepEqual(C.repliesDue(R).map(r => r.ref), ["r1", "r2", "r3", "r5"]);
+  const o = { chairs: ["1", "2", "3", "4"], freqs: ["1x per week", "every 2 weeks"], providers: ["arivera@example.org"] };
+  assert.deepEqual(C.replyAction(R[0], o), { chair: "3" });
+  assert.match(C.replyAction(R[0], Object.assign({}, o, { chairs: ["1", "2"] })).skip, /isn’t on the chair map/);
+  assert.deepEqual(C.replyAction(R[1], o), { freq: "every 2 weeks" }, "Confirm uses the protocol on the card, not the dropdown");
+  assert.match(C.replyAction(R[2], o).skip, /Desk isn’t a tagged provider/);
+  assert.deepEqual(C.replyAction(Object.assign({}, R[2], { email: "arivera@example.org" }), o), { freq: "1x per week" }, "picked one, list's spelling");
+  assert.match(C.replyAction(R[4], o).skip, /couldn’t be read/);
+  assert.match(C.replyAction(Object.assign({}, R[1], { data: { act: "pick", pick: "every 9 weeks" } }), o).skip, /isn’t on the frequency list/);
 });
