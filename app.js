@@ -123,6 +123,11 @@
     S.EX = C.exRows(r.tblIvkExceptions);
     const gridKeys = new Set(S.grids.map(g => g.key));
     S.X = Object.assign({ appts: S.A, holds: S.holds, others: S.others, cfg, chairs: C.chairCount(cfg, plan), listAt: r.apptUpdated, needsPost, hasGrid: k => gridKeys.has(k) }, C.withExceptions(TM.onDays(S.grids, S.types, +cfg.PostCheckMin), S.EX));
+    /* no-shows (NextGen) and late cancels (tblIvkMissed): counted per patient; a late cancel keeps its time on the schedule */
+    S.MR = C.missRows(r.tblIvkMissed); S.missOn = !!r.tables?.own?.tblIvkMissed;
+    S.X.late = C.lateKeys(S.MR); S.x.EX = S.EX;
+    S.ML = C.missList({ appts: S.A, MR: S.MR, PM: S.PM, PF: S.PF });
+    S.x.missBy = new Map(C.missByPatient(S.ML).map(o => [o.mrn, o]));
     const pv = new Map(), addPv = n => { const k = TM.provKey(n); if (n && k && !pv.has(k)) pv.set(k, n); };
     S.A.forEach(a => addPv(a.provider)); S.others.forEach(o => addPv(o.provider));
     S.providers = [...pv.values()].sort((a, b) => TM.provKey(a).localeCompare(TM.provKey(b)));
@@ -164,7 +169,7 @@
     savePlan: (m, p) => X.savePlan(m, p), saveFlag: (m, p) => X.saveFlag(m, p), placeHolds: (r, by) => X.placeHolds(r, by), setHolds: (ids, st, by) => X.setHolds(ids, st, by),
     readRow: (k, m) => X.readRow(k, m), saveRow: (k, m, p) => X.saveRow(k, m, p), savePt: (m, p) => X.savePt(m, p), addPays: r => X.addPays(r), saveRanks: (o, by) => X.saveRanks(o, by), saveException: (i, p) => X.saveException(i, p),
     setupTemplate: () => X.setupTemplate(), addGrid: (o, t) => X.addGrid(o, t), setCells: (a, r, c, v, m, s) => X.setCells(a, r, c, v, m, s),
-    saveTypes: (t, g) => X.saveTypes(t, g), replaceOther: r => X.replaceOther(r), replaceElse: r => X.replaceElse(r), saveSooner: (m, p) => X.saveSooner(m, p), saveProfile: (m, p) => X.saveProfile(m, p), saveXfer: (m, p) => X.saveXfer(m, p), addMpt: f => X.addMpt(f), saveStart: (k, p) => X.saveStart(k, p),
+    saveTypes: (t, g) => X.saveTypes(t, g), replaceOther: r => X.replaceOther(r), replaceElse: r => X.replaceElse(r), saveSooner: (m, p) => X.saveSooner(m, p), saveProfile: (m, p) => X.saveProfile(m, p), saveXfer: (m, p) => X.saveXfer(m, p), addMpt: f => X.addMpt(f), saveStart: (k, p) => X.saveStart(k, p), saveMissed: (k, p) => X.saveMissed(k, p), addMissed: r => X.addMissed(r),
     /* the users list, and who's at the desk (full screen's pick is the pane's) */
     saveUser: (n, s, rm) => X.saveUser(n, s, rm), setWho: async n => { setWho(n); return true; },
     /* the pane reads first so the tab gets every hold anyone has placed, not just this screen's copy */
@@ -307,7 +312,8 @@
     const F = floor(), b = {};
     /* Today counts the visits in treatment whose providers still need asking */
     const cmN = S.SL.filter(s => s.cmDue).length;
-    if (F.askNow.length || cmN) b.today = { n: F.askNow.length + cmN };
+    const aiN = actionItems().n;
+    if (F.askNow.length || cmN || aiN) b.today = { n: F.askNow.length + cmN + aiN };
     /* Patients counts only what blocks the next infusion; the amber needs live under the Needs attention chip */
     const pn = S.P.filter(p => C.needs(p, S.x).some(y => y.bad)).length; if (pn) b.patients = { n: pn, bad: true };
     const ca = S.CS.filter(c => c.state === "act" || c.state === "cm").length; if (ca) b.consults = { n: ca };
@@ -363,7 +369,7 @@
     return `<div class="tools">${busy ? `<span class="busyl">Reading the workbook…</span>` : ""}${full}<button class="ibtn${busy ? " spin" : ""}" data-act="reload" title="Refresh: read the workbook again" aria-label="Refresh from the workbook"${busy ? " disabled" : ""}>${ICON.refresh}</button>
       <button class="ibtn" data-act="theme" title="${dark ? "Light mode" : "Dark mode"}" aria-label="${dark ? "Switch to light mode" : "Switch to dark mode"}" aria-pressed="${dark}">${dark ? ICON.sun : ICON.moon}</button></div>`; };
   const head = (title, sub, clock) => `<div class="top"><div><h1>${title}</h1>${sub ? `<p class="sub">${sub}</p>` : ""}</div><div class="topr">${tools()}${clock ? `<div class="clock"><div class="t">${hm()}</div><div class="d">${esc(C.fmtDay(todayS()))}</div></div>` : ""}</div></div>`;
-  const TABLE_WHAT = { tblIvkUsers: "the list of people who use this workbook", tblIvkPlans: "index plans", tblIvkHolds: "holds", tblIvkOther: "the providers’ other visits", tblIvkFlags: "post-check flags", tblIvkPatient: "payment flags, Oakland, availability and the waitlist order", tblIvkPay: "payments and balance reminders", tblIvkExceptions: "provider time off and coverage", tblIvkProfile: "patient profiles (who pays, Sohar benefits)", tblIvkTransfers: "transfers to another clinic", tblIvkElsewhere: "visits at the other clinics (transfer and Oakland hand-offs)", tblIvkSooner: "the sooner waitlist", tblIvkStarts: "the treatment start checklist" };
+  const TABLE_WHAT = { tblIvkUsers: "the list of people who use this workbook", tblIvkPlans: "index plans", tblIvkHolds: "holds", tblIvkOther: "the providers’ other visits", tblIvkFlags: "post-check flags", tblIvkPatient: "payment flags, Oakland, availability and the waitlist order", tblIvkPay: "payments and balance reminders", tblIvkExceptions: "provider time off and coverage", tblIvkProfile: "patient profiles (who pays, Sohar benefits)", tblIvkTransfers: "transfers to another clinic", tblIvkElsewhere: "visits at the other clinics (transfer and Oakland hand-offs)", tblIvkSooner: "the sooner waitlist", tblIvkStarts: "the treatment start checklist", tblIvkMissed: "no-shows and late cancels" };
   /* "Who's at the desk?": this workbook's list only, the people who've used this computer here first, nobody picked */
   function pickHTML() {
     const L = C.pickOrder(S.users, whoRead().used), cancel = S.picking && S.name;
@@ -378,7 +384,7 @@
   function setupBanner() {
     const miss = S.raw.missing || [], noTabs = ["mpt", "appt"].filter(k => !S.raw.tables?.[k]);
     if (noTabs.length) return `<div class="msg warn"><b>This workbook has no ${noTabs.map(k => k === "mpt" ? "Master Patient Tracker" : "Appt List").join(" or ")} table.</b> Open the IVK Patient Tracker workbook, then the add-in.</div>`;
-    const NEW = ["tblIvkPlans", "tblIvkHolds", "tblIvkOther", "tblIvkFlags", "tblIvkPatient", "tblIvkPay", "tblIvkExceptions", "tblIvkProfile", "tblIvkTransfers", "tblIvkElsewhere", "tblIvkSooner", "tblIvkStarts", "tblIvkUsers"];
+    const NEW = ["tblIvkPlans", "tblIvkHolds", "tblIvkOther", "tblIvkFlags", "tblIvkPatient", "tblIvkPay", "tblIvkExceptions", "tblIvkProfile", "tblIvkTransfers", "tblIvkElsewhere", "tblIvkSooner", "tblIvkStarts", "tblIvkUsers", "tblIvkMissed"];
     if (miss.length && miss.every(n => NEW.includes(n))) return `<div class="msg warn"><b>This version needs ${miss.length === 1 ? "one more table" : `${miss.length} more tables`}.</b> Updating adds them to the hidden ${esc(X.DATA_SHEET)} tab (${miss.map(n => TABLE_WHAT[n]).join(", ")}); nothing else changes. <div class="actions"><button class="btn primary inl" data-act="setup">Update the workbook</button></div></div>`;
     if (miss.length) return `<div class="msg warn"><b>This workbook isn’t set up for the add-in yet.</b> Setting up adds a hidden IVK Tracker Data tab for check-ins and Teams settings; nothing else changes. <div class="actions"><button class="btn primary inl" data-act="setup">Set up this workbook</button></div></div>`;
     if (!noTabs.length && !miss.includes("tblIvkConfig") && !S.cfg.Clinic) return `<div class="msg warn"><b>Which clinic is this tracker for?</b> The workbook’s name doesn’t say, so type it once for everyone here (for example Castro).
@@ -396,9 +402,32 @@
         ${listHTML("In treatment", `${F.tx.length} now`, F.tx, "Nobody is in treatment.")}
         ${listHTML("Checked in", `${F.inn.length} today`, F.inn, "Nobody is checked in.")}
         ${listHTML("Still to come", F.coming.length ? `${F.coming.length} more today` : "", F.coming, "Nobody else is booked today.")}
-        ${startsHTML()}${doneHTML(F)}${gapsHTML(6)}</div>
+        ${actionsHTML()}${startsHTML()}${doneHTML(F)}${gapsHTML(6)}</div>
       <div class="tside">${visitCardHTML(visitBy(S.sel), F)}</div></div>`;
   }
+  /* Action items: protocols due a step down (all index visits kept, still at the index rate), cancellations the desk has to call
+     late or not, and visits booked on a day the clinic is closed */
+  function actionItems() {
+    const T = todayS();
+    const proto = S.P.map(p => ({ p, n: C.needs(p, S.x).find(y => y.k === "indexdone" || y.k === "stepdown") })).filter(x => x.n);
+    const review = S.ML.filter(m => m.kind === "review");
+    const shut = C.closureClashes(S.EX, S.A, S.holds, T);
+    return { proto, review, shut, n: proto.length + review.length + shut.reduce((k, x) => k + x.list.length, 0) };
+  }
+  function actionsHTML() {
+    const I = actionItems(); if (!I.n) return "";
+    const pRow = x => `<div class="nrow"><b>${esc(x.p.code)}</b><span class="i">${esc(x.n.t)} · MRN ${esc(x.p.mrn)}</span>
+      <button class="btn line sm" data-act="${x.n.act[1]}" data-m="${esc(x.p.mrn)}">${esc(x.n.act[0])}</button></div>`;
+    const rRow = m => `<div class="nrow"><b>${esc(m.code || "—")}</b><span class="i">Cancelled ${dshort(m.date)} ${C.fmtT(m.time)} · ${esc(C.provName(m.provider) || "")} · MRN ${esc(m.mrn)}${m.exempt === "kpva" ? " · Kaiser/VA: no fee" : ""}</span>
+      <span class="acts"><button class="btn line sm" data-act="missSet" data-k="${esc(m.key)}" data-v="late">Late cancel</button><button class="btn mute sm" data-act="missSet" data-k="${esc(m.key)}" data-v="notlate">Not late</button></span></div>`;
+    const sRow = x => `<div class="nrow"><b>Closed ${exDates(x.e)}</b><span class="i">${esc(x.e.note || "Clinic closure")}: ${x.list.slice(0, 6).map(a => `${esc(a.code || "—")} ${dshort(a.date)} ${C.fmtT(a.time)}${a.hold ? " hold" : ""}`).join(", ")}${x.list.length > 6 ? ` and ${x.list.length - 6} more` : ""}. Move or cancel in NextGen.</span>
+      <button class="btn line sm" data-act="schedDay" data-d="${x.list[0].date}">Open the week</button></div>`;
+    return `<section class="card list"><div class="lh"><h2>Action items</h2><span>${plural(I.n, "to do", "to do")}</span></div>
+      ${I.proto.map(pRow).join("")}${I.review.map(rRow).join("")}${I.shut.map(sRow).join("")}
+      ${I.review.length ? `<p class="note">Cancelled within ${plural(+S.cfg.LateCancelDays || 1, "day")} of the visit: say whether it was a late cancel. A visit cancelled on its own day is always one.</p>` : ""}</section>`;
+  }
+  /* a tblIvkMissed row for a visit */
+  const missRow = (m, patch) => Object.assign({ Date: C.isoOf(m.date), Time: m.time != null ? C.fmtT(m.time) : "", MRN: m.mrn, Patient: m.code || "", Provider: m.provider || "", By: S.name, Updated: new Date().toISOString() }, patch);
   const planErrHTML = () => S.planErr ? `<div class="msg warn">${esc(S.planErr)}</div>` : "";
   /* patients on the appointment list without a profile (treatment starts first): the tech makes one before they come */
   /* the start checklist: a newly booked start needs a profile; on the day, Case Management in NextGen goes to CmStage.
@@ -597,6 +626,7 @@
   /* the small (i) on a visit booked off the template: hover or press it for the bubble */
   const MISS_TXT = "This visit does not match the templated slot-type";
   const missTag = () => `<span class="miss" role="button" tabindex="0" data-act="missTip" aria-label="${MISS_TXT}" title="${MISS_TXT}">i<span class="tipb" role="tooltip">${MISS_TXT}</span></span>`;
+  const shutOn = d => C.closureOn(S.EX, d);
   function scheduleHTML() {
     const T = todayS(), start = C.weekStart(T) + 7 * S.wk, F = floor();
     /* open template starts from today on, holds NextGen doesn't have yet, and where each visit's post check lands */
@@ -608,20 +638,24 @@
     const W = C.week(S.A, start, S.PM, [...DS.values()].flatMap(x => x.slots.map(y => y.time).concat(x.bookings.map(b => b.time), x.bookings.filter(b => b.postAt != null).map(b => b.postAt))));
     const elig = eligibleSet(start + 1, start + 6);
     const nOpen = [...DS.entries()].reduce((n, [d, x]) => n + (d < T ? 0 : x.slots.filter(y => y.openIndex && elig.has(slotKey(y))).length), 0);
+    /* a late cancel (same day, or the desk called it late) holds its time on the schedule, shown cancelled */
+    const isLate = a => S.X.late.has(C.visitKey(a.date, a.mrn, a.time));
     const stateOf = a => {
+      if (isLate(a)) return "lc";
       if (C.isCancelled(a)) return "cx";
       if (/no ?show/i.test(a.status)) return "noshow";
       if (a.date < T) return "past";
       if (a.date > T) return "";
       const v = S.list.find(x => x.a === a || (x.a.mrn === a.mrn && x.a.time === a.time)); if (!v) return "";
-      if (v.ph === "done" || v.ph === "gone") return "past";
+      if (v.ph === "gone") return "lc";
+      if (v.ph === "done") return "past";
       if (v.ph === "tx") return C.askDue(v) ? "soon" : "track";
       return v.ph === "in" ? "track" : "";
     };
     const blk = a => { const s = stateOf(a), p = a.p, flag = p && a.date >= T && C.futureOf(S.A, p.mrn, a.date).length === 0 && C.isActive(p) && !/prn/i.test(p.freq);
       const k = visitKind(a), bk = bookOf(a), miss = !!bk?.miss, pc = !!p?.reqPost, pk = bk?.post ? `${a.date}|${bk.postAt}|${bk.pkey}` : "";
       const label = `${a.code || "No code"}, MRN ${a.mrn}, at ${C.fmtT(a.time)}, ${C.provName(a.provider)}${k ? `, ${KIND_WORD[k]}` : ""}${pc ? ", requires a post-check" : ""}, ${a.status}${miss ? `. ${MISS_TXT}` : ""}`;
-      return `<div class="blkw"><button class="blk ${s}${k ? ` k-${k}` : ""}" data-act="schedPick" data-m="${esc(a.mrn)}" data-d="${a.date}" data-t="${a.time}"${pk ? ` data-pc="${esc(pk)}"` : ""} aria-label="${esc(label)}"><b>${esc(a.code || "No code")}</b> <span class="pm">${esc(a.mrn)}</span> ${C.fmtT(a.time)}${pc ? ` <span class="pcb" title="Requires a post-check">PC</span>` : ""}${S.SO.get(a.mrn)?.status === "waiting" && S.SO.get(a.mrn).booked === a.date ? ` <span class="pcb so" title="On the sooner waitlist">Sooner</span>` : ""}<small>${esc(C.provName(a.provider))}${k === "st" ? ", start" : k === "ix" ? `, index${(() => { const n = p ? C.txNo(p, S.A, a.date, a.time) : null; return n ? ` ${n}` : ""; })()}` : ""}${s === "noshow" ? ", no-show" : flag ? ", last booked" : ""}</small></button>${miss ? missTag() : ""}</div>`; };
+      return `<div class="blkw"><button class="blk ${s}${k ? ` k-${k}` : ""}${shutOn(a.date) && s !== "cx" && s !== "lc" ? " shut" : ""}" data-act="schedPick" data-m="${esc(a.mrn)}" data-d="${a.date}" data-t="${a.time}"${pk ? ` data-pc="${esc(pk)}"` : ""} aria-label="${esc(label)}"><b>${esc(a.code || "No code")}</b> <span class="pm">${esc(a.mrn)}</span> ${C.fmtT(a.time)}${pc ? ` <span class="pcb" title="Requires a post-check">PC</span>` : ""}${S.SO.get(a.mrn)?.status === "waiting" && S.SO.get(a.mrn).booked === a.date ? ` <span class="pcb so" title="On the sooner waitlist">Sooner</span>` : ""}<small>${esc(C.provName(a.provider))}${k === "st" ? ", start" : k === "ix" ? `, index${(() => { const n = p ? C.txNo(p, S.A, a.date, a.time) : null; return n ? ` ${n}` : ""; })()}` : ""}${s === "noshow" ? ", no-show" : s === "lc" ? ", late cancel" : shutOn(a.date) ? ", clinic closed" : flag ? ", last booked" : ""}</small></button>${miss ? missTag() : ""}</div>`; };
     const hblk = b => { const late = C.holdState(b.h, S.A, Date.now(), S.cfg) === "late", pk = `${b.h.date}|${b.postAt}|${b.pkey}`;
       return `<button class="blk hold k-ix${late ? " late" : ""}" data-act="ipPick" data-m="${esc(b.mrn)}" data-pc="${esc(pk)}" aria-label="${esc(`Hold for ${b.code} at ${C.fmtT(b.time)}${late ? ", not confirmed booked" : ""}`)}">Hold <b>${esc(b.code)}</b> ${C.fmtT(b.time)}<small>${esc(provLabel(b.provider))}${late ? ", not confirmed" : b.h.by ? `, by ${esc(b.h.by)}` : ""}</small></button>`; };
     /* an open slot: pressed, it's held for a patient (or, for an index start, planned from) */
@@ -629,15 +663,20 @@
       return `<button class="blk open" data-act="schedOpen" data-d="${d}" data-t="${x.time}" data-p="${esc(x.provider)}" aria-label="${esc(`${ix ? "Open index start" : "Open follow-up"} ${C.fmtT(x.time)}, ${provLabel(x.provider)}: hold it for a patient`)}">${ix ? "Open index" : "Open follow-up"} ${C.fmtT(x.time)}<small>${esc(provLabel(x.provider))}</small></button>`; };
     /* where a post check lands, shaded */
     const pblk = (d, b) => `<div class="blk pcs" data-pck="${esc(`${d}|${b.postAt}|${b.pkey}`)}" title="${esc(`Post check for ${b.code}`)}">Post check <b>${esc(b.code)}</b> ${C.fmtT(b.postAt)}<small>${esc(provLabel(b.provider))}</small></div>`;
-    const cells = W.rows.map(t => `<div class="tm">${C.fmtT(t)}</div>${W.days.map(d => `<div class="sc${d === T ? " td" : ""}">${W.cell(d, t).map(blk).join("")}${holdIn(d, t).map(hblk).join("")}${postIn(d, t).map(b => pblk(d, b)).join("")}${openIn(d, t).map(x => oblk(d, x)).join("")}</div>`).join("")}`).join("");
+    const cells = W.rows.map(t => `<div class="tm">${C.fmtT(t)}</div>${W.days.map(d => `<div class="sc${d === T ? " td" : ""}${shutOn(d) ? " shut" : ""}">${W.cell(d, t).map(blk).join("")}${holdIn(d, t).map(hblk).join("")}${postIn(d, t).map(b => pblk(d, b)).join("")}${openIn(d, t).map(x => oblk(d, x)).join("")}</div>`).join("")}`).join("");
     const label = `${C.fmtD(start)} to ${C.fmtD(start + 6)}`;
+    const shutW = W.days.map(d => C.closureOn(S.EX, d)), nShut = S.A.filter(a => a.date > start && a.date < start + 6 && !C.isCancelled(a) && shutOn(a.date)).length;
+    const nLate = S.A.filter(a => a.date > start && a.date < start + 6 && isLate(a)).length;
     const nPc = new Set(S.A.filter(a => a.date > start && a.date < start + 6 && !C.isCancelled(a) && S.PM.get(a.mrn)?.reqPost).map(a => a.mrn)).size;
     return `${head("Schedule", `Week of ${label}: ${plural(W.count, "IVK visit")}${W.count ? `, ${W.days.map((d, i) => W.byDay[i] ? `${["Mon", "Tue", "Wed", "Thu", "Fri"][i]} ${W.byDay[i]}` : "").filter(Boolean).join(", ")}` : ""}${S.grids.length ? `, ${plural(nOpen, "index-eligible start")}` : ""}${nPc ? `, ${plural(nPc, "patient")} needing a post check` : ""}`, true)}
       <section class="card sched"><div class="wkbar"><span class="lbl">${label}</span>
-        <button class="btn ghost sm" data-act="wk" data-v="-1">Previous week</button><button class="btn ghost sm" data-act="wk" data-v="0"${S.wk === 0 ? " disabled" : ""}>This week</button><button class="btn ghost sm" data-act="wk" data-v="1">Next week</button>
+        <button class="btn ghost sm" data-act="wk" data-v="0"${S.wk === 0 ? " disabled" : ""}>This week</button><button class="btn ghost sm" data-act="wk" data-v="-1">Previous week</button><button class="btn ghost sm" data-act="wk" data-v="1">Next week</button>
+        <label class="wkjump">Go to<input type="date" id="wkJump" value="${C.isoOf(start + 1)}" aria-label="Go to the week of a date"></label>
         <button class="btn ghost sm" data-act="printWeek" style="margin-left:auto">Print this week</button></div>
-      <ul class="key skey"><li><span class="ktab st"></span>Treatment start</li><li><span class="ktab ix"></span>Index visit</li><li><span class="pcb">PC</span>Requires a post-check</li><li><span class="tsw pcs"></span>Where a post check lands</li><li><span class="miss sm">i</span>Not on its template slot</li><li class="muted">“last booked” = nothing booked after it</li></ul>
-      <div class="sgrid"><div></div>${W.days.map(d => `<div class="ch${d === T ? " today" : ""}">${["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"][C.weekday(d) - 1]}<small>${C.fmtD(d)}</small></div>`).join("")}${cells}</div></section>${soonerHTML()}`;
+      ${shutW.some(Boolean) ? `<p class="note warn">Clinic closed ${shutW.map((e, i) => e ? `${["Mon", "Tue", "Wed", "Thu", "Fri"][i]} ${C.fmtD(W.days[i])}${e.note ? ` (${esc(e.note)})` : ""}` : "").filter(Boolean).join(", ")}${nShut ? `: <b>${plural(nShut, "visit")} still booked</b>, move or cancel in NextGen` : ""}.</p>` : ""}
+      ${nLate ? `<p class="note">${plural(nLate, "late cancel")} this week: shown crossed out in its time, not as an opening.</p>` : ""}
+      <ul class="key skey"><li><span class="ktab st"></span>Treatment start</li><li><span class="tsw lcs"></span>Late cancel</li><li><span class="ktab ix"></span>Index visit</li><li><span class="pcb">PC</span>Requires a post-check</li><li><span class="tsw pcs"></span>Where a post check lands</li><li><span class="miss sm">i</span>Not on its template slot</li><li class="muted">“last booked” = nothing booked after it</li></ul>
+      <div class="sgrid"><div></div>${W.days.map(d => `<div class="ch${d === T ? " today" : ""}${shutOn(d) ? " shut" : ""}">${["Monday", "Tuesday", "Wednesday", "Thursday", "Friday"][C.weekday(d) - 1]}<small>${C.fmtD(d)}${shutOn(d) ? ` · Closed${shutOn(d).note ? `: ${esc(shutOn(d).note)}` : ""}` : ""}</small></div>`).join("")}${cells}</div></section>${soonerHTML()}`;
   }
 
   /* ---------- sooner waitlist ---------- */
@@ -927,38 +966,65 @@
      week; and when index patients stepping down to once a week (after treatment 6) open access. */
   const n1 = v => { const r = Math.round(v * 10) / 10; return Number.isInteger(r) ? String(r) : r.toFixed(1); };
   function demandHTML() {
-    const o = S.dm || (S.dm = { paused: false, sched: "all" }), c = S.cfg;
-    const D = memo(`dm|${o.paused}|${o.sched}`, () => C.demand({ patients: S.P, appts: S.A, holds: S.holds, listAt: S.raw.apptUpdated, today: todayS(), cfg: c, weeks: 12, paused: o.paused, sched: o.sched, X: S.grids.length ? ipOpts().X : null }));
-    const W = D.weeks, sumW = (k, n) => W.slice(0, n).reduce((a, w) => a + w[k], 0), unsched = D.rows.filter(r => r.unsched);
-    const sub = [`${plural(D.rows.length, "patient")}${o.paused ? " (with paused)" : ""}`, `${n1(D.perWeek)} visits a week at their protocols`, D.rows.length ? `${n1(D.avg)} a week each on average` : "",
-      unsched.length && o.sched !== "exclude" ? `<strong>${plural(unsched.length, "patient")} with nothing booked</strong>` : ""].filter(Boolean).join(", ");
+    const o = S.dm || (S.dm = { paused: false, sched: "only" }), c = S.cfg, T = todayS(), hasT = S.grids.length > 0;
+    const D = memo(`dm|${o.paused}|${o.sched}`, () => C.demand({ patients: S.P, appts: S.A, holds: S.holds, listAt: S.raw.apptUpdated, today: T, cfg: c, weeks: 12, paused: o.paused, sched: o.sched, X: hasT ? ipOpts().X : null }));
+    /* what no-shows and late cancels took from the past weeks, and so how much of what's booked ahead likely won't happen */
+    const MI = memo("miss", () => C.missImpact({ appts: S.A, X: hasT ? S.X : null, missed: S.ML, today: T, weeks: +c.MissWeeks || 8 })), rate = MI.rate;
+    const W = D.weeks, sumW = (k, n) => W.slice(0, n).reduce((a, w) => a + w[k], 0), r0 = v => String(Math.round(v)), pct = v => `${Math.round(v * 100)}%`;
+    const VIEW = { all: "everyone", exclude: "patients with a visit booked", only: "patients with nothing booked" };
+    const sub = `${plural(D.rows.length, "patient")}${o.paused ? " (with paused)" : ""}: ${VIEW[o.sched]}. ${r0(D.perWeek)} visits a week at their protocols.`;
     const seg = (k, l) => `<button data-act="dmSched" data-v="${k}" aria-pressed="${o.sched === k}">${l}</button>`;
-    const bar = `<div class="dmbar"><button class="chip" data-act="dmPaused" aria-pressed="${o.paused}">Include paused</button>
-      <div class="pick seg" role="group" aria-label="Unscheduled patients">${seg("all", "Everyone")}${seg("exclude", "Exclude unscheduled")}${seg("only", "Unscheduled only")}</div></div>`;
+    const bar = `<div class="dmbar"><div class="pick seg" role="group" aria-label="Which patients">${seg("only", "Unscheduled only")}${seg("all", "Everyone")}${seg("exclude", "Scheduled only")}</div>
+      <button class="chip" data-act="dmPaused" aria-pressed="${o.paused}">Include paused</button></div>`;
     const tile = (l, v, s, cls) => `<div class="stat${cls ? ` ${cls}` : ""}"><small>${l}</small><b>${v}</b>${s ? `<span>${s}</span>` : ""}</div>`;
-    const tb4 = D.toBook4, tb8 = D.toBook8, open4 = sumW("open", 4), open8 = sumW("open", 8);
-    const stats = `<div class="stats">${tile("Visits a week needed", n1(D.perWeek), `${n1(D.avg)} per patient`)}${tile("Next 4 weeks", n1(sumW("expect", 4)), `${sumW("booked", 4)} booked, ${n1(tb4)} to book`, tb4 > open4 && S.grids.length ? "warn" : "")}
-      ${tile("Next 8 weeks", n1(sumW("expect", 8)), `${sumW("booked", 8)} booked, ${n1(tb8)} to book`, tb8 > open8 && S.grids.length ? "warn" : "")}${S.grids.length ? tile("Open IVK slots, 4 weeks", String(open4), `${open8} in 8 weeks`) : tile("Open IVK slots", "—", "no template yet")}</div>`;
-    const G = D.groups, gRow = g => `<tr${g.freq === "Index" ? ' class="ix"' : ""}><td>${esc(g.freq)}${g.freq === "Index" ? `<small>${c.IndexPerWeek} a week to treatment ${D.N}</small>` : ""}</td><td>${g.n}</td><td>${n1(g.rate)}</td><td>${n1(g.perWeek)}</td>
-      <td>${n1(g.d4)}</td><td>${g.b4}</td><td${g.t4 > 0.5 ? ' class="flag"' : ""}>${n1(g.t4)}</td><td>${n1(g.d8)}</td><td>${g.b8}</td><td${g.t8 > 0.5 ? ' class="flag"' : ""}>${n1(g.t8)}</td><td>${g.unsched || ""}</td></tr>`;
-    const tot = G.reduce((a, g) => ({ n: a.n + g.n, perWeek: a.perWeek + g.perWeek, d4: a.d4 + g.d4, b4: a.b4 + g.b4, t4: a.t4 + g.t4, d8: a.d8 + g.d8, b8: a.b8 + g.b8, t8: a.t8 + g.t8, unsched: a.unsched + g.unsched }), { n: 0, perWeek: 0, d4: 0, b4: 0, t4: 0, d8: 0, b8: 0, t8: 0, unsched: 0 });
-    const byProto = `<section class="card dmt"><div class="lh"><h2>By protocol</h2><span>needed at the protocol, booked, still to book</span></div><div class="tscroll"><table class="tt dm">
-      <thead><tr><th rowspan="2">Protocol</th><th rowspan="2">Patients</th><th rowspan="2">A week each</th><th rowspan="2">A week, all</th><th colspan="3">Next 4 weeks</th><th colspan="3">Next 8 weeks</th><th rowspan="2">Nothing booked</th></tr>
-      <tr><th>Needed</th><th>Booked</th><th>To book</th><th>Needed</th><th>Booked</th><th>To book</th></tr></thead>
-      <tbody>${G.map(gRow).join("") || `<tr><td colspan="11" class="muted">No patients in this view.</td></tr>`}${G.length ? `<tr class="sum"><td>Total</td><td>${tot.n}</td><td>${n1(D.avg)}</td><td>${n1(tot.perWeek)}</td><td>${n1(tot.d4)}</td><td>${tot.b4}</td><td>${n1(tot.t4)}</td><td>${n1(tot.d8)}</td><td>${tot.b8}</td><td>${n1(tot.t8)}</td><td>${tot.unsched || ""}</td></tr>` : ""}</tbody></table></div>
-      <p class="note">Needed is each patient’s protocol (the tracker’s Frequency) over the weeks; PRN and blank frequencies need none. To book is each patient’s need less what they have booked in the window, so one patient booked far ahead doesn’t cover another. Index patients count at ${c.IndexPerWeek} a week until treatment ${D.N}, then ${esc(c.AfterIndex)}. Booked counts NextGen visits and holds.</p></section>`;
-    const wRow = w => `<tr><td>${w.w === 0 ? "This week" : `Week of ${C.fmtD(w.start)}`}</td><td>${n1(w.expect)}</td><td>${w.booked}</td><td${w.toBook > 0.5 ? ' class="flag"' : ""}>${n1(w.toBook)}</td>${S.grids.length ? `<td>${w.slots}</td><td${w.open < w.toBook ? ' class="bad"' : ""}>${w.open}</td>` : ""}<td>${w.freed > 0.05 ? `+${n1(w.freed)}` : ""}${w.steps.length ? `<small>${esc(w.steps.map(r => r.code).join(", "))}</small>` : ""}</td></tr>`;
-    const weeks = `<section class="card dmt"><div class="lh"><h2>Week by week</h2><span>Sunday to Saturday</span></div><div class="tscroll"><table class="tt dm">
-      <thead><tr><th>Week</th><th>Needed</th><th>Booked</th><th>To book</th>${S.grids.length ? "<th>IVK slots</th><th>Open</th>" : ""}<th>Freed by index step-down</th></tr></thead><tbody>${W.map(wRow).join("")}</tbody></table></div>
-      <p class="note">${S.grids.length ? "IVK slots are the template’s start/index and follow-up times, less time off; open ones have no visit or hold and a free chair. " : ""}Freed is the visits a week index patients no longer need once they step down to ${esc(c.AfterIndex)} after treatment ${D.N}.</p></section>`;
-    const T = D.transitions, tRow = r => { const proj = !(r.p && C.treatments(r.p, S.A)[D.N - 1]); const fr = Math.max(0, D.perIdx - r.afterRate);
+    const need4 = sumW("expect", 4), bk4 = sumW("booked", 4), tb4 = D.toBook4, open4 = sumW("open", 4), lost4 = Math.round(bk4 * rate);
+    const stats = `<div class="stats">${tile("Needed, next 4 weeks", r0(need4), `${bk4} booked, ${r0(tb4)} still to book`)}
+      ${hasT ? tile("Open slots, next 4 weeks", String(open4), open4 >= tb4 ? `${r0(open4 - tb4)} left once the rest are booked` : `${r0(tb4 - open4)} short of what’s still to book`, open4 < tb4 ? "warn" : "") : tile("Open slots", "—", "no template yet")}
+      ${tile("Lost to no-shows and late cancels", MI.booked ? pct(rate) : "—", MI.booked ? `${MI.lost} of ${MI.booked} booked, last ${plural(MI.rows.length, "week")}` : "no past weeks on the list")}
+      ${hasT && MI.booked ? tile("Likely open, next 4 weeks", String(open4 + lost4), `${open4} open now + about ${lost4} that won’t happen`) : ""}</div>`;
+    /* week by week: what's needed against what's booked, and the inventory left */
+    const wRow = w => { const left = w.open - w.toBook, lost = Math.round(w.booked * rate), sw = shutWeek(w.start);
+      return `<tr><td>${w.w === 0 ? "This week" : C.fmtD(w.start)}${sw ? `<small>Closed ${esc(sw)}</small>` : ""}</td><td>${r0(w.expect)}</td><td>${w.booked}</td><td${w.toBook >= 0.5 ? ' class="flag"' : ""}>${r0(w.toBook)}</td>
+        ${hasT ? `<td>${w.slots}</td><td>${w.open}</td><td${left <= -0.5 ? ' class="bad"' : ""}>${left <= -0.5 ? `${r0(-left)} short` : r0(left)}</td>` : ""}
+        ${MI.booked ? `<td>${lost ? `about ${lost}` : ""}</td>` : ""}<td>${w.freed >= 0.5 ? `+${r0(w.freed)}` : ""}</td></tr>`; };
+    const weeks = `<section class="card dmt"><div class="lh"><h2>Week by week</h2><span>Sunday to Saturday, ${VIEW[o.sched]}</span></div><div class="tscroll"><table class="tt dm">
+      <thead><tr><th>Week of</th><th>Needed</th><th>Booked</th><th>Still to book</th>${hasT ? "<th>IVK slots</th><th>Open</th><th>Left after booking</th>" : ""}${MI.booked ? "<th>Likely lost</th>" : ""}<th>Freed post-index</th></tr></thead>
+      <tbody>${W.map(wRow).join("")}</tbody></table></div>
+      <p class="note">Needed is each patient’s protocol over the week (PRN and blank need none; index counts ${c.IndexPerWeek} a week to treatment ${D.N}, then ${esc(c.AfterIndex)}). Booked is NextGen visits and holds. ${hasT ? "Open is the template’s IVK slots with no visit, hold or late cancel and a free chair, less time off and closures. Left after booking is open less still to book. " : ""}${MI.booked ? `Likely lost is booked × ${pct(rate)}, the share lost to no-shows and late cancels over the last ${plural(MI.rows.length, "week")}: slots that will probably open up late. ` : ""}Freed is the visits a week index patients stop needing once they step down.</p></section>`;
+    /* by protocol: one line each; press it for the patients on it */
+    const G = D.groups, open = S.dmOpen, sum4 = a => a.slice(0, 4).reduce((x, y) => x + y, 0);
+    const pRow = r => `<div class="row"><span class="p">${esc(r.code)}${mrnTag(r.mrn)}</span>
+      <span class="i">${r.paused ? "Paused, " : ""}${r.next ? `next ${dshort(r.next.date)}${r.next.hold ? " (hold)" : ""}` : "<b>nothing booked</b>"}, ${r0(sum4(r.expect))} needed in 4 weeks, ${sum4(r.booked)} booked</span>
+      <button class="btn ghost sm" data-act="openPt" data-m="${esc(r.mrn)}">Open</button></div>`;
+    const pList = g => `<tr class="dmx"><td colspan="4"><div class="dmpl">${g.rows.slice().sort((a, b) => (a.next?.date ?? 1e9) - (b.next?.date ?? 1e9) || a.code.localeCompare(b.code)).map(pRow).join("")}</div></td></tr>`;
+    const gRow = g => `<tr class="dmg${g.freq === "Index" ? " ix" : ""}${open === g.freq ? " on" : ""}"><td><button class="dmb" data-act="dmProto" data-v="${esc(g.freq)}" aria-expanded="${open === g.freq}"><span class="car" aria-hidden="true"></span>${esc(g.freq)}</button></td><td>${g.n}</td><td>${n1(g.perWeek)}</td><td>${g.unsched || ""}</td></tr>${open === g.freq ? pList(g) : ""}`;
+    const byProto = `<section class="card dmt"><div class="lh"><h2>By protocol</h2><span>press a protocol for its patients</span></div><table class="tt dm dmp">
+      <thead><tr><th>Protocol</th><th>Patients</th><th>Visits a week</th><th>Nothing booked</th></tr></thead>
+      <tbody>${G.map(gRow).join("") || `<tr><td colspan="4" class="muted">No patients in this view.</td></tr>`}</tbody></table></section>`;
+    const T2 = D.transitions, tRow = r => { const proj = !(r.p && C.treatments(r.p, S.A)[D.N - 1]); const fr = Math.max(0, D.perIdx - r.afterRate);
       return `<li class="step ${proj ? "soon" : "now"}"><span class="k"></span><span><span class="t">${esc(r.code)}: treatment ${D.N} ${proj ? "around" : "on"} ${dshort(r.idxEnd)}</span><span class="m">Then ${esc(c.AfterIndex)}${fr ? `, frees about ${n1(fr)} visit${fr === 1 ? "" : "s"} a week from ${dshort(r.idxEnd + 1)}` : ""}${proj ? " (not booked yet: projected)" : ""}</span></span><span class="w"><button class="btn mute sm" data-act="openPt" data-m="${esc(r.mrn)}">Open</button></span></li>`; };
     const firstFree = W.find(w => w.freed > 0.05);
-    const steps = `<section class="card dmt"><div class="lh"><h2>When index creates access</h2><span>${T.length ? plural(T.length, "patient") + " in index" : "nobody in index"}</span></div>
-      ${T.length ? `<p class="note">${firstFree ? `Access starts opening ${firstFree.w === 0 ? "this week" : `the week of ${C.fmtD(firstFree.start)}`}; by the week of ${C.fmtD(W[W.length - 1].start)}, about ${n1(W[W.length - 1].freed)} visits a week are free from index step-downs.` : ""}</p><ul class="steps">${T.map(tRow).join("")}</ul>` : `<p class="note">Index patients (Induction, or started within the index weeks) show here with the week they step down.</p>`}</section>`;
-    const uRow = r => `<div class="row"><span class="p">${esc(r.code)}${mrnTag(r.mrn)}</span><span class="w">${esc(r.proto || "—")}</span><span class="i">${r.paused ? "Paused, " : ""}${n1(r.idx ? D.perIdx : r.rate)} a week needed, nothing booked</span><button class="btn ghost sm" data-act="openPt" data-m="${esc(r.mrn)}">Open</button></div>`;
-    const ul = o.sched === "only" ? `<section class="card list"><div class="lh"><h2>Unscheduled patients</h2><span>${unsched.length}</span></div>${unsched.map(uRow).join("") || `<p class="empty">Everyone in this view has a visit booked.</p>`}</section>` : "";
-    return `${setupBanner()}${head("Access", sub, false)}${accessChips()}${bar}${stats}${ul}${byProto}<div class="cols"><div class="stack">${weeks}</div><div class="stack">${steps}</div></div>`;
+    const steps = `<section class="card dmt"><div class="lh"><h2>Projected Access Post-Index</h2><span>${T2.length ? plural(T2.length, "patient") + " in index" : "nobody in index"}</span></div>
+      ${T2.length ? `<p class="note">${firstFree ? `Access starts opening ${firstFree.w === 0 ? "this week" : `the week of ${C.fmtD(firstFree.start)}`}; by the week of ${C.fmtD(W[W.length - 1].start)}, about ${r0(W[W.length - 1].freed)} visits a week are free from index step-downs.` : ""}</p><ul class="steps">${T2.map(tRow).join("")}</ul>` : `<p class="note">Index patients (Induction) show here with the week they step down.</p>`}</section>`;
+    return `${setupBanner()}${head("Access", sub, false)}${accessChips()}${bar}${stats}${weeks}<div class="cols"><div class="stack">${byProto}${missHTML(MI)}</div><div class="stack">${steps}</div></div>`;
+  }
+  /* a closure in the week starting on this Sunday: its note, else its dates */
+  const shutWeek = a => { const e = (S.EX || []).find(x => x.closed && x.from <= a + 6 && x.to >= a); return e ? (e.note || exDates(e)) : ""; };
+  /* No-shows and late cancels: what each past week lost, and every one with whether it's exempt (Kaiser/VA, or a clinical reason) */
+  function missHTML(MI) {
+    const L = S.ML.filter(m => m.kind !== "review"), byP = new Map(C.missByPatient(S.ML).map(x => [x.mrn, x])), pct = v => `${Math.round(v * 100)}%`, hasT = S.grids.length > 0;
+    const wRow = r => `<tr><td>${C.fmtD(r.start)}</td>${hasT ? `<td>${r.slots}</td>` : ""}<td>${r.booked}</td><td>${r.kept}</td><td>${r.noshow || ""}</td><td>${r.late || ""}</td>${hasT ? `<td>${r.endOpen}</td>` : ""}<td>${r.booked ? pct(r.rate) : ""}</td></tr>`;
+    const past = MI.rows.length ? `<div class="tscroll"><table class="tt dm"><thead><tr><th>Week of</th>${hasT ? "<th>IVK slots</th>" : ""}<th>Booked</th><th>Kept</th><th>No-shows</th><th>Late cancels</th>${hasT ? "<th>Ended open</th>" : ""}<th>Lost</th></tr></thead><tbody>${MI.rows.map(wRow).join("")}</tbody></table></div>`
+      : `<p class="note">No past weeks on the appointment list yet. Upload a NextGen report that starts a few weeks back to see them.</p>`;
+    const ex = m => m.exempt === "kpva" ? "Kaiser/VA: no fee" : m.exempt === "clinical" ? `Exempt: ${esc(m.reason)}` : "No exemption";
+    const all = m => { const x = byP.get(m.mrn), n = x ? x.noshow + x.late : 0; return n > 1 ? ` · ${n} in all` : ""; };
+    const show = S.missAll ? L : L.slice(0, 8);
+    const eRow = m => `<div class="row"><span class="p">${esc(m.code || "—")}${mrnTag(m.mrn)}</span><span class="i">${m.kind === "noshow" ? "No-show" : "Late cancel"} ${dshort(m.date)}${m.time != null ? ` ${C.fmtT(m.time)}` : ""}${all(m)} · ${ex(m)}</span>
+      ${m.exempt === "kpva" ? "<span></span>" : `<button class="btn ghost sm" data-act="missEx" data-k="${esc(m.key)}">${m.exempt === "clinical" ? "Edit" : "Clinical reason"}</button>`}</div>`;
+    return `<section class="card dmt"><div class="lh"><h2>No-shows and late cancels</h2><span>${MI.booked ? `${pct(MI.rate)} of booked visits lost` : plural(L.length, "on record")}</span></div>
+      ${past}<p class="note">Booked is kept + no-shows + late cancels. ${hasT ? "Ended open is the week’s slots no kept visit used. " : ""}A visit cancelled on its own day is always a late cancel. Every one is counted; Kaiser and VA patients pay no fee, and a clinical reason exempts the rest.</p>
+      ${L.length ? `<div class="mlist">${show.map(eRow).join("")}</div>${L.length > 8 ? `<div class="actions"><button class="btn mute sm" data-act="missMore">${S.missAll ? "Show fewer" : `Show all ${L.length}`}</button></div>` : ""}` : ""}
+      ${S.missOn ? "" : `<p class="note warn">Late cancels and exemptions need the newer table. Use <b>Update the workbook</b> in Settings.</p>`}</section>`;
   }
   /* Access › Templates: the provider grids, their tally, time off and the slot types */
   function templatePageHTML() {
@@ -970,18 +1036,21 @@
     return `<button class="chip" data-act="nav" data-v="${k}" aria-pressed="${S.view === k}">${l}${k === "template" ? `<span class="n">${S.grids.length}</span>` : b && k !== "access" ? `<span class="n">${b.n}</span>` : ""}</button>`; }).join("")}</div>`; };
   /* Time off and coverage: a provider's PTO takes their template out on those days (an exception by date); a covering provider can
      work the absent provider's template (pre-filled) or their own */
-  const exLabel = n => { const g = S.grids.find(x => x.key === TM.provKey(n)); return g ? TM.nameOf(g) : C.provFull(n) || n; };
+  const exLabel = n => { if (n === C.CLOSED) return "The clinic"; const g = S.grids.find(x => x.key === TM.provKey(n)); return g ? TM.nameOf(g) : C.provFull(n) || n; };
   const exDates = e => `${dshort(e.from)}${e.to !== e.from ? ` to ${dshort(e.to)}` : ""}`;
   function ptoHTML() {
     const T = todayS(), L = S.EX.filter(e => e.to >= T).sort((a, b) => a.from - b.from), ok = !!S.raw.tables?.own?.tblIvkExceptions;
     const row = e => { const cl = C.exClashes(e, S.A, S.holds);
+      if (e.closed) return `<li class="step ${cl.length ? "late" : "soon"}"><span class="k"></span><span><span class="t">Clinic closed: ${exDates(e)}</span>
+        <span class="m">${esc(e.note || "Closure")}: every provider’s slots close${cl.length ? `. <b>${plural(cl.length, "visit or hold", "visits or holds")} booked those days: move or cancel ${cl.length === 1 ? "it" : "them"} in NextGen</b> (${cl.slice(0, 4).map(a => `${esc(a.code)} ${dshort(a.date)}${a.hold ? " hold" : ""}`).join(", ")}${cl.length > 4 ? "…" : ""})` : ""}</span></span>
+        <span class="w"><button class="btn mute sm" data-act="ptoEdit" data-v="${esc(e.id)}">Edit</button></span></li>`;
       return `<li class="step ${cl.length ? "late" : e.cov ? "done" : "soon"}"><span class="k"></span><span><span class="t">${esc(exLabel(e.provider))}: ${exDates(e)}</span>
         <span class="m">${e.cov ? `Covered by ${esc(exLabel(e.cov))}, ${e.useTpl ? `working ${esc(exLabel(e.provider))}’s template` : "on their own template"}` : "Not covered: their slots are closed"}${e.note ? `, ${esc(e.note)}` : ""}${cl.length ? `. <b>${plural(cl.length, "visit or hold", "visits or holds")} still with them${e.useTpl ? `: move them to ${esc(exLabel(e.cov))} in NextGen` : ": move or cancel them"}</b> (${cl.slice(0, 4).map(a => `${esc(a.code)} ${dshort(a.date)}${a.hold ? " hold" : ""}`).join(", ")})` : ""}</span></span>
         <span class="w"><button class="btn mute sm" data-act="ptoEdit" data-v="${esc(e.id)}">Edit</button></span></li>`; };
-    return `<section class="card tpto"><div class="lh"><h2>Time off and coverage</h2><span>${L.length ? plural(L.length, "upcoming") : "none upcoming"}</span></div>
+    return `<section class="card tpto"><div class="lh"><h2>Time off, coverage and closures</h2><span>${L.length ? plural(L.length, "upcoming") : "none upcoming"}</span></div>
       ${needTable("tblIvkExceptions", "Time off")}
-      ${L.length ? `<ul class="steps">${L.map(row).join("")}</ul>` : `<p class="note">When a provider is off, add it here: their template’s slots close on those days, on the Access week, the Schedule and in every plan.</p>`}
-      <div class="actions"><button class="btn ghost sm line" data-act="ptoAdd"${ok && S.grids.length ? "" : " disabled"}>Add time off</button></div></section>`;
+      ${L.length ? `<ul class="steps">${L.map(row).join("")}</ul>` : `<p class="note">When a provider is off, or the clinic closes for a holiday, add it here: those slots close on the Access week, the Schedule and in every plan, and any visit still booked then is flagged.</p>`}
+      <div class="actions"><button class="btn ghost sm line" data-act="ptoAdd"${ok && S.grids.length ? "" : " disabled"}>Add time off</button><button class="btn ghost sm line" data-act="closeAdd"${ok ? "" : " disabled"}>Add a clinic closure</button></div></section>`;
   }
   /* Slot types: colour, IVK use, Clinical or Blocked, and the NextGen events each takes (a multi-select of the events on the
      appointment list and the wider report). Drafted here; Save writes the Slot Types tab and repaints every grid. */
@@ -1591,7 +1660,12 @@
     },
     /* a provider's time off: dates, who covers, and whether the covering provider works the absent provider's template (pre-fill) */
     pto() {
-      const m = S.m, absent = S.grids.find(g => g.key === TM.provKey(m.provider)), aName = absent ? TM.nameOf(absent) : m.provider;
+      const m = S.m;
+      if (m.closed) return `<h2 id="mh">${m.id && !m.isNew ? "Change the clinic closure" : "Add a clinic closure"}</h2><p class="sub muted">A holiday or other day the clinic is shut: every provider’s slots close. Visits still booked those days are flagged on Today, the Schedule and Patients. Nothing changes in NextGen.</p>
+        <div class="two"><label class="fld">First day closed<input id="ptFrom" type="date" value="${esc(m.from)}"></label><label class="fld">Last day closed<input id="ptTo" type="date" value="${esc(m.to)}"><span class="hint">Blank: one day</span></label></div>
+        <label class="fld">What for<input id="ptNote" value="${esc(m.note || "")}" autocomplete="off" placeholder="Thanksgiving, staff training…"></label>
+        <div class="foot">${m.id && !m.isNew ? `<button class="btn mute" data-act="ptoDel">Remove</button>` : ""}<button class="btn mute" data-act="close">Cancel</button><button class="btn primary inl" data-act="doPto"${S.busy ? " disabled" : ""}>Save the closure</button></div>`;
+      const absent = S.grids.find(g => g.key === TM.provKey(m.provider)), aName = absent ? TM.nameOf(absent) : m.provider;
       const covs = [...new Map(S.grids.map(g => [g.key, TM.nameOf(g)]).concat(S.providers.map(p => [TM.provKey(p), C.provFull(p)]))).entries()].filter(([k]) => k !== TM.provKey(m.provider));
       const cKey = m.cov ? TM.provKey(m.cov) : "", cName = m.cov ? exLabel(m.cov) : "", from = C.toSerial(m.from), to = C.toSerial(m.to) ?? from;
       /* does the covering provider have a template of their own on any of those weekdays? */
@@ -1686,6 +1760,13 @@
         ${m.who === "__new" ? `<div class="two"><label class="fld">LASFIR<input id="hdCode" maxlength="8" autocomplete="off" spellcheck="false"></label><label class="fld">MRN<input id="hdMrn" inputmode="numeric" autocomplete="off"></label></div>` : ""}
         ${s.openIndex && elIs(s) ? `<p class="note">A new start? <button class="btn ghost sm" data-act="schedPlan">Plan all ${C.indexN(S.cfg)} index visits from here</button></p>` : ""}
         <div class="foot"><button class="btn mute" data-act="close">Cancel</button><button class="btn primary inl" data-act="doHold"${S.busy ? " disabled" : ""}>Hold this time</button></div>`;
+    },
+    /* a no-show or late cancel exempt from the fee for a clinical reason (still counted) */
+    missEx() {
+      const m = S.ML.find(x => x.key === S.m.key); if (!m) return `<h2 id="mh">Not found</h2><div class="foot"><button class="btn mute" data-act="close">Close</button></div>`;
+      return `<h2 id="mh">${esc(m.code)}${mrnH(m.mrn)}: ${m.kind === "noshow" ? "no-show" : "late cancel"} ${esc(dshort(m.date))}</h2><p class="sub muted">Exempt from the fee for a clinical reason. It still counts toward their no-shows and late cancels.</p>
+        <label class="fld">Clinical reason<input id="mxWhy" value="${esc(S.m.reason)}" autocomplete="off" maxlength="120" placeholder="Short and without detail, e.g. provider advised" autofocus><span class="hint">Keep it brief: no diagnosis or clinical detail on this sheet.</span></label>
+        <div class="foot">${S.m.on ? `<button class="btn mute" data-act="missUnEx">Remove the exemption</button>` : ""}<button class="btn mute" data-act="close">Cancel</button><button class="btn primary inl" data-act="doMissEx"${S.busy || !S.missOn ? " disabled" : ""}>Save</button></div>`;
     },
     confirm() {
       return `<h2 id="mh">${esc(S.m.title)}</h2><p class="sub">${esc(S.m.body)}</p><div class="foot"><button class="btn mute" data-act="close">Keep it</button><button class="btn primary inl" data-act="doConfirm">${esc(S.m.yes)}</button></div>`;
@@ -1903,7 +1984,9 @@
     },
     /* provider time off */
     ptoAdd: () => { const g = S.grids[Math.min(S.tg || 0, S.grids.length - 1)]; openModal("pto", { id: `x${Date.now().toString(36)}`, isNew: true, provider: g ? TM.nameOf(g) : "", from: C.isoOf(todayS() + 1), to: "", cov: "", useTpl: "", note: "" }); },
+    closeAdd: () => openModal("pto", { id: `x${Date.now().toString(36)}`, isNew: true, closed: true, provider: C.CLOSED, from: C.isoOf(todayS() + 1), to: "", cov: "", useTpl: "", note: "" }),
     ptoEdit: e => { const x = S.EX.find(y => y.id === e.dataset.v); if (!x) return;
+      if (x.closed) return openModal("pto", { id: x.id, closed: true, provider: C.CLOSED, from: C.isoOf(x.from), to: x.to !== x.from ? C.isoOf(x.to) : "", cov: "", useTpl: "", note: x.note });
       openModal("pto", { id: x.id, provider: x.provider, from: C.isoOf(x.from), to: x.to !== x.from ? C.isoOf(x.to) : "", cov: x.cov, useTpl: x.cov ? (x.useTpl ? "yes" : "no") : "", note: x.note }); },
     ptoTpl: e => { keepPto(); S.m.useTpl = e.dataset.v; render(); },
     async doPto() {
@@ -1913,9 +1996,12 @@
       if (m.cov && !m.useTpl) return toast(`Say whether ${exLabel(m.cov)} uses ${exLabel(m.provider)}’s template.`, true);
       const row = { Provider: m.provider, From: C.isoOf(from), To: C.isoOf(to), Coverage: m.cov || "", UseTemplate: m.cov && m.useTpl === "yes" ? "TRUE" : "FALSE", Note: C.txt(m.note), Status: "", By: S.name, Updated: new Date().toISOString() };
       const span = `${dshort(from)}${to !== from ? ` to ${dshort(to)}` : ""}`;
+      if (m.closed) { const n = C.exClashes({ closed: true, from, to }, S.A, S.holds).length;
+        if (await write("Saving the closure…", () => Store.saveException(m.id, Object.assign(row, { Provider: C.CLOSED, Coverage: "", UseTemplate: "FALSE" })), `Clinic closed ${span}${n ? `: ${plural(n, "visit or hold", "visits or holds")} booked then, flagged on Today` : ""}.`)) closeModal();
+        return; }
       if (await write("Saving time off…", () => Store.saveException(m.id, row), `${exLabel(m.provider)} off ${span}${m.cov ? `, covered by ${exLabel(m.cov)}${m.useTpl === "yes" ? " on the same template" : ""}` : ": slots closed"}.`)) closeModal();
     },
-    ptoDel: () => { const m = S.m; openModal("confirm", { title: `Remove ${exLabel(m.provider)}’s time off?`, body: "Their template’s slots open again on those days.", yes: "Remove",
+    ptoDel: () => { const m = S.m; openModal("confirm", { title: m.closed ? "Remove the clinic closure?" : `Remove ${exLabel(m.provider)}’s time off?`, body: m.closed ? "Every provider’s slots open again on those days." : "Their template’s slots open again on those days.", yes: "Remove",
       run: () => Store.saveException(m.id, { Status: "removed", By: S.name, Updated: new Date().toISOString() }) }); },
     avSet: e => { keepAvail(); const g = S.m.grid[+e.dataset.d], h = e.dataset.h; g[h] = g[h] === e.dataset.v ? "" : e.dataset.v; render(); },
     avAddAway: () => { keepAvail(); S.m.away.push({ from: C.isoOf(todayS()), to: "", note: "" }); render(); },
@@ -2020,6 +2106,25 @@
     pSel: e => { S.pSel = e.dataset.m; render(); follow("mpt", S.pSel); },
     chip: e => { S.chip = e.dataset.v; render(); },
     wk: e => { const d = +e.dataset.v; S.wk = d === 0 ? 0 : S.wk + d; render(); },
+    /* the Schedule on the week of a day (a closure's visits, a date picked) */
+    schedDay: e => { const d = +e.dataset.d; if (!isFinite(d)) return; S.wk = Math.round((C.weekStart(d) - C.weekStart(todayS())) / 7); S.pv = null; S.view = "schedule"; render(); },
+    schedAt: e => { const p = S.PM.get(e.dataset.m), f = p ? S.A.filter(a => a.mrn === p.mrn && a.date >= todayS() && !C.isCancelled(a) && C.closureOn(S.EX, a.date)).sort((a, b) => a.date - b.date)[0] : null;
+      if (f) ACT.schedDay({ dataset: { d: f.date } }); },
+    /* all index visits kept at 2x a week, protocol not updated: the protocol form, set to the after-index protocol */
+    stepDown: e => { const p = S.PM.get(e.dataset.m); if (p) openModal("proto", { mrn: p.mrn, freq: S.cfg.AfterIndex || p.freq || "" }); },
+    /* a cancellation close to the visit: late or not (a same-day one is never asked) */
+    missSet: async e => { const m = S.ML.find(x => x.key === e.dataset.k); if (!m) return; if (!S.missOn) return toast("This needs the newer table. Use Update the workbook in Settings.", true);
+      const late = e.dataset.v === "late";
+      await write("Saving…", () => Store.saveMissed(m.key, missRow(m, { Kind: late ? "late" : "notlate" })), `${m.code}: ${late ? "late cancel counted" : "not a late cancel"}.`); },
+    /* a no-show or late cancel with a clinical reason: exempt from the fee, still counted */
+    missEx: e => { const m = S.ML.find(x => x.key === e.dataset.k); if (m) openModal("missEx", { key: m.key, reason: m.reason || "", on: m.exempt === "clinical" }); },
+    async doMissEx() { const m = S.ML.find(x => x.key === S.m.key), why = ($("#mxWhy")?.value || "").trim(); if (!m) return closeModal();
+      if (!why) return toast("Say what the clinical reason is.", true);
+      if (await write("Saving…", () => Store.saveMissed(m.key, missRow(m, { Kind: m.kind, Exempt: "clinical", Reason: why })), `${m.code}: exempt, clinical reason saved.`)) closeModal(); },
+    async missUnEx() { const m = S.ML.find(x => x.key === S.m.key); if (!m) return closeModal();
+      if (await write("Saving…", () => Store.saveMissed(m.key, missRow(m, { Kind: m.kind, Exempt: "", Reason: "" })), `${m.code}: exemption removed.`)) closeModal(); },
+    missMore: () => { S.missAll = !S.missAll; render(); },
+    dmProto: e => { const k = e.dataset.v; S.dmOpen = S.dmOpen === k ? null : k; render(); },
     /* a booked visit on the Schedule opens the patient view; someone not on the tracker yet gets the profile form */
     schedPick: e => { const mrn = e.dataset.m, d = +e.dataset.d, t = e.dataset.t === "" ? null : +e.dataset.t, a = S.A.find(x => x.mrn === mrn && x.date === d && (t == null || x.time === t)); if (!a) return;
       const r = S.SO.get(mrn), on = r && r.status === "waiting" && r.booked === d, p = S.PM.get(mrn);
@@ -2189,7 +2294,11 @@
         || toast(`${C.code(v)} is checked out, but the status didn’t change to Ongoing. Use Move to Ongoing on the patient.`, true);
     },
     async markBooked(e) { const v = visitBy(e.dataset.k); if (!v) return; await write("Saving…", () => Store.saveVisit(v.key, visitBase(v), Object.assign({ Booked: "yes" }, stamp())), `${C.code(v)}’s next visit marked booked.`); },
-    gone: e => { const v = visitBy(e.dataset.k); openModal("confirm", { title: `Take ${C.code(v)} off today’s list?`, body: "NextGen isn’t changed. Cancel or reschedule the visit there too.", yes: "Take off today’s list", run: () => Store.saveVisit(v.key, visitBase(v), Object.assign({ Status: "cancelled" }, stamp())) }); },
+    /* cancelled on the day: off today's list, and always a late cancel (counted; Kaiser/VA pay no fee) */
+    gone: e => { const v = visitBy(e.dataset.k); openModal("confirm", { title: `Take ${C.code(v)} off today’s list?`, body: `Cancelled today, so it counts as a late cancel${C.isKpVa(v.p, S.PF.get(v.a.mrn)) ? " (Kaiser/VA: no fee)" : ""}. NextGen isn’t changed. Cancel the visit there too.`, yes: "Take off today’s list",
+      run: async () => { const r = await Store.saveVisit(v.key, visitBase(v), Object.assign({ Status: "cancelled" }, stamp()));
+        if (S.missOn) await Store.saveMissed(v.key, missRow({ date: v.a.date, time: v.a.time, mrn: v.a.mrn, code: C.code(v), provider: v.a.provider }, { Kind: "late", Source: "desk" }));
+        return r; } }); },
     undoGone: async e => { const v = visitBy(e.dataset.k); await write("Saving…", () => Store.saveVisit(v.key, visitBase(v), Object.assign({ Status: "" }, stamp()))); },
     undoIn: e => { const v = visitBy(e.dataset.k); openModal("confirm", { title: `Undo ${C.code(v)}’s check-in?`, body: "They go back to Still to come. A Teams post already sent stays in the chat.", yes: "Undo check-in", run: () => Store.saveVisit(v.key, visitBase(v), Object.assign({ Arrived: "", Chair: "", Seated: "" }, stamp())) }); },
     undoSeat: async e => { const v = visitBy(e.dataset.k); await write("Saving…", () => Store.saveVisit(v.key, visitBase(v), Object.assign({ Seated: "" }, stamp())), `${C.code(v)} is back to checked in.`); },
@@ -2263,7 +2372,7 @@
     mapRemove: () => openModal("confirm", { title: "Remove the chair map?", body: "Today shows chair tiles instead. You can load the file again any time.", yes: "Remove the map", run: () => Store.setDoc(MAP_KEY, null) }),
     async doUpload() {
       const u = S.m; if (u.sh.flag && !$("#mShrink")?.checked || !u.rows.length) return; closeModal();
-      const wasPending = new Set(unconfirmed().map(h => h.id)), oldA = S.A.slice();   // before the new list is read
+      const wasPending = new Set(unconfirmed().map(h => h.id)), oldA = S.A.slice(), oldAt = S.raw.apptUpdated;   // before the new list is read
       const ok = await write("Writing the appointment list…", () => Store.replaceAppts(u.rows, C.serialOf(new Date()) + nowMin() / 1440)); if (!ok) return;
       if (S.raw.tables?.own?.tblIvkOther && !(await write("Saving the providers’ other visits…", () => Store.replaceOther(u.other))))
         toast("The appointment list is updated, but the providers’ other visits didn’t save, so flex post checks may show as free. Upload again.", true);
@@ -2276,6 +2385,14 @@
       }
       await write("Filling the Index Planner tab…", () => Store.fillPlanner(), r => `Appointment list updated: ${plural(u.rows.length, "appointment")}.${r && r.skipped ? ` Index Planner tab not filled (${r.skipped}).` : r ? ` Index Planner tab filled, ${C.fmtD(r.from)} to ${C.fmtD(r.to)}.` : ""}`)
         || toast("The appointment list is updated, but the Index Planner tab wasn’t filled. Upload again, or place or release a hold, to retry.", true);
+      /* cancellations close to the visit that this list shows: same day = late cancel; the rest go to Action items */
+      if (S.missOn) {
+        const NC = C.newCancels(oldA, S.A, todayS(), S.cfg, oldAt).filter(x => !S.MR.has(x.key));
+        const rows = NC.map(x => Object.assign({ Key: x.key }, missRow({ date: x.a.date, time: x.a.time, mrn: x.a.mrn, code: x.a.code, provider: x.a.provider }, { Kind: x.sameDay ? "late" : "review", Source: "upload" })));
+        if (rows.length) await write("Saving cancellations…", () => Store.addMissed(rows), () => {
+          const L = NC.filter(x => x.sameDay).length, R = rows.length - L;
+          return [L ? `${plural(L, "same-day cancel")} counted as late` : "", R ? `${plural(R, "cancellation")} to call late or not on Today` : ""].filter(Boolean).join("; ") + "."; });
+      }
       /* the booked index visits this report confirms, and any it doesn't have */
       if (wasPending.size) {
         const H = (S.holds || []).filter(h => wasPending.has(h.id)).map(h => C.holdConfirm(h, S.A, S.raw.apptUpdated)), ok = H.filter(c => c === "onlist").length, miss = H.filter(c => c === "missing").length;
@@ -2553,6 +2670,7 @@
     else if (t.id === "wNote") { const w = S.WL.list.find(x => x.mrn === t.dataset.m); if (w) write("Saving…", () => Store.savePt(w.mrn, ptPatch({ code: w.code }, { WaitNote: t.value.trim() })), "Note saved."); }
     else if (S.modal === "forms" && ["fmFrom", "fmTo", "fp_sched", "fp_consent", "fp_avail", "fp_bidf"].includes(t.id)) { keepForms(); render(); }
     else if (S.modal === "pto" && (t.id === "ptCov" || t.id === "ptProv" || t.id === "ptFrom" || t.id === "ptTo")) { const was = S.m.cov; keepPto(); if (t.id === "ptCov") { S.m.cov = t.value; if (t.value !== was) S.m.useTpl = ""; } render(); }
+    else if (t.id === "wkJump" && t.value) ACT.schedDay({ dataset: { d: C.toSerial(t.value) } });
     else if (t.id === "followOn") { LS.set("ivkFollow", t.checked ? "1" : "0"); followed = ""; }
     else if (["ipStart", "ipPer", "ipWeeks"].includes(t.id)) {
       const o = ipList().find(x => x.mrn === S.ipSel); if (!o) return; delete S.ipPins[o.mrn];
