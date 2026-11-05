@@ -8,9 +8,10 @@
 })(typeof self !== "undefined" ? self : this, function (TM) {
   "use strict";
 
-  /* Defaults for tblIvkConfig. Castro: 4 chairs, each IVK visit holds a chair 2 hours. The SOP has the clinician check in within
-     the first 30 min and again in the last 5-10 min. */
-  const DEFAULTS = { Enabled: "TRUE", Clinic: "Castro", Chairs: "4", VisitMin: 120,
+  /* Defaults for tblIvkConfig: 4 chairs, each IVK visit holds a chair 2 hours. The SOP has the clinician check in within
+     the first 30 min and again in the last 5-10 min. Nothing clinic-specific is built in: Clinic comes from the workbook's saved
+     setting, else the workbook name (clinicFromName); the start email's address, phone, CC and BCC are entered once per workbook. */
+  const DEFAULTS = { Enabled: "TRUE", Clinic: "", Chairs: "4", VisitMin: 120,
     AheadWeeks: 6, ProtocolDays: 90, AuthWarnDays: 14, EncountersWarn: 3,
     /* index: 2 visits in each 7 days from treatment 1, for 3 weeks; at least a day off between visits, no more than 5 days apart
        when the slots allow; the provider's post check is in the last 30 min of the 2 hours; a hold is booked in NextGen within 10 min */
@@ -21,11 +22,15 @@
     /* Locations: this clinic's NextGen location names ("SF Castro; Castro IVK"), so a wider report's other clinics are kept apart.
        Blank = any location naming the clinic. ElsewhereAt: when the other clinics' visits were last uploaded */
     Locations: "", ElsewhereAt: "",
-    /* the start email: the clinic's address for "your first treatment at", and who is copied on every one */
-    ClinicAddress: "45 Castro Street Suite 318, San Francisco, CA 94114", StartCc: "helpcastro@mindfulhealthsolutions.com", StartBcc: "amreed@mymhs.com",
+    /* the start email: the clinic's address for "your first treatment at", its phone, and who is copied on every one.
+       Blank until the first person at the clinic enters them (Settings › Messages); after that only an admin changes them */
+    ClinicAddress: "", ClinicPhone: "", StartCc: "", StartBcc: "",
     /* the start checklist: the Case Management stage a kept start moves the patient to in NextGen, and how many days a kept start
        stays on the list while Case Management isn't marked updated */
-    CmStage: "6. Started", StartBackDays: 14 };
+    CmStage: "6. Started", StartBackDays: 14,
+    /* cancellations: a visit cancelled on its own day is always a late cancel; one cancelled up to LateCancelDays before it goes to
+       the desk to say whether it was late. MissWeeks: how many past weeks the no-show and late-cancel rate is taken from */
+    LateCancelDays: 1, MissWeeks: 8 };
   const ACTIVE = ["ongoing", "induction"];
   const DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
   const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
@@ -286,6 +291,14 @@
     /* index done: an Induction patient who has kept their 6th visit moves to Ongoing on the protocol the provider sets */
     const ix = indexState(p, x.appts, T, c);
     if (ix && ix.complete) add("indexdone", `Index done (${ix.done} kept): move to Ongoing and confirm the protocol`, ["Move to Ongoing", "idxDone"]);
+    const sd = A ? stepDue(p, x.appts, T, c) : null;
+    if (sd) add("stepdown", `Kept all ${sd.N} at ${sd.freq}, protocol not updated: change to ${sd.to}?`, ["Change protocol", "stepDown"]);
+    /* a visit or hold on a day the clinic is closed */
+    const shut = A && x.EX ? fut.find(f => closureOn(x.EX, f.date)) : null;
+    if (shut) add("closed", `Booked ${fmtD(shut.date)}: clinic closed (${closureOn(x.EX, shut.date).note || "closure"})`, ["Open the schedule", "schedAt"], { bad: true });
+    /* no-shows and late cancels, counted (x.missBy: missByPatient) */
+    const mb = x.missBy ? x.missBy.get(p.mrn) : null;
+    if (mb && mb.noshow + mb.late) add("missed", `${[mb.noshow ? `${mb.noshow} no-show${mb.noshow === 1 ? "" : "s"}` : "", mb.late ? `${mb.late} late cancel${mb.late === 1 ? "" : "s"}` : ""].filter(Boolean).join(", ")}${mb.exempt === "kpva" ? " (Kaiser/VA: no fee)" : ""}`, null, { quiet: true });
     if (/induction/i.test(p.status)) add("induction", "Induction", null, { quiet: true });
     if (/paused/i.test(p.status)) add("paused", "Paused", null, { quiet: true });
     if (oak) add("oakq", oak.unknown ? "Oakland patient" : `Oakland: index here, ${oak.done} of ${oak.idx} done`, null, { quiet: true });
@@ -508,15 +521,19 @@
   /* tblIvkExceptions: a provider's time off (PTO) on their template, by date. Id | Provider | From | To | Coverage | UseTemplate |
      Note | Status | By | Updated. On those days the provider's template slots aren't offered. With Coverage, the covering provider
      either works the absent provider's template (UseTemplate, a pre-fill that replaces the covering provider's own template that day)
-     or keeps their own template. Status "removed" takes the entry back out. */
+     or keeps their own template. Status "removed" takes the entry back out.
+     A clinic closure (a holiday) is a row with Provider "Clinic closed": every provider's slots close those days, nobody covers. */
   const EX_COLS = ["Id", "Provider", "From", "To", "Coverage", "UseTemplate", "Note", "Status", "By", "Updated"];
+  const CLOSED = "Clinic closed", isClosedRow = v => /^clinic( closed)?$|^all providers$/i.test(txt(v));
   function exRows(values) {
-    return byHeader(values).rows.map(x => { const g = x.get, from = toSerial(g("from")), to = toSerial(g("to")) ?? from, cov = txt(g("coverage"));
-      return { id: txt(g("id")), provider: txt(g("provider")), pkey: TM.provKey(g("provider")), from, to: to == null ? null : Math.max(from, to), cov, covKey: cov ? TM.provKey(cov) : "",
+    return byHeader(values).rows.map(x => { const g = x.get, from = toSerial(g("from")), to = toSerial(g("to")) ?? from, closed = isClosedRow(g("provider")), cov = closed ? "" : txt(g("coverage"));
+      return { id: txt(g("id")), provider: closed ? CLOSED : txt(g("provider")), pkey: closed ? "*" : TM.provKey(g("provider")), closed, from, to: to == null ? null : Math.max(from, to), cov, covKey: cov ? TM.provKey(cov) : "",
         useTpl: !!cov && /^(true|yes|1)$/i.test(txt(g("usetemplate"))), note: txt(g("note")), status: txt(g("status")).toLowerCase(), by: txt(g("by")) }; })
       .filter(e => e.id && e.pkey && e.from != null && e.status !== "removed");
   }
-  const exFor = (EX, pkey, d) => EX.find(e => e.pkey === pkey && e.from <= d && d <= e.to) || null;
+  /* a closure wins over a provider's own time off: nobody covers on a day the clinic is shut */
+  const exFor = (EX, pkey, d) => EX.find(e => e.closed && e.from <= d && d <= e.to) || EX.find(e => e.pkey === pkey && e.from <= d && d <= e.to) || null;
+  const closureOn = (EX, d) => (EX || []).find(e => e.closed && e.from <= d && d <= e.to) || null;
   /* The templates' days (template.onDays) with the time off applied: an absent provider's slots and cells go, or become the covering
      provider's when they work that template; a covering provider who works the absent one's template doesn't also keep their own. */
   function withExceptions(D, EX) {
@@ -535,8 +552,12 @@
     return Object.assign({}, D, { slotsOn: d => on(d).slots, cellsOn: d => on(d).cells, remap });
   }
   /* IVK visits still booked with a provider on a day they're off (cancelled ones don't count) */
-  const exClashes = (e, A, H) => A.filter(a => TM.provKey(a.provider) === e.pkey && a.date >= e.from && a.date <= e.to && !isCancelled(a))
-    .concat((H || []).filter(h => h.status !== "released" && TM.provKey(h.provider) === e.pkey && h.date >= e.from && h.date <= e.to && !onList(h, A)).map(h => Object.assign({ hold: true }, h)));
+  /* (a clinic closure: every IVK visit and hold those days) */
+  const exClashes = (e, A, H) => { const who = n => e.closed || TM.provKey(n) === e.pkey;
+    return A.filter(a => who(a.provider) && a.date >= e.from && a.date <= e.to && !isCancelled(a))
+      .concat((H || []).filter(h => h.status !== "released" && who(h.provider) && h.date >= e.from && h.date <= e.to && !onList(h, A)).map(h => Object.assign({ hold: true }, h))); };
+  /* every visit or hold on a closure day still to come, closure by closure */
+  const closureClashes = (EX, A, H, today) => (EX || []).filter(e => e.closed && e.to >= today).map(e => ({ e, list: exClashes(e, A, H).filter(a => a.date >= today) })).filter(x => x.list.length);
   /* the IVK visits the Appt List tab keeps; everything else in the report goes to tblIvkOther */
   const isIvkVisit = ev => /\b(iv ketamine|ivk)\b/i.test(ev) && !/consult/i.test(ev);
   /* tblIvkFlags: MRN | Patient | RequiresPostCheck | By | Updated. A provider asks for a post check on a patient's follow-ups. */
@@ -599,7 +620,10 @@
       /* a booked visit that was one of the patient's holds is an index visit, whatever NextGen calls it */
       .map(a => ({ mrn: a.mrn, code: a.code, time: a.time, provider: a.provider, pkey: key(a.provider), kind: "appt", event: a.event,
         post: !!(X.needsPost && X.needsPost(a.mrn, a.event)) || (X.holds || []).some(h => h.mrn === a.mrn && h.date === d && h.time === a.time && h.status !== "released") }))
-      .concat((X.holds || []).filter(h => h.date === d && holding(h, X.appts, X.listAt)).map(h => ({ mrn: h.mrn, code: h.code, time: h.time, provider: h.provider, pkey: key(h.provider), kind: "hold", h, post: true })));
+      .concat((X.holds || []).filter(h => h.date === d && holding(h, X.appts, X.listAt)).map(h => ({ mrn: h.mrn, code: h.code, time: h.time, provider: h.provider, pkey: key(h.provider), kind: "hold", h, post: true })))
+      /* a late cancel keeps its time: the schedule shows it cancelled, not open (X.late, the late-cancel visit keys) */
+      .concat(X.late && X.late.size ? X.appts.filter(a => a.date === d && a.time != null && isCancelled(a) && X.late.has(visitKey(a.date, a.mrn, a.time)))
+        .map(a => ({ mrn: a.mrn, code: a.code, time: a.time, provider: a.provider, pkey: key(a.provider), kind: "late", event: a.event, post: false })) : []);
     const slots = (X.slotsOn ? X.slotsOn(d) : []).map(s => ({ ...s, date: d, by: null, postBy: null, full: false }));
     for (const b of B) {
       const s = slots.find(x => !x.by && x.pkey === b.pkey && x.time <= b.time && b.time < x.time + (x.len || 30)); if (s) s.by = b;
@@ -852,6 +876,72 @@
       .filter(a => !visitAnswered(pays, visitKey(a.date, a.mrn, a.time), p)).sort((a, b) => b.date - a.date);
   }
 
+  /* ---------- no-shows and late cancels (tblIvkMissed) ---------- */
+  /* Key | Date | Time | MRN | Patient | Provider | Kind | Exempt | Reason | Source | By | Updated, one row per visit the desk or an
+     upload said something about. Kind: late (a late cancel), review (cancelled close to the visit: the desk says whether it was
+     late), notlate (the desk said it wasn't), noshow (a NextGen no-show the desk exempted). Exempt: clinical (a clinical reason, in
+     Reason). A visit cancelled on its own day is always late. Kaiser and VA patients are exempt from fees; that's worked out from
+     the payer, never stored. No-shows come from NextGen's status. Nothing here writes a fee or a balance: every one is counted. */
+  const MISS_COLS = ["Key", "Date", "Time", "MRN", "Patient", "Provider", "Kind", "Exempt", "Reason", "Source", "By", "Updated"];
+  function missRows(values) {
+    const m = new Map();
+    byHeader(values).rows.forEach(x => { const g = x.get, key = txt(g("key")), date = toSerial(g("date")); if (!key || date == null) return;
+      m.set(key, { key, date, time: toMin(g("time")), mrn: mrnKey(g("mrn")), code: txt(g("patient")), provider: txt(g("provider")), kind: txt(g("kind")).toLowerCase(),
+        exempt: txt(g("exempt")).toLowerCase(), reason: txt(g("reason")), source: txt(g("source")).toLowerCase(), by: txt(g("by")) }); });
+    return m;
+  }
+  /* Kaiser (KP) and VA (VA, TriWest, Community Care, CHAMPVA) patients pay no no-show or late-cancel fee */
+  const KPVA = /kaiser|\bkp\b|\bva\b|veteran|triwest|community care|champva/i;
+  const isKpVa = (p, pf) => [p?.ins1, p?.ins2, pf?.prov?.payer, pf?.inf?.payer, pf?.sohar?.payer].some(v => KPVA.test(txt(v)));
+  /* every no-show and late cancel (and the cancellations waiting for the desk to say), newest first, each with why it's exempt:
+     kpva, clinical or "" (no exemption). o = { appts, MR (missRows), PM, PF, from, to } */
+  function missList(o) {
+    const out = new Map(), MR = o.MR || new Map(), lo = o.from ?? -Infinity, hi = o.to ?? Infinity;
+    for (const a of o.appts || []) if (/no ?show/i.test(a.status) && a.date >= lo && a.date <= hi) { const key = visitKey(a.date, a.mrn, a.time);
+      out.set(key, { key, date: a.date, time: a.time, mrn: a.mrn, code: a.code, provider: a.provider, kind: "noshow", source: "nextgen" }); }
+    for (const r of MR.values()) if ((r.kind === "late" || r.kind === "review") && !out.has(r.key) && r.date >= lo && r.date <= hi) out.set(r.key, Object.assign({}, r));
+    for (const m of out.values()) { const p = o.PM?.get(m.mrn), r = MR.get(m.key);
+      m.code = m.code || p?.code || r?.code || ""; m.exempt = isKpVa(p, o.PF?.get(m.mrn)) ? "kpva" : r?.exempt === "clinical" ? "clinical" : ""; m.reason = r?.reason || ""; }
+    return [...out.values()].sort((a, b) => b.date - a.date || (b.time ?? 0) - (a.time ?? 0));
+  }
+  /* the visits a late cancel still holds on the schedule: shown as cancelled, never as an open slot or a gap */
+  const lateKeys = MR => new Set([...(MR || new Map()).values()].filter(r => r.kind === "late").map(r => r.key));
+  /* Cancellations a new appointment list shows that the old one didn't (cancelled, rescheduled, or gone from a list that still covers
+     that day), for visits from LateCancelDays back to LateCancelDays ahead. sameDay: the visit is today and the old list was
+     uploaded today, so it was cancelled on its own day (a late cancel, no question). The rest go to the desk. */
+  function newCancels(oldA, newA, today, cfg, oldAt) {
+    const days = Math.max(0, +cfg.LateCancelDays || 0), live = a => !isCancelled(a) && !/no ?show/i.test(a.status), from = newA.reduce((m, a) => a.date < m ? a.date : m, Infinity);
+    const now = new Map(newA.map(a => [visitKey(a.date, a.mrn, a.time), a])), sameUpload = oldAt != null && Math.floor(oldAt) === today;
+    return oldA.filter(a => live(a) && a.time != null && a.date >= today - days && a.date <= today + days).map(a => ({ a, key: visitKey(a.date, a.mrn, a.time), n: now.get(visitKey(a.date, a.mrn, a.time)) }))
+      .filter(x => x.n ? isCancelled(x.n) : x.a.date >= from)
+      .map(x => ({ key: x.key, a: x.a, sameDay: x.a.date === today && sameUpload }));
+  }
+  /* What no-shows and late cancels cost access: each past week (Sunday to Saturday) with visits on the list, the template's IVK
+     slots, what was booked in them (kept + no-shows + late cancels), what was lost, and the slots that ended the week open.
+     rate: the share of booked visits lost, over those weeks, to project how many of the weeks ahead's booked visits won't happen.
+     o = { appts, X (templates with time off), missed (missList), today, weeks } */
+  function missImpact(o) {
+    const w0 = weekStart(o.today), W = Math.max(1, +o.weeks || 8), L = o.missed || [], late = new Set(L.filter(m => m.kind === "late").map(m => m.key)), rows = [];
+    for (let i = W; i >= 1; i--) {
+      const a = w0 - 7 * i, b = a + 7, inW = (o.appts || []).filter(x => x.date >= a && x.date < b);
+      if (!inW.length) continue;
+      const kept = inW.filter(x => !isCancelled(x) && !/no ?show/i.test(x.status) && !late.has(visitKey(x.date, x.mrn, x.time))).length;
+      const ns = L.filter(m => m.kind === "noshow" && m.date >= a && m.date < b).length, lc = L.filter(m => m.kind === "late" && m.date >= a && m.date < b).length;
+      let slots = null; if (o.X) { slots = 0; for (let d = a + 1; d < a + 6; d++) slots += (o.X.slotsOn ? o.X.slotsOn(d) : []).length; }
+      const booked = kept + ns + lc;
+      rows.push({ start: a, slots, booked, kept, noshow: ns, late: lc, lost: ns + lc, endOpen: slots == null ? null : Math.max(0, slots - kept), rate: booked ? (ns + lc) / booked : 0 });
+    }
+    const bk = rows.reduce((n, r) => n + r.booked, 0), lost = rows.reduce((n, r) => n + r.lost, 0);
+    return { rows, booked: bk, lost, noshow: rows.reduce((n, r) => n + r.noshow, 0), late: rows.reduce((n, r) => n + r.late, 0), rate: bk ? lost / bk : 0 };
+  }
+  /* per patient over the missed list: how many no-shows and late cancels, and how many of them have no exemption */
+  function missByPatient(L) {
+    const m = new Map();
+    for (const x of L) { if (x.kind === "review") continue; const o = m.get(x.mrn) || { mrn: x.mrn, code: x.code, noshow: 0, late: 0, open: 0, last: null, exempt: x.exempt === "kpva" ? "kpva" : "" };
+      o[x.kind === "noshow" ? "noshow" : "late"]++; if (!x.exempt) o.open++; if (!o.last || x.date > o.last) o.last = x.date; m.set(x.mrn, o); }
+    return [...m.values()].sort((a, b) => (b.noshow + b.late) - (a.noshow + a.late) || (b.last ?? 0) - (a.last ?? 0));
+  }
+
   /* ---------- patient profile (tblIvkProfile) ---------- */
   /* One row per patient: who pays each part of the visit (insurance or self pay, and the payer) and the latest Sohar benefits.
      The amounts due and the payer names also go to the Master Patient Tracker (Copay, Infusion, Primary Encounter Insurance,
@@ -910,6 +1000,31 @@
         copay: get("copay"), coins: get("coins"), ded: get("ded"), dedRem: get("dedRem"), oop: get("oop"), oopRem: get("oopRem"), status: get("status"), date: toSerial(get("date")), ref: get("ref") };
       const prev = out.get(mrn); if (!prev || (rec.date ?? 0) >= (prev.date ?? 0)) out.set(mrn, rec);
     }
+    return out;
+  }
+
+  /* The whole Sohar IVN export (the Sohar Eligibility add-in's file for the TMS, ESK and IVK Trackers) against this tracker.
+     M: parseSohar's Map. o = { PM (Master Patient Tracker by MRN), PF (profiles by MRN), A (appointment list), by, now (iso) }.
+     A patient counts when they're on the tracker, have a profile, or are on the appointment list. A verification older than the
+     one already saved is left alone; the same date and ref is unchanged. Out: { items: [{ mrn, code, patch, isNew }], same,
+     older, notHere, rows } where patch holds the profile's Sohar columns (dates as iso). */
+  function planSoharImport(M, o) {
+    const PM = o.PM || new Map(), PF = o.PF || new Map(), apptCode = new Map();
+    for (const a of o.A || []) if (a.mrn && !apptCode.has(a.mrn)) apptCode.set(a.mrn, a.code || "");
+    const iso = d => d != null ? isoOf(d) : "", out = { items: [], same: 0, older: 0, notHere: 0, rows: M ? M.size : 0 };
+    for (const [mrn, r] of M || []) {
+      const p = PM.get(mrn), pf = PF.get(mrn);
+      if (!p && !pf && !apptCode.has(mrn)) { out.notHere++; continue; }
+      const had = pf && pf.sohar && pf.sohar.date;
+      if (had != null && r.date != null && r.date < had) { out.older++; continue; }
+      if (had != null && r.date === had && txt(pf.sohar.ref) === txt(r.ref)) { out.same++; continue; }
+      const code = p?.code || pf?.code || apptCode.get(mrn) || r.code || "";
+      const patch = { SoharPayer: r.payer, Plan: r.plan, Network: r.network, CovStart: iso(r.covStart), CovEnd: iso(r.covEnd), Copay: r.copay, Coinsurance: r.coins,
+        Deductible: r.ded, DedRemaining: r.dedRem, OopMax: r.oop, OopRemaining: r.oopRem, SoharStatus: r.status, SoharDate: iso(r.date), SoharRef: r.ref, By: o.by || "", Updated: o.now || "" };
+      if (!pf && code) patch.Patient = code;
+      out.items.push({ mrn, code, patch, isNew: !pf });
+    }
+    out.items.sort((a, b) => a.code.localeCompare(b.code));
     return out;
   }
 
@@ -988,6 +1103,15 @@
     const need = Math.max(1, Math.round(+cfg.IndexPerWeek * +cfg.IndexWeeks)) - 1;
     const booked = A.filter(x => x.mrn === p.mrn && !isCancelled(x) && !/no ?show/i.test(x.status) && (x.date > a.date || (x.date === a.date && (x.time ?? 0) > (a.time ?? 0)))).length;
     return booked < need ? { booked, need, start: a } : null;
+  }
+  /* Kept all N index visits (6) and still on the index rate (IndexPerWeek x per week, 2x) with the protocol not updated since the
+     Nth: time to step down to AfterIndex (1x per week). Induction patients get the Move to Ongoing ask (indexState) instead. */
+  function stepDue(p, A, today, cfg) {
+    if (!p || !isActive(p) || /induction/i.test(p.status) || !countable(p, A)) return null;
+    if (!new RegExp(`^\\s*${+cfg.IndexPerWeek}\\s*x\\s*(per|a|/)?\\s*w(ee)?k`, "i").test(p.freq || "")) return null;
+    const N = Math.max(1, Math.round(+cfg.IndexPerWeek * +cfg.IndexWeeks)), L = treatments(p, A).filter(a => a.date < today), nth = L[N - 1];
+    if (!nth || (p.protoAt != null && p.protoAt >= nth.date)) return null;
+    return { N, nth, done: L.length, freq: p.freq, to: cfg.AfterIndex };
   }
   /* the patient's treatment start from today on (today's first), for the index-booking flag */
   const nextStart = (p, A, today) => A.filter(a => a.mrn === p.mrn && a.date >= today && /start/i.test(a.event) && !isCancelled(a)).sort((x, y) => x.date - y.date || (x.time ?? 0) - (y.time ?? 0))[0] || null;
@@ -1148,8 +1272,9 @@
   /* "Monday, November 4th, 2026, at 10:00 AM", as the start email says it */
   const ordinal = n => n + (n % 100 >= 11 && n % 100 <= 13 ? "th" : ["th", "st", "nd", "rd"][n % 10] || "th");
   const longWhen = (d, t) => { const x = dateOf(d); return `${DAY_NAMES[x.getDay()]}, ${MONTHS[x.getMonth()]} ${ordinal(x.getDate())}, ${x.getFullYear()}${t != null ? `, at ${fmtT(t)}` : ""}`; };
-  /* The Castro desk's start email ("MHS: Upcoming Appointment(s)"), as HTML. {mrn} {first} {clinic} {firstVisit} {address} are
-     filled in; {schedule} is where the appointment table goes. Edit it in Settings › Messages. */
+  /* The desk's start email ("MHS: Upcoming Appointment(s)"), as HTML. {mrn} {first} {clinic} {firstVisit} {address} {phone} are
+     filled in; {schedule} is where the appointment table goes and {signature} the sender's own (blank unless they added one in
+     Settings › You: Outlook adds theirs to a new message). Edit it in Settings › Messages. */
   const LI = s => `<li style="margin:0">${s}</li>`, UL = a => `<ul style="margin-top:0;margin-bottom:0">${a.map(LI).join("")}</ul>`, H = (s, m) => `<p style="margin:${m || "12pt"} 0 0"><b>${s}</b></p>`;
   const START_TPL = {
     startSubject: "SECURE: Upcoming Visit Information | MHS",
@@ -1165,24 +1290,98 @@
         "Our RN will place the IV and monitor your vitals and response throughout treatment, while your provider will connect with you 1:1 and follow up with you during the end of your observation period, prior to discharge.",
         "Normal experiences may include floating sensations, mild dissociation, or visual distortions. These typically resolve shortly after the infusion ends.", "The infusion itself usually lasts 40–60 minutes, followed by a brief recovery period."]),
       H("After Your Treatment:"), UL(["Plan for quiet rest and avoid driving, working, major decisions, or strenuous activity until the next day.", "Continue hydrating and eat light, balanced meals once your stomach feels settled."]),
-      H("How to Contact Us:"), UL(["<b>Email - </b>CC’d is our Castro Help email, for direct access to our team regarding any needs you may have as it pertains to your appointments (best for non-urgent communication)",
-        "<b>Phone -</b> For more immediate communication, any questions before or after your appointment, feel free to contact us directly at <b>844-867-8444 ext. 3400 </b><i>(once the voice prompt begins)</i>",
+      H("How to Contact Us:"), UL(["<b>Email - </b>CC’d is our {clinic} help email, for direct access to our team regarding any needs you may have as it pertains to your appointments (best for non-urgent communication)",
+        "<b>Phone -</b> For more immediate communication, any questions before or after your appointment, feel free to contact us directly at <b>{phone}</b>",
         "<b>Portal –</b> Patient Portal messaging is HIPAA secure, offers appointment visibility, and message history if you prefer to consolidate communication"]),
       `<p style="margin:12pt 0 0"><b>Please note:</b> We ask that patients confirm their appointments or request a reschedule at least 24 <i>business hours </i>prior to their appointment. With our patients’ cooperation, prompt cancellations and reschedules ensure we have appointment availability to accommodate reschedule requests, or make needed adjustments to your schedule. You will receive an electronic confirmation request at least 5 days prior to all appointments.</p>`,
       `<p style="margin:12pt 0 0">Whatever you may need, we’re here to ensure you feel supported and informed every step of the way.</p>`,
-      `<p style="margin:12pt 0 0">Best,<br>Mindful Health Solutions – SF Castro<br>P: (844) 867-8444 (Option #3400) | F: (415) 964-5419<br><br><a href="https://mindfulhealthsolutions.com/">https://mindfulhealthsolutions.com</a></p>`,
+      "{signature}",
       `<p style="margin:12pt 0 0;font-size:10pt">This email communication and any attachments may contain confidential information for the use of the designated recipients named above.  Distribution, reproduction or any other use of this transmission by any party other than the intended recipient is prohibited and may be subject to protection under the law, including the Health Insurance Portability and Accountability Act (HIPAA).  If you receive this e-mail in error, please notify the sender immediately by reply e-mail and permanently delete this e-mail and any attachments.</p>`
     ].join("\n")
   };
 
-  return { DEFAULTS, VISIT_COLS, TEMPLATES, norm, txt, num, serialOf, dateOf, isoOf, fromIso, toSerial, toMin, fmtT, fmtD, fmtDay, weekday, weekStart,
+  /* ---------- who's at the desk, the clinic, admin ---------- */
+  /* the clinic in a tracker's name: "Castro IVK Patient Tracker" -> "Castro", "Walnut Creek IVK Tracker 2026" -> "Walnut Creek".
+     "" when the name doesn't start with one (same rule as the TMS Tracker's) */
+  function clinicFromName(name) {
+    const s = String(name || "").replace(/\.(xlsx|xlsm|xlsb|xls)$/i, "").replace(/[_-]+/g, " ");
+    const W = /^(ivk|iv\s?ketamine|ketamine|tms|esk|pt|patient|master|tracker|mhs|copy of)$/i;
+    const m = s.match(/^(.*?)\s+(ivk|iv\s?ketamine|ketamine|tms|esk|pt|patient|master|tracker)\b/i), c = (m ? m[1] : "").replace(/\s{2,}/g, " ").trim();
+    return W.test(c) ? "" : c.replace(/^copy of\s+/i, "");
+  }
+  /* tblIvkUsers: the people registered on this workbook. Only this list is offered when picking who's at the desk.
+     Settings (JSON) holds their own settings (today only the optional email signature). */
+  const USER_COLS = ["Name", "Added", "Updated", "Settings (JSON)"];
+  const userKey = n => txt(n).toLowerCase();
+  function userRows(values) {
+    const seen = new Set(), out = [];
+    for (const x of byHeader(values).rows) {
+      const name = txt(x.get("name")), k = userKey(name); if (!name || seen.has(k)) continue; seen.add(k);
+      let set = {}; try { const j = JSON.parse(txt(x.get("settingsjson")) || "{}"); if (j && typeof j === "object" && !Array.isArray(j)) set = j; } catch (e) { /* unreadable: no settings */ }
+      out.push({ name, added: txt(x.get("added")), updated: txt(x.get("updated")), set });
+    }
+    return out;
+  }
+  /* the picker's order: the people who have used this computer on this workbook first (most recent first), then everyone else A-Z.
+     here = names this computer remembers for this workbook, newest first. Nobody is picked for them. */
+  function pickOrder(users, here) {
+    const H = (here || []).map(userKey), rank = u => { const i = H.indexOf(userKey(u.name)); return i < 0 ? Infinity : i; };
+    return (users || []).map(u => Object.assign({}, u, { here: rank(u) !== Infinity }))
+      .sort((a, b) => rank(a) - rank(b) || a.name.localeCompare(b.name, undefined, { sensitivity: "base" }));
+  }
+  /* the name typed to register, as Teams posts show it: usually a first name (a last initial when two people share one) */
+  const cleanName = s => txt(s).replace(/\s+/g, " ").slice(0, 30).trim();
+  /* this computer's memory is kept per workbook: a short key from the workbook's URL (or the id saved in it) */
+  function wbKeyOf(s) {
+    let h = 0x811c9dc5; const t = String(s || "").trim().toLowerCase().replace(/[?#].*$/, "");
+    for (let i = 0; i < t.length; i++) { h ^= t.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; }
+    return t ? "w" + h.toString(36) : "";
+  }
+  /* what this computer remembers for one workbook: { day: "2026-11-05", name: "Sam", used: ["Sam", "Ana"] }. The pick lasts the day. */
+  function whoRec(json) { try { const o = JSON.parse(json || "{}"); return { day: txt(o.day), name: txt(o.name), used: Array.isArray(o.used) ? o.used.map(txt).filter(Boolean) : [] }; } catch (e) { return { day: "", name: "", used: [] }; } }
+  const whoToday = (rec, dayIso) => rec && rec.day === dayIso ? rec.name : "";
+  const whoPick = (rec, name, dayIso) => ({ day: dayIso, name, used: [name].concat((rec?.used || []).filter(n => userKey(n) !== userKey(name))).slice(0, 20) });
+  /* Admin: code 0582 unlocks on any workbook. Compared as a salted SHA-256 so the code isn't written here in plain text. The repo is
+     public, so this keeps honest people from changing clinic-wide settings by accident; it is not a security control. */
+  const ADMIN_SALT = "ivk-tracker-admin", ADMIN_HASH = "14068cdf14b0b225199c46811cd9623fd862c9bee291adc30e89c36649a1bf77", ADMIN_MIN = 15;
+  async function adminOk(code) {
+    const c = String(code ?? "").trim(); if (!c) return false;
+    const sub = (typeof crypto !== "undefined" && crypto.subtle) || (typeof require === "function" ? require("crypto").webcrypto.subtle : null); if (!sub) return false;
+    const b = await sub.digest("SHA-256", new TextEncoder().encode(`${ADMIN_SALT}|${c}`));
+    return Array.from(new Uint8Array(b)).map(x => x.toString(16).padStart(2, "0")).join("") === ADMIN_HASH;
+  }
+  /* clinic-wide settings: whoever enters one first saves it for the workbook; once saved, changing it takes admin */
+  const CLINIC_WIDE = ["Clinic", "ClinicAddress", "ClinicPhone", "StartCc", "StartBcc"];
+  const lockedCfg = (saved, k, admin) => CLINIC_WIDE.includes(k) && !admin && txt((saved || {})[k]) !== "";
+  /* An email signature from a file: Outlook keeps each signature as .htm and .txt in %APPDATA%\Microsoft\Signatures. The .htm's
+     body is kept without scripts, styles, event handlers or local pictures (those can't travel in the email); text becomes lines. */
+  const escH = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  function sigFromFile(text, isHtml) {
+    let s = String(text || "").replace(/^\uFEFF/, "");
+    if (!isHtml) return s.trim() ? s.trim().split(/\r?\n/).map(escH).join("<br>") : "";
+    const b = s.match(/<body[^>]*>([\s\S]*)<\/body>/i); if (b) s = b[1];
+    s = s.replace(/<!--[\s\S]*?-->/g, "").replace(/<(script|style|head|xml|object|iframe|embed)[\s\S]*?<\/\1>/gi, "").replace(/<\/?(script|style|object|iframe|embed|link|meta|base|form|input)[^>]*>/gi, "")
+      .replace(/<\/?[a-z]+:[^>]*>/gi, "").replace(/\s+on[a-z]+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, "")
+      .replace(/<img\b[^>]*>/gi, m => /\ssrc\s*=\s*["']?https:\/\//i.test(m) ? m : "")
+      .replace(/(href|src)\s*=\s*(["'])\s*(javascript|vbscript|data):[^"']*\2/gi, "$1=$2#$2").replace(/(href|src)\s*=\s*(javascript|vbscript|data):[^\s>]*/gi, '$1="#"');
+    return s.replace(/\s{2,}/g, " ").trim();
+  }
+  const sigText = h => String(h || "").replace(/<br\s*\/?>|<\/(p|div)>/gi, "\n").replace(/<[^>]+>/g, "").replace(/&nbsp;/g, " ").replace(/&lt;/g, "<").replace(/&gt;/g, ">")
+    .replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, "&").replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+  /* the start email with the sender's signature: at {signature} when the template has it, else at the end; blank removes the token */
+  function withSignature(body, sig, html) {
+    const s = txt(sig), b = String(body || ""), blk = html ? (s ? `<div style="margin:12pt 0 0">${s}</div>` : "") : (s ? `\n\n${sigText(s)}` : "");
+    return b.includes("{signature}") ? b.replace(/\{signature\}/g, blk) : b + blk;
+  }
+
+  return { DEFAULTS, VISIT_COLS, TEMPLATES, norm, clinicFromName, USER_COLS, userKey, userRows, pickOrder, cleanName, wbKeyOf, whoRec, whoToday, whoPick, ADMIN_MIN, adminOk, CLINIC_WIDE, lockedCfg, sigFromFile, withSignature, txt, num, serialOf, dateOf, isoOf, fromIso, toSerial, toMin, fmtT, fmtD, fmtDay, weekday, weekStart,
     PT_COLS, ptRows, AV_LEVELS, avName, availGrid, availStr, canCome, prefCells, awayList, awayStr, awayOn, PAY_COLS, REMIND_METHODS, money, amt, payRows, dueOf, payOf, ledger, toConfirm,
-    PARTS, partKey, dueParts, visitAnswered, PROFILE_COLS, COVER_MODES, modeOf, modeParts, isSelf, SOHAR_KEYS, profileRows, coverage, profileGaps, parseSohar, demand,
+    PARTS, partKey, dueParts, visitAnswered, PROFILE_COLS, COVER_MODES, modeOf, modeParts, isSelf, SOHAR_KEYS, profileRows, coverage, profileGaps, parseSohar, planSoharImport, demand,
     fullPlan, eligibleStarts, memoX, indexState, indexShort, nextStart, XFER_COLS, xferRows, xferState, elsewhere, visitCounts, SOONER_COLS, soonerRows, soonerKey, soonerMatch, openSlots, freedTimes, ELSE_COLS, elseRows, sameLoc, isOurs, bookedAt, prefCols, indexN: cfg => Math.max(1, Math.round(+cfg.IndexPerWeek * +cfg.IndexWeeks)),
     treatments, txNo, isOak, oakState, WAIT_ON, waitlist, waitMove, provFull, fullName, firstName, scheduleOf, START_TPL, longWhen,
     lasfir, provName, mrnKey, pickRow, eventShort, freqDays, byHeader, patients, appts, isCancelled, visitKey, visitRows, phase, isActive, futureOf, asks,
     lastSeen, tagKey, parseTag, tagStr, tagsOf, askProvider, REPLY_COLS, replyRows, replyAction, repliesDue,
     today, code, chairState, chairStatus, askDue, chairList, chairCount, needs, loud, consults, isStartedStage, keptStartOf, START_COLS, startKey, startRows, consultStarts, startList, fill, protoWords, arrivalText, askText,
     parseReport, shrink, week, DAYS5, dayNum, sameProv, OTHER_COLS, otherRows, isIvkVisit, FLAG_COLS, flagRows, PLAN_COLS, planRows, HOLD_COLS, holdRows,
-    onList, holding, holdState, holdConfirm, EX_COLS, exRows, exFor, withExceptions, exClashes, daySlots, postCheckSlots, availOf, availText, fits, planIndex, altSlots, capacity, plannerLayout, plannerGrid };
+    onList, holding, holdState, holdConfirm, EX_COLS, CLOSED, exRows, exFor, closureOn, closureClashes, withExceptions, exClashes, MISS_COLS, missRows, isKpVa, missList, lateKeys, newCancels, missImpact, missByPatient, stepDue, daySlots, postCheckSlots, availOf, availText, fits, planIndex, altSlots, capacity, plannerLayout, plannerGrid };
 });

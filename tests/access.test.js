@@ -124,3 +124,24 @@ test("index done: an Induction patient who has kept 6 visits is asked to move to
   assert.equal(C.indexState(P1[0], today6, T, cfg, a => a.date === T).complete, true);
   assert.equal(C.indexState(pts([["990502", "ONGPAT", "Ongoing", "1x per week", "", "", "", "", C.isoOf(start), ""]])[0], A, T, cfg), null);
 });
+
+test("the Sohar IVN export (whole file): matched patients get their profile's Sohar fields, older and unchanged rows are left alone", () => {
+  /* the Sohar Eligibility add-in's IVN export as it writes it (v0.27, invented patients) */
+  const H = "Per Nbr,MRN,LASFIR,Sohar Payer,Plan,Network,Coverage Level,Coverage Start,Coverage End,Copay,Coinsurance,Deductible,Deductible Remaining,Deductible Status,OOP Max,OOP Remaining,OOP Status,Benefit Flag,Sohar Status,Sohar Date,Sohar Ref,Service,Source,Exported,Secondary Payer,Cost-share Flags,Clinic".split(",");
+  const r = (mrn, code, date, ref, rem) => ["50", mrn, code, "Cigna", "Open Access", "", "", "", "", "40", "20%", "1000", rem, "Not met", "5000", "4000", "Not met", "", "complete.eligible", date, ref, "IVK", "Verification", "11/4/2026 9:00 AM", "", "", "Castro Street"];
+  const M = C.parseSohar([H, r("990201", "ALPPAT", "2026-10-14T01:00:00Z", "q-1", "250"), r("990202", "BETPAT", "2026-10-14T01:00:00Z", "q-2", "100"),
+    r("990203", "GAMPAT", "2026-10-01T01:00:00Z", "q-3", "900"), r("990204", "DELPAT", "2026-10-14T01:00:00Z", "q-4", "0"), r("990205", "EPSPAT", "2026-10-14T01:00:00Z", "q-5", "10")]);
+  assert.equal(M.size, 5); assert.equal(M.get("990201").date, C.serialOf(new Date(2026, 9, 14)));
+  const sh = (date, ref) => ({ sohar: { date, ref } });
+  const PM = new Map([["990201", { mrn: "990201", code: "ALPPAT" }], ["990203", { mrn: "990203", code: "GAMPAT" }], ["990204", { mrn: "990204", code: "DELPAT" }]]);
+  const PF = new Map([["990201", Object.assign({ code: "ALPPAT" }, sh(C.serialOf(new Date(2026, 9, 1)), "old"))], ["990203", Object.assign({ code: "GAMPAT" }, sh(C.serialOf(new Date(2026, 9, 10)), "newer"))],
+    ["990204", Object.assign({ code: "DELPAT" }, sh(C.serialOf(new Date(2026, 9, 14)), "q-4"))]]);
+  const A = [{ mrn: "990202", code: "BETPAT" }];
+  const out = C.planSoharImport(M, { PM, PF, A, by: "Desk", now: "2026-11-04T17:00:00.000Z" });
+  assert.deepEqual(out.items.map(i => [i.mrn, i.isNew]), [["990201", false], ["990202", true]]);
+  assert.equal(out.older, 1, "a newer saved verification wins"); assert.equal(out.same, 1, "same date and ref is unchanged"); assert.equal(out.notHere, 1, "not on this tracker");
+  const a = out.items[0].patch;
+  assert.equal(a.DedRemaining, "250"); assert.equal(a.SoharDate, "2026-10-14"); assert.equal(a.SoharRef, "q-1"); assert.equal(a.By, "Desk"); assert.ok(!("Patient" in a), "an existing profile keeps its code");
+  assert.equal(out.items[1].patch.Patient, "BETPAT", "a new profile row takes the appointment list's code");
+  assert.ok(Object.keys(a).every(k => C.PROFILE_COLS.includes(k)), "only profile columns");
+});
