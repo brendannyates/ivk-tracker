@@ -46,15 +46,20 @@ ol.a{list-style:lower-alpha;margin:2pt 0 6pt;padding-left:18pt}ol.a li{margin:0 
 .sig .ln{border-bottom:.9pt solid var(--rule);min-height:15pt;padding:0 3pt;font-weight:600}
 .sigh{font-weight:700;margin:10pt 0 2pt}
 .fine{font-size:8.5pt;color:var(--muted)}
-/* the patient schedule: the TMS Tracker's schedule.html, landscape */
-@page sched{size:letter landscape;margin:.5in .4in}
-.page.sched{page:sched;width:11in;height:auto;min-height:8.5in;overflow:visible;padding:24px 28px;font:13px/1.4 "Aptos Narrow","Segoe UI",system-ui,sans-serif;color:#1c2a33}
-.sched .slogo{display:block;margin:0 auto 14px;width:281px;height:auto}
-.sched .asof{display:table;margin:0 auto 14px;padding:3px 10px;background:#156082;color:#fff;font-weight:700;-webkit-print-color-adjust:exact;print-color-adjust:exact}
-.sched table{width:100%;border-collapse:collapse;text-align:center}
-.sched th{background:#156082;color:#fff;font-weight:700;padding:5px 6px;-webkit-print-color-adjust:exact;print-color-adjust:exact}
-.sched td{padding:4px 6px}
-.sched tbody tr:nth-child(odd){background:#D9D9D9;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+/* the patient schedule: letterhead (logo, orange rule), title, MRN and date line, the visits, the clinic's details. The PDF matches. */
+@page sched{size:letter portrait;margin:.5in .6in}
+.page.sched{page:sched;height:auto;min-height:11in;overflow:visible;padding:.5in .7in .8in;font:10.5pt/1.4 "Segoe UI",Arial,Helvetica,sans-serif;color:#1c2a33}
+.sched .slogo{display:block;margin:0 auto 10pt;width:2.1in;height:auto}
+.sched .rule{height:2pt;background:#F8902A;margin:0 0 16pt;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+.sched h1{font:700 16pt/1.2 "Segoe UI",Arial,Helvetica,sans-serif;color:#156082;margin:0 0 4pt}
+.sched .sub{text-align:center;color:#5b6b75;font-size:9.5pt;margin:0 0 12pt}
+.sched table{width:100%;border-collapse:collapse;border:.75pt solid #C9D3DB}
+.sched th{background:#156082;color:#fff;text-align:left;font-weight:700;padding:6pt 8pt;font-size:9.5pt;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+.sched td{padding:6pt 8pt;border-top:.75pt solid #DCE3E8;text-align:left;vertical-align:top}
+.sched td.nw{white-space:nowrap}
+.sched tbody tr:nth-child(even) td{background:#F4F7F9;-webkit-print-color-adjust:exact;print-color-adjust:exact}
+.sched tr.st td{font-weight:700}
+.sched .sfoot{margin:16pt 0 0;text-align:center;color:#5b6b75;font-size:9pt}
 .sched thead{display:table-header-group}.sched tr{break-inside:avoid}
 @media print{.page.sched{padding:0;min-height:0}}
 /* the desk's week */
@@ -203,12 +208,19 @@ table.av .half{color:var(--accent);font-weight:700}
       ${foot("Patient Availability Form")}</div>`;
   }
 
-  /* ---------- schedule: the TMS Tracker's patient schedule (schedule.html there), the NextGen appointment list's columns ---------- */
-  const HEAD = ["MRN", "Location", "Appointment Date", "Time", "Provider", "Appointment Type", "Status"];
+  /* ---------- schedule: what the patient needs (no internal status), on letterhead; the email body and the PDF use the same rows ---------- */
+  const HEAD = ["Date", "Time", "Visit", "Provider", "Location"], TITLE = "IV Ketamine Treatment Schedule";
+  const subLine = s => [s.mrn && `MRN ${s.mrn}`, cols(s).loc || (s.clinic && `${s.clinic} clinic`), s.asOf].filter(Boolean).join("  ·  ");
+  const footLine = s => ["Mindful Health Solutions", s.address, s.phone].filter(Boolean).join("  ·  ");
+  const POLICY = "To change an appointment, please contact us at least 24 business hours ahead.";
+  /* one location for every visit: no Location column (room on a phone), the place goes in the title line instead */
+  const cols = s => { const one = s.rows.length && s.rows.every(r => r[4] === s.rows[0][4]); return one ? { head: HEAD.slice(0, 4), rows: s.rows.map(r => r.slice(0, 4)), loc: s.rows[0][4] } : { head: HEAD, rows: s.rows, loc: "" }; };
+  const nAppts = s => `${s.rows.length} appointment${s.rows.length === 1 ? "" : "s"}`;
   function schedule(d) {
-    const s = d.sch;
-    return `<div class="page sched"><img class="slogo" src="assets/logo.png" alt="Mindful Health Solutions"><div class="asof">${esc(s.asOf)}</div>
-      <table><thead><tr>${HEAD.map(h => `<th scope="col">${h}</th>`).join("")}</tr></thead><tbody>${s.rows.map(r => `<tr>${r.map(c => `<td>${esc(c)}</td>`).join("")}</tr>`).join("")}</tbody></table></div>`;
+    const s = d.sch, V = cols(s);
+    return `<div class="page sched"><img class="slogo" src="assets/logo.png" alt="Mindful Health Solutions"><div class="rule"></div><h1>${TITLE}</h1><p class="sub">${esc(subLine(s))}</p>
+      <table><thead><tr>${V.head.map(h => `<th scope="col">${h}</th>`).join("")}</tr></thead><tbody>${V.rows.map((r, i) => `<tr${s.starts && s.starts[i] ? ' class="st"' : ""}>${r.map((c, j) => `<td${j < 2 ? ' class="nw"' : ""}>${esc(c)}</td>`).join("")}</tr>`).join("")}</tbody></table>
+      <p class="sfoot">${esc(footLine(s))}<br>${esc(POLICY)}</p></div>`;
   }
   /* the clinic's week (codes only, for the desk) */
   function week(d) {
@@ -219,16 +231,32 @@ table.av .half{color:var(--accent);font-weight:700}
   }
 
   /* ---------- the start email ---------- */
-  /* the same table in the email body, inline-styled for Outlook */
-  const tdS = "padding:4px 6px;text-align:center;font:13px Aptos Narrow,Aptos,Arial,sans-serif;color:#1c2a33";
-  const schedHtml = d => `<table style="border-collapse:collapse;margin:8px 0"><tr>${HEAD.map(h => `<th style="${tdS};background:#156082;color:#fff;font-weight:700;padding:5px 6px">${h}</th>`).join("")}</tr>
-    ${d.sch.rows.map((r, i) => `<tr${i % 2 ? "" : ' style="background:#D9D9D9"'}>${r.map(c => `<td style="${tdS}">${esc(c)}</td>`).join("")}</tr>`).join("")}</table>`;
-  const schedText = d => d.sch.rows.map(r => `${r[2]}  ${r[3]}  ${r[5]}  ${r[4]}  ${r[1]}`).join("\n");
+  /* Inline-styled for Outlook: sizes in width/height attributes (classic Outlook reads only those), CSS max-width so phones shrink them.
+     src = where the pictures come from: the preview uses the files, Copy email data: pictures, the Outlook draft cid: parts. */
+  const FF = "Aptos,Calibri,Arial,sans-serif", LOGO_W = 200, LOGO_H = 83, MAP_W = 520;
+  const logoHtml = src => `<table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;width:100%"><tr><td align="center" style="padding:0 0 14px;text-align:center;border-bottom:2px solid #F8902A"><img src="${src}" width="${LOGO_W}" height="${LOGO_H}" alt="Mindful Health Solutions" style="display:block;margin:0 auto;width:${LOGO_W}px;max-width:60%;height:auto;border:0;outline:none;text-decoration:none"></td></tr></table>
+    <div style="height:16px;line-height:16px;font-size:16px">&nbsp;</div>`;
+  function mapHtml(m, src) {
+    const w = Math.min(MAP_W, m.w), h = Math.round(m.h * w / m.w);
+    return `<p style="margin:12pt 0 0"><b>Getting Here:</b></p><table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;width:100%"><tr><td align="center" style="padding:8px 0 4px;text-align:center"><img src="${src}" width="${w}" height="${h}" alt="${esc(m.alt || "Map")}" style="display:block;margin:0 auto;width:100%;max-width:${w}px;height:auto;border:1px solid #DCE3E8"></td></tr></table>`;
+  }
+  function schedHtml(d) {
+    const s = d.sch, V = cols(s), n = V.head.length, td = `padding:8px 8px;border-top:1px solid #DCE3E8;font:14px/1.35 ${FF};color:#1c2a33;text-align:left;vertical-align:top`;
+    return `<table width="100%" cellpadding="0" cellspacing="0" border="0" style="border-collapse:collapse;width:100%;max-width:680px;margin:8px 0 6px;border:1px solid #C9D3DB">
+      <tr><td colspan="${n}" style="background:#156082;padding:10px 12px;font:700 15px/1.3 ${FF};color:#ffffff">${TITLE}${V.loc ? `<span style="font-weight:400">  ·  ${esc(V.loc)}</span>` : ""}</td></tr>
+      <tr>${V.head.map(h => `<th align="left" style="padding:7px 8px;background:#EEF3F6;font:700 12px/1.3 ${FF};color:#156082;text-align:left;text-transform:uppercase;letter-spacing:.5px">${h}</th>`).join("")}</tr>
+      ${V.rows.map((r, i) => `<tr${i % 2 ? ' style="background:#F7F9FA"' : ""}>${r.map((c, j) => `<td style="${td}${s.starts && s.starts[i] ? ";font-weight:700" : ""}${j === 1 ? ";white-space:nowrap" : ""}">${esc(c)}</td>`).join("")}</tr>`).join("")}
+      <tr><td colspan="${n}" style="padding:8px 12px;border-top:1px solid #DCE3E8;font:12px/1.4 ${FF};color:#5b6b75">${esc(s.asOf)}  ·  ${nAppts(s)}</td></tr></table>`;
+  }
+  const schedText = d => [`${TITLE} (${d.sch.asOf})`].concat(d.sch.rows.map(r => r.filter(Boolean).join("  |  "))).join("\n");
   /* the template is HTML (the desk's email, values already escaped by the add-in) or, if someone pastes plain text, paragraphs */
-  const mailHtml = d => `<div style="font:12pt/1.4 Aptos,Calibri,Arial,sans-serif;color:#000">${d.email.html ? d.email.body.replace("{schedule}", schedHtml(d))
-    : d.email.body.split(/\n{2,}/).map(par => par.trim() === "{schedule}" ? schedHtml(d) : `<p style="margin:0 0 10px">${esc(par).replace(/\n/g, "<br>").replace("{schedule}", schedHtml(d))}</p>`).join("")}</div>`;
+  function mailHtml(d, src) {
+    src = src || { logo: "assets/logo.png", map: d.email.map ? `data:${d.email.map.type};base64,${d.email.map.b64}` : "" };
+    const body = d.email.html ? d.email.body : d.email.body.split(/\n{2,}/).map(par => /^\{(schedule|map)\}$/.test(par.trim()) ? par.trim() : `<p style="margin:0 0 10px">${esc(par).replace(/\n/g, "<br>")}</p>`).join("");
+    return `<div style="font:12pt/1.4 ${FF};color:#000">${logoHtml(src.logo)}${body.replace("{schedule}", () => schedHtml(d)).replace("{map}", () => d.email.map ? mapHtml(d.email.map, src.map) : "")}</div>`;
+  }
   const untag = h => h.replace(/<li[^>]*>/gi, "• ").replace(/<br\s*\/?>|<\/(p|li|ul|div)>/gi, "\n").replace(/<[^>]+>/g, "").replace(/&amp;/g, "&").replace(/&lt;/g, "<").replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/\n{3,}/g, "\n\n").trim();
-  const mailText = d => d.email.html ? untag(d.email.body.replace("{schedule}", `</p>${esc(schedText(d)).replace(/\n/g, "<br>")}<p>`)) : d.email.body.replace("{schedule}", schedText(d));
+  const mailText = d => d.email.html ? untag(d.email.body.replace("{map}", "").replace("{schedule}", () => `</p>${esc(schedText(d)).replace(/\n/g, "<br>")}<p>`)) : d.email.body.replace("{map}", "").replace("{schedule}", () => schedText(d));
   /* file names by the patient's code, never their name; the schedule's as the TMS Tracker names it */
   const fname = (what, ext) => what === "schedule" ? D.sch.fname : what === "consent" ? `${D.code} IVK Consent.${ext}` : `IVK ${what} - ${D.code}.${ext}`;
   const hdr = s => String(s || "").replace(/[\r\n]/g, "");
@@ -266,6 +294,7 @@ table.av .half{color:var(--accent);font-weight:700}
       ["BCC", true, D.email.bcc || "None (optional)"],
       ["Clinic details", !(D.email.blanks || []).length, (D.email.blanks || []).length ? `Add ${D.email.blanks.join(", ")} in Settings › Messages` : "Filled in"],
       ["Start email template", !/\[Start email template/i.test(D.email.body), /\[Start email template/i.test(D.email.body) ? "Still the placeholder: paste the template in Settings › Messages" : "Filled in"],
+      ["Directions map", true, D.email.map ? "In the email" : "None loaded (optional): add it in Settings › Messages"],
       ["Schedule in the body and as a PDF", D.sch.rows.length > 0, D.sch.rows.length ? `${D.sch.rows.length} visit${D.sch.rows.length === 1 ? "" : "s"}` : "No visits in the date range"],
       ["IV ketamine consent PDF", !!(D.name && D.dob && D.provider), D.name && D.dob && D.provider ? "Name, DOB, clinic and clinician filled in" : `Missing ${[!D.name && "the name", !D.dob && "the date of birth", !D.provider && "the clinician"].filter(Boolean).join(", ")}: close and open the start email again`],
       ["BIDF", !!X.bidf, X.bidf ? X.bidf.name : "Attach it above"]
@@ -300,18 +329,21 @@ table.av .half{color:var(--accent);font-weight:700}
     const c = document.createElement("canvas"); c.width = img.naturalWidth; c.height = img.naturalHeight; c.getContext("2d").drawImage(img, 0, 0);
     return { url: c.toDataURL("image/png"), ratio: img.naturalHeight / img.naturalWidth };
   }
-  /* the TMS Tracker's savePdf (schedule.html), returning the bytes so the email can attach them */
+  /* the schedule PDF, laid out like the printed page: logo, orange rule, title, MRN and date line, the visits, the clinic on every page */
   async function schedulePdf() {
-    const JsPDF = await jspdf(), doc = new JsPDF({ orientation: "landscape", unit: "pt", format: "letter" }), W = doc.internal.pageSize.getWidth(), S = D.sch;
-    let y = 30; const lg = await logoData();
-    if (lg) { const w = 210.75, h = w * lg.ratio; doc.addImage(lg.url, "PNG", (W - w) / 2, y, w, h); y += h + 14; }   // centered with the table
-    doc.setFont("helvetica", "bold"); doc.setFontSize(10);
-    const tw = doc.getTextWidth(S.asOf) + 16; doc.setFillColor(21, 96, 130); doc.rect((W - tw) / 2, y, tw, 16, "F");
-    doc.setTextColor(255, 255, 255); doc.text(S.asOf, W / 2, y + 11.5, { align: "center" }); y += 28;
-    doc.autoTable({ head: [HEAD], body: S.rows, startY: y, margin: { left: 28.8, right: 28.8, top: 36, bottom: 36 }, theme: "plain",
-      styles: { font: "helvetica", fontSize: 10, halign: "center", valign: "middle", textColor: [28, 42, 51], cellPadding: 4 },
-      headStyles: { fillColor: [21, 96, 130], textColor: [255, 255, 255], fontStyle: "bold" },
-      didParseCell: c => { if (c.section === "body" && c.row.index % 2 === 0) c.cell.styles.fillColor = [217, 217, 217]; } });
+    const JsPDF = await jspdf(), doc = new JsPDF({ orientation: "portrait", unit: "pt", format: "letter" }), W = doc.internal.pageSize.getWidth(), H = doc.internal.pageSize.getHeight(), S = D.sch, M = 50;
+    let y = 40; const lg = await logoData();
+    if (lg) { const w = 150, h = w * lg.ratio; doc.addImage(lg.url, "PNG", (W - w) / 2, y, w, h); y += h + 10; }
+    doc.setDrawColor(248, 144, 42); doc.setLineWidth(1.5); doc.line(M, y, W - M, y); y += 26;
+    doc.setFont("helvetica", "bold"); doc.setFontSize(16); doc.setTextColor(21, 96, 130); doc.text(TITLE, W / 2, y, { align: "center" }); y += 16;
+    doc.setFont("helvetica", "normal"); doc.setFontSize(9.5); doc.setTextColor(91, 107, 117); doc.text(subLine(S), W / 2, y, { align: "center" }); y += 14;
+    const V = cols(S); doc.autoTable({ head: [V.head], body: V.rows, startY: y, margin: { left: M, right: M, top: 40, bottom: 64 }, theme: "plain",
+      styles: { font: "helvetica", fontSize: 10, halign: "left", valign: "top", textColor: [28, 42, 51], cellPadding: { top: 6, bottom: 6, left: 8, right: 8 }, lineColor: [220, 227, 232], lineWidth: 0.5 },
+      headStyles: { fillColor: [21, 96, 130], textColor: [255, 255, 255], fontStyle: "bold", lineColor: [21, 96, 130] },
+      columnStyles: { 0: { cellWidth: 110 }, 1: { cellWidth: 62 } },
+      didParseCell: c => { if (c.section !== "body") return; if (c.row.index % 2 === 1) c.cell.styles.fillColor = [244, 247, 249]; if (S.starts && S.starts[c.row.index]) c.cell.styles.fontStyle = "bold"; },
+      didDrawPage: () => { doc.setFont("helvetica", "normal"); doc.setFontSize(8.5); doc.setTextColor(91, 107, 117);
+        doc.text(footLine(S), W / 2, H - 40, { align: "center" }); doc.text(POLICY, W / 2, H - 28, { align: "center" }); } });
     return new Uint8Array(doc.output("arraybuffer"));
   }
   /* the official consent PDF with its three fields filled, and the patient's and provider's printed names on page 4 */
@@ -331,16 +363,26 @@ table.av .half{color:var(--accent);font-weight:700}
   const b64 = u8 => { let s = ""; for (let i = 0; i < u8.length; i += 0x8000) s += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000)); return btoa(s); };
   const b64t = t => b64(new TextEncoder().encode(t));
   const wrap = s => s.replace(/.{1,76}/g, "$&\r\n").trim();
+  /* the logo's bytes, for Copy email (data: picture) and the Outlook draft (an inline part) */
+  let LOGO = null;
+  const logoBytes = async () => LOGO || (LOGO = new Uint8Array(await (await fetch("assets/logo.png")).arrayBuffer()));
+  const CID = { logo: "ivk-logo@mhs", map: "ivk-map@mhs" };
   async function eml() {
-    const [sp, cp] = await Promise.all([schedulePdf(), consentPdf()]), B = "=_ivk_" + Date.now().toString(36), B2 = B + "_alt";
+    const [sp, cp, lb] = await Promise.all([schedulePdf(), consentPdf(), logoBytes()]), B = "=_ivk_" + Date.now().toString(36), B2 = B + "_alt", B3 = B + "_rel", m = D.email.map;
     /* attachment names in RFC 2231 form so any file name (spaces, accents) survives */
     const att = (bytes, name, type = "application/pdf") => { const n = String(name).replace(/["\r\n]/g, ""), enc = encodeURIComponent(n);
       return [`--${B}`, `Content-Type: ${type}; name="${n}"`, `Content-Disposition: attachment; filename="${n}"; filename*=UTF-8''${enc}`, "Content-Transfer-Encoding: base64", "", wrap(b64(bytes))]; };
+    /* the logo and the map travel inside the message (multipart/related, cid:), so Outlook shows them without "download pictures" */
+    const pic = (b64s, name, type, id) => [`--${B3}`, `Content-Type: ${type}; name="${name}"`, `Content-Disposition: inline; filename="${name}"`, `Content-ID: <${id}>`, "Content-Transfer-Encoding: base64", "", wrap(b64s)];
     const extra = [X.bidf, ...X.more].filter(Boolean).flatMap(f => att(f.bytes, f.name, f.type));
+    const html = `<html><body>${mailHtml(D, { logo: `cid:${CID.logo}`, map: `cid:${CID.map}` })}</body></html>`;
     return ["X-Unsent: 1", `To: ${hdr(X.to)}`, ...(D.email.cc ? [`Cc: ${hdr(D.email.cc)}`] : []), ...(D.email.bcc ? [`Bcc: ${hdr(D.email.bcc)}`] : []), `Subject: =?UTF-8?B?${b64t(D.email.subject)}?=`, "MIME-Version: 1.0", `Content-Type: multipart/mixed; boundary="${B}"`, "",
       `--${B}`, `Content-Type: multipart/alternative; boundary="${B2}"`, "",
       `--${B2}`, 'Content-Type: text/plain; charset="utf-8"', "Content-Transfer-Encoding: base64", "", wrap(b64t(mailText(D))),
-      `--${B2}`, 'Content-Type: text/html; charset="utf-8"', "Content-Transfer-Encoding: base64", "", wrap(b64t(`<html><body>${mailHtml(D)}</body></html>`)), `--${B2}--`,
+      `--${B2}`, `Content-Type: multipart/related; boundary="${B3}"; type="text/html"`, "",
+      `--${B3}`, 'Content-Type: text/html; charset="utf-8"', "Content-Transfer-Encoding: base64", "", wrap(b64t(html)),
+      ...pic(b64(lb), "mhs-logo.png", "image/png", CID.logo), ...(m ? pic(m.b64, `directions-map.${m.type === "image/jpeg" ? "jpg" : m.type.split("/")[1]}`, m.type, CID.map) : []),
+      `--${B3}--`, `--${B2}--`,
       ...att(sp, fname("schedule", "pdf")), ...att(cp, fname("consent", "pdf")), ...extra, `--${B}--`, ""].join("\r\n");
   }
   async function busy(btn, label, fn) {
@@ -359,7 +401,8 @@ table.av .half{color:var(--accent);font-weight:700}
   $("bEml").onclick = e => busy(e.target, "Making…", async () => { if (check().length) return; download(new TextEncoder().encode(await eml()), fname("start email", "eml"), "message/rfc822");
     X.done = true; tell({ forms: "saved", text: "Outlook draft saved to Downloads." }); });
   $("bCopy").onclick = e => busy(e.target, "Copying…", async () => {
-    const html = mailHtml(D), text = mailText(D);
+    /* pictures as data: so they paste with the text (a file path or cid: wouldn't survive the clipboard) */
+    const m = D.email.map, html = mailHtml(D, { logo: `data:image/png;base64,${b64(await logoBytes())}`, map: m ? `data:${m.type};base64,${m.b64}` : "" }), text = mailText(D);
     if (window.ClipboardItem && navigator.clipboard?.write) await navigator.clipboard.write([new ClipboardItem({ "text/html": new Blob([html], { type: "text/html" }), "text/plain": new Blob([text], { type: "text/plain" }) })]);
     else await navigator.clipboard.writeText(text);
     $("msg").textContent = "Copied. Paste it into a new Outlook message, then attach the schedule and consent PDFs (the buttons above) and the BIDF.";
