@@ -537,3 +537,24 @@ button.avrow:hover{background:var(--surface-3)}button.avrow + button.avrow{box-s
 .urow{display:flex;justify-content:space-between;align-items:center;gap:12px;min-height:40px}
 .ulist{list-style:none;margin:6px 0 0;padding:0}.ulist li{border-bottom:1px solid var(--surface-2)}
 .sigprev{margin-top:10px;padding:10px 12px;border-radius:10px;background:var(--surface-3);font-size:13px;overflow:auto;max-height:180px}
+/* late cancels hold their time (crossed out, red edge); clinic closures shade the day */
+.blk.lc{background:var(--danger-soft);box-shadow:inset 3px 0 0 var(--danger);color:var(--muted);text-decoration:line-through}
+.blk.shut{box-shadow:inset 0 0 0 2px var(--danger)}
+.sgrid .sc.shut{background:repeating-linear-gradient(135deg,var(--surface-3) 0 6px,transparent 6px 12px)}
+.sgrid .ch.shut small{color:var(--danger);font-weight:600}
+.tsw.lcs{background:var(--danger-soft);box-shadow:inset 3px 0 0 var(--danger)}
+.wkjump{display:inline-flex;align-items:center;gap:6px;font-size:13px;color:var(--muted)}
+.wkjump input{font:inherit;font-size:13px;color:var(--ink);background:var(--surface);border:1px solid var(--surface-2);border-radius:8px;padding:4px 8px;min-height:32px}
+.nrow .acts{display:flex;gap:6px}
+/* Access › Demand: protocol rows open to their patients */
+.tt.dmp td{vertical-align:middle}
+.dmb{all:unset;cursor:pointer;display:inline-flex;align-items:center;gap:8px;padding:6px 0;min-height:28px;font-weight:500}
+.dmb:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:4px}
+.dmb .car{width:0;height:0;border-left:5px solid var(--muted);border-top:4px solid transparent;border-bottom:4px solid transparent;transition:transform .15s}
+.dmb[aria-expanded="true"] .car{transform:rotate(90deg)}
+.tt.dmp tr.dmg:hover td{background:var(--surface-3)}
+.tt.dmp tr.dmx td{text-align:left;padding:0 0 8px 20px;box-shadow:none}
+.dmpl .row,.mlist .row{display:grid;grid-template-columns:minmax(110px,auto) minmax(0,1fr) auto;gap:10px;align-items:center;padding:6px 0;border-top:1px solid var(--surface-2);font-size:13px}
+.dmpl .row .i,.mlist .row .i{color:var(--muted)}
+.mlist{margin-top:10px}
+.stat b .bad,.stat span .bad{color:var(--danger)}
