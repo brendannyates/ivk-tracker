@@ -169,7 +169,7 @@
     savePlan: (m, p) => X.savePlan(m, p), saveFlag: (m, p) => X.saveFlag(m, p), placeHolds: (r, by) => X.placeHolds(r, by), setHolds: (ids, st, by) => X.setHolds(ids, st, by),
     readRow: (k, m) => X.readRow(k, m), saveRow: (k, m, p) => X.saveRow(k, m, p), savePt: (m, p) => X.savePt(m, p), addPays: r => X.addPays(r), saveRanks: (o, by) => X.saveRanks(o, by), saveException: (i, p) => X.saveException(i, p),
     setupTemplate: () => X.setupTemplate(), addGrid: (o, t) => X.addGrid(o, t), setCells: (a, r, c, v, m, s) => X.setCells(a, r, c, v, m, s),
-    saveTypes: (t, g) => X.saveTypes(t, g), replaceOther: r => X.replaceOther(r), replaceElse: r => X.replaceElse(r), saveSooner: (m, p) => X.saveSooner(m, p), saveProfile: (m, p) => X.saveProfile(m, p), saveXfer: (m, p) => X.saveXfer(m, p), addMpt: f => X.addMpt(f), saveStart: (k, p) => X.saveStart(k, p), saveMissed: (k, p) => X.saveMissed(k, p), addMissed: r => X.addMissed(r),
+    saveTypes: (t, g) => X.saveTypes(t, g), replaceOther: r => X.replaceOther(r), replaceElse: r => X.replaceElse(r), saveSooner: (m, p) => X.saveSooner(m, p), saveProfile: (m, p) => X.saveProfile(m, p), upsertMany: (t, i) => X.upsertMany(t, i), saveXfer: (m, p) => X.saveXfer(m, p), addMpt: f => X.addMpt(f), saveStart: (k, p) => X.saveStart(k, p), saveMissed: (k, p) => X.saveMissed(k, p), addMissed: r => X.addMissed(r),
     /* the users list, and who's at the desk (full screen's pick is the pane's) */
     saveUser: (n, s, rm) => X.saveUser(n, s, rm), setWho: async n => { setWho(n); return true; },
     /* the pane reads first so the tab gets every hold anyone has placed, not just this screen's copy */
@@ -1380,6 +1380,8 @@
           <li>Choose that file here. It replaces MRN to Location on the Appt List tab; the Name and Lookup Key formulas are left alone.</li>
           <li>The Index Planner tab is then filled with every IVK visit and hold, as plain values.</li></ol></details></section>
 
+      ${sohCardHTML()}
+
       <section class="card set"><h3>Teams</h3><p>Each chat gets its own workflow made from Teams’ <b>Send webhook alerts to a chat</b> template. Patients are named by code only.</p>
         <label class="opt"><input type="checkbox" id="nfyOn"${N.truthy(c.Enabled) ? " checked" : ""}> Post to Teams from this workbook</label>
         ${route("arrival", "Arrivals", "When the desk checks a patient in, and when they’re seated. The RN takes vitals, so this goes to the RN’s chat.")}
@@ -2582,11 +2584,39 @@
       if (/\.csv$/i.test(f.name)) rows = csvRows(await f.text());
       else { if (!(await loadXLSX())) return toast("The spreadsheet reader didn’t load. Check the connection and try again.", true); const wb = XLSX.read(await f.arrayBuffer(), { type: "array" }); rows = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, raw: false, defval: "" }); }
     } catch (e) { console.error(e); return toast("That file couldn’t be read.", true); }
-    const M = C.parseSohar(rows); if (!M) return toast("That isn’t a Sohar benefits file. Use the benefits CSV from the Sohar Eligibility add-in (it has MRN and Deductible Remaining columns).", true);
+    const M = C.parseSohar(rows); if (!M) return toast("That isn’t a Sohar benefits file. Use the IVN export (or the benefits CSV) from the Sohar Eligibility add-in; it has MRN and Deductible Remaining columns.", true);
     const r = M.get(C.mrnKey(S.m.mrn)); if (!r) return toast(`MRN ${S.m.mrn} isn’t in that file (${plural(M.size, "patient")} in it).`, true);
     const iso = d => d != null ? C.isoOf(d) : "";
     S.m.sohar = { payer: r.payer, plan: r.plan, network: r.network, status: r.status, covStart: iso(r.covStart), covEnd: iso(r.covEnd), copay: r.copay, coins: r.coins, ded: r.ded, dedRem: r.dedRem, oop: r.oop, oopRem: r.oopRem, date: iso(r.date), ref: r.ref };
     S.m.fromFile = `Filled from ${f.name}${r.date != null ? `, verified ${C.fmtD(r.date)}` : ""}. Check it, then save.`; render();
+  }
+  /* Settings: the Sohar Eligibility add-in's IVN export, the whole file at once. Every patient on this tracker (or its appointment
+     list) gets the file's latest verification on their profile, unless a newer one is already saved. */
+  function sohCardHTML() {
+    const pf = [...S.PF.values()].filter(x => x.sohar && x.sohar.date != null), last = pf.reduce((m, x) => Math.max(m, x.sohar.date), -Infinity);
+    return `<section class="card set"><h3>Sohar benefits</h3><p>${pf.length ? `Sohar benefits saved for ${plural(pf.length, "patient")}, the latest verified ${C.fmtD(last)}.` : "No Sohar benefits saved yet."}
+      Import the IVN export from the Sohar Eligibility add-in (pick this clinic there) to fill every patient's profile at once.</p>
+      ${S.profOn ? `<div class="actions"><label class="btn primary inl" style="cursor:pointer">Import Sohar benefits<input type="file" id="sohAll" accept=".csv,.xlsx,.xls" hidden></label></div>`
+        : `<p class="note">Use Update the workbook first: the profile table isn't in this workbook yet.</p>`}</section>`;
+  }
+  async function readSohRows(f) {
+    if (/.csv$/i.test(f.name)) return csvRows((await f.text()).replace(/^﻿/, ""));
+    if (!(await loadXLSX())) { toast("The spreadsheet reader didn’t load. Check the connection and try again.", true); return null; }
+    const wb = XLSX.read(await f.arrayBuffer(), { type: "array" });
+    return XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, raw: false, defval: "" });
+  }
+  async function importSohar(f) {
+    if (!S.profOn) return toast("Use Update the workbook in Settings first, so there's a profile table to fill.", true);
+    let rows; try { rows = await readSohRows(f); } catch (e) { console.error(e); return toast("That file couldn’t be read.", true); }
+    if (!rows) return;
+    const M = C.parseSohar(rows); if (!M) return toast("That isn’t a Sohar IVN export. Save it from the Sohar Eligibility add-in (step 4, Save IVN export); it has MRN and Deductible Remaining columns.", true);
+    const plan = C.planSoharImport(M, { PM: S.PM, PF: S.PF, A: S.A, by: S.name, now: new Date().toISOString() });
+    const left = [plan.same && `${plan.same} already up to date`, plan.older && `${plan.older} with a newer verification already saved`, plan.notHere && `${plan.notHere} not on this tracker`].filter(Boolean).join(", ");
+    if (!plan.items.length) return toast(`Nothing to update from ${f.name} (${plural(plan.rows, "patient")}${left ? `: ${left}` : ""}).`);
+    const r = await write("Importing Sohar benefits…", () => Store.upsertMany("tblIvkProfile", plan.items.map(i => ({ mrn: i.mrn, patch: i.patch }))));
+    if (!r) return;
+    const nNew = plan.items.filter(i => i.isNew).length;
+    toast(`Sohar benefits for ${plural(plan.items.length, "patient")} saved${nNew ? ` (${nNew} new profile${nNew === 1 ? "" : "s"})` : ""}${left ? `; ${left}` : ""}.`);
   }
   /* a small CSV reader: quoted fields, doubled quotes, commas and line breaks inside quotes */
   function csvRows(t) {
@@ -2639,6 +2669,7 @@
     else if (t.id === "sigFile" && t.files[0]) readSig(t.files[0]).catch(err => toast(String(err.message || err), true));
     else if (t.id === "mapFile" && t.files[0]) readMap(t.files[0]);
     else if (t.id === "sohFile" && t.files[0]) readSohar(t.files[0]);
+    else if (t.id === "sohAll" && t.files[0]) { const f = t.files[0]; t.value = ""; importSohar(f); }
     else if (t.id === "ipFor") { S.ipFor = t.value; render(); }
     else if (t.id === "hdWho" && S.modal === "hold") { S.m.who = t.value; render(); }
     else if (S.modal === "profile" && t.id === "pfStatus") keepProfile();

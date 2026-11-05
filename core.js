@@ -937,6 +937,31 @@
     return out;
   }
 
+  /* The whole Sohar IVN export (the Sohar Eligibility add-in's file for the TMS, ESK and IVK Trackers) against this tracker.
+     M: parseSohar's Map. o = { PM (Master Patient Tracker by MRN), PF (profiles by MRN), A (appointment list), by, now (iso) }.
+     A patient counts when they're on the tracker, have a profile, or are on the appointment list. A verification older than the
+     one already saved is left alone; the same date and ref is unchanged. Out: { items: [{ mrn, code, patch, isNew }], same,
+     older, notHere, rows } where patch holds the profile's Sohar columns (dates as iso). */
+  function planSoharImport(M, o) {
+    const PM = o.PM || new Map(), PF = o.PF || new Map(), apptCode = new Map();
+    for (const a of o.A || []) if (a.mrn && !apptCode.has(a.mrn)) apptCode.set(a.mrn, a.code || "");
+    const iso = d => d != null ? isoOf(d) : "", out = { items: [], same: 0, older: 0, notHere: 0, rows: M ? M.size : 0 };
+    for (const [mrn, r] of M || []) {
+      const p = PM.get(mrn), pf = PF.get(mrn);
+      if (!p && !pf && !apptCode.has(mrn)) { out.notHere++; continue; }
+      const had = pf && pf.sohar && pf.sohar.date;
+      if (had != null && r.date != null && r.date < had) { out.older++; continue; }
+      if (had != null && r.date === had && txt(pf.sohar.ref) === txt(r.ref)) { out.same++; continue; }
+      const code = p?.code || pf?.code || apptCode.get(mrn) || r.code || "";
+      const patch = { SoharPayer: r.payer, Plan: r.plan, Network: r.network, CovStart: iso(r.covStart), CovEnd: iso(r.covEnd), Copay: r.copay, Coinsurance: r.coins,
+        Deductible: r.ded, DedRemaining: r.dedRem, OopMax: r.oop, OopRemaining: r.oopRem, SoharStatus: r.status, SoharDate: iso(r.date), SoharRef: r.ref, By: o.by || "", Updated: o.now || "" };
+      if (!pf && code) patch.Patient = code;
+      out.items.push({ mrn, code, patch, isNew: !pf });
+    }
+    out.items.sort((a, b) => a.code.localeCompare(b.code));
+    return out;
+  }
+
   /* ---------- access: demand by protocol ---------- */
   /* What the IVK schedule has to hold, from each patient's protocol (the tracker's Frequency), against how they're booked.
      o = { patients, appts, holds, today, cfg, weeks, paused (include Paused patients), sched ("all" | "exclude" unscheduled | "only"
@@ -1285,7 +1310,7 @@
 
   return { DEFAULTS, VISIT_COLS, TEMPLATES, norm, clinicFromName, USER_COLS, userKey, userRows, pickOrder, cleanName, wbKeyOf, whoRec, whoToday, whoPick, ADMIN_MIN, adminOk, CLINIC_WIDE, lockedCfg, sigFromFile, withSignature, txt, num, serialOf, dateOf, isoOf, fromIso, toSerial, toMin, fmtT, fmtD, fmtDay, weekday, weekStart,
     PT_COLS, ptRows, AV_LEVELS, avName, availGrid, availStr, canCome, prefCells, awayList, awayStr, awayOn, PAY_COLS, REMIND_METHODS, money, amt, payRows, dueOf, payOf, ledger, toConfirm,
-    PARTS, partKey, dueParts, visitAnswered, PROFILE_COLS, COVER_MODES, modeOf, modeParts, isSelf, SOHAR_KEYS, profileRows, coverage, profileGaps, parseSohar, demand,
+    PARTS, partKey, dueParts, visitAnswered, PROFILE_COLS, COVER_MODES, modeOf, modeParts, isSelf, SOHAR_KEYS, profileRows, coverage, profileGaps, parseSohar, planSoharImport, demand,
     fullPlan, eligibleStarts, memoX, indexState, indexShort, nextStart, XFER_COLS, xferRows, xferState, elsewhere, visitCounts, SOONER_COLS, soonerRows, soonerKey, soonerMatch, openSlots, freedTimes, ELSE_COLS, elseRows, sameLoc, isOurs, bookedAt, prefCols, indexN: cfg => Math.max(1, Math.round(+cfg.IndexPerWeek * +cfg.IndexWeeks)),
     treatments, txNo, isOak, oakState, WAIT_ON, waitlist, waitMove, provFull, fullName, firstName, scheduleOf, START_TPL, longWhen,
     lasfir, provName, mrnKey, pickRow, eventShort, freqDays, byHeader, patients, appts, isCancelled, visitKey, visitRows, phase, isActive, futureOf, asks,

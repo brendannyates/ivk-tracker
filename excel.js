@@ -578,6 +578,26 @@
       b.getRow(i).values = [row]; await ctx.sync(); return true;
     });
   }
+  /* many patients by MRN in one go (the Sohar IVN export import): items [{ mrn, patch }], one per MRN. Rows already there are
+     changed in place (only the patch's columns), new MRNs go at the end. The table is read fresh first, so a co-author's
+     rows saved since the last refresh are kept. */
+  async function upsertMany(table, items) {
+    return Excel.run(async ctx => {
+      const { t, b, cols } = await openTable(ctx, table), cM = cols.indexOf("mrn"), at = new Map(), add = []; let changed = 0;
+      b.values.forEach((r, i) => { const k = C.mrnKey(r[cM]); if (k && !at.has(k)) at.set(k, i); });
+      for (const { mrn, patch } of items) {
+        const i = at.get(C.mrnKey(mrn));
+        if (i == null) { add.push(Object.assign({ MRN: mrn }, patch)); continue; }
+        const row = b.values[i].map(v => v == null ? "" : String(v));
+        for (const [k, v] of Object.entries(patch)) { const c = cols.indexOf(C.norm(k)); if (c >= 0) row[c] = v == null ? "" : String(v); }
+        b.getRow(i).values = [row]; changed++;
+        if (changed % CH === 0) await ctx.sync();
+      }
+      for (let s = 0; s < add.length; s += CH) { addRows(t, cols, s ? { values: [] } : b, add.slice(s, s + CH)); await ctx.sync(); }
+      await ctx.sync();
+      return { changed, added: add.length };
+    });
+  }
   /* Holds: [{ MRN, Patient, Date (iso), Time, Provider, Treatment }]. The table is read again first: if someone else has just held one
      of these times, or this patient already has holds waiting, nothing is written and the error says which. */
   async function placeHolds(rows, by) {
@@ -650,5 +670,5 @@
 
   return { DATA_SHEET, SHEETS, PLANNER, TPL_SHEET, TYPES_SHEET, SPEC, load, setup, saveVisit, confirmProtocol, replaceAppts, saveKeyed, saveRoutes, appendLog, openRow,
     setupTemplate, addGrid, setCells, saveTypes, replaceOther, replaceElse, saveSooner, savePlan, saveFlag, placeHolds, setHolds, fillPlanner, getDoc, setDoc, refreshDoc,
-    readRow, saveRow, savePt, addPays, saveRanks, saveException, saveProfile, saveXfer, addMpt, saveStart, saveMissed, addMissed, saveUser };
+    readRow, saveRow, savePt, addPays, saveRanks, saveException, saveProfile, upsertMany, saveXfer, addMpt, saveStart, saveMissed, addMissed, saveUser };
 });
