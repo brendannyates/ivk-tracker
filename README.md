@@ -26,12 +26,16 @@ the task pane, full screen sits at the top right of every page with refresh and 
   press it for "This visit does not match the templated slot-type". Pressing a booked visit opens the patient view; pressing an
   open slot holds it for a patient (an open index start can plan all 6 index visits from there instead).
 - **Access**: four pages, picked with the chips at the top.
-  - **Demand**: what the schedule has to hold at everyone's current protocol (the tracker's Frequency), by protocol: patients,
-    visits a week each and in all, and for the next 4 and 8 weeks what's needed, booked (NextGen visits and holds) and still to
-    book; then week by week against the template's IVK slots and how many are open. Include paused patients, or exclude or show
-    only unscheduled ones (nothing booked). Induction patients count at 2 a week until treatment 6, then at the after-index
-    protocol (Settings, 1x per week); **When index creates access** lists each one with the week they step down and the visits a
-    week that frees.
+  - **Demand**: how far out active patients are scheduled, and what's still to book. **Week by week** (Sunday to Saturday, every
+    active patient, not paused): **Avg Need** at current protocols (Induction at 2 a week until treatment 6, then the after-index
+    protocol, Settings, 1x per week; PRN and blank none), **Booked** (IVK visits and holds on the list) out of the template's IVK
+    slots, **Scheduled Through** (the share of active patients with a protocol, not PRN or paused, booked that week or later), and
+    **Projected Need** (the visits still to book if each patient keeps their cadence past their last booked visit; index patients
+    weekly after treatment 6). The tiles lead with the share scheduled out 4 weeks; the clinic decides what share it wants before
+    starting new patients. **By protocol** below keeps the Unscheduled only / Everyone / Scheduled only filter and Include paused.
+    **No-shows and late cancels** lists patients by count in the last 30, 60 and 90 days (each one, with its exemption, folded
+    away below). **Projected Access Post-Index** lists each index patient with the week they step down and the visits a week
+    that frees.
   - **Waitlist** (below), **Index planner** (below) and **Templates** (the provider grids; the providers are toggled at the top
     right of the template card).
 - **Patients**: a table of everyone on the Master Patient Tracker that sorts by any column, ascending or descending (press the

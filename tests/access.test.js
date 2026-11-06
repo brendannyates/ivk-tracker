@@ -145,3 +145,41 @@ test("the Sohar IVN export (whole file): matched patients get their profile's So
   assert.equal(out.items[1].patch.Patient, "BETPAT", "a new profile row takes the appointment list's code");
   assert.ok(Object.keys(a).every(k => C.PROFILE_COLS.includes(k)), "only profile columns");
 });
+
+test("scheduled through: share of active patients with a protocol booked that week or later; PRN and paused don't count", () => {
+  const P1 = pts([["990801", "WEKONE", "Ongoing", "1x per week"], ["990802", "BIWTWO", "Ongoing", "every 2 weeks"], ["990803", "PRNTHR", "Ongoing", "PRN"],
+    ["990804", "PAUFOU", "Paused", "1x per week"], ["990805", "NONFIV", "Ongoing", "every 4 weeks"]]);
+  const w0 = T - C.weekday(T);   // this week's Sunday
+  const A = C.appts([AP_H, ap("990801", "WEKONE", w0 + 29, 600), ap("990802", "BIWTWO", w0 + 10, 600), ap("990803", "PRNTHR", w0 + 40, 600)]);
+  const D = C.demand({ patients: P1, appts: A, holds: [], today: T, cfg, weeks: 6, paused: true, sched: "all" });
+  assert.deepEqual(D.weeks.map(w => w.den), [3, 3, 3, 3, 3, 3]);                     // WEKONE, BIWTWO, NONFIV
+  assert.deepEqual(D.weeks.map(w => w.thruN), [2, 2, 1, 1, 1, 0]);
+  assert.equal(Math.round(D.weeks[4].thruPct * 100), 33);
+});
+
+test("projected need: each patient's cadence past their last booked visit; index weekly after treatment 6", () => {
+  const w0 = T - C.weekday(T);
+  const P1 = pts([["990811", "WEKONE", "Ongoing", "1x per week"], ["990812", "BIWTWO", "Ongoing", "every 2 weeks"], ["990813", "INDTHR", "Induction", "2x per week", "", "", "", "", T - 14]]);
+  /* WEKONE booked through next Wednesday; BIWTWO nothing booked, last seen 10 days ago (due in 4 days); INDTHR has 4
+     index treatments kept and 1 booked: 1 more index visit, then weekly */
+  const A = C.appts([AP_H, ap("990811", "WEKONE", T + 7, 600), ap("990812", "BIWTWO", T - 10, 600),
+    ...[14, 11, 7, 4].map(d => ap("990813", "INDTHR", T - d, 600)), ap("990813", "INDTHR", T + 1, 600)]);
+  const D = C.demand({ patients: P1, appts: A, holds: [], today: T, cfg, weeks: 5, sched: "all" });
+  const r = m => D.rows.find(x => x.mrn === m).proj;
+  assert.deepEqual(r("990811"), [0, 0, 1, 1, 1]);   // booked this week and next; then weekly
+  assert.deepEqual(r("990812"), [0, 1, 0, 1, 0]);   // due Sunday, then every 2 weeks
+  assert.deepEqual(r("990813"), [0, 1, 1, 1, 1]);   // treatment 6 three and a half days after the 5th, then weekly
+  assert.deepEqual(D.weeks.map(w => w.projNeed), [0, 2, 2, 3, 2]);
+  assert.equal(D.proj4, 7);
+  /* overdue: last seen 3 weeks ago on every 2 weeks counts this week */
+  const O = C.demand({ patients: pts([["990814", "OVRFOU", "Ongoing", "every 2 weeks"]]), appts: C.appts([AP_H, ap("990814", "OVRFOU", T - 21, 600)]), holds: [], today: T, cfg, weeks: 4, sched: "all" });
+  assert.deepEqual(O.rows[0].proj, [1, 0, 1, 0]);
+  assert.equal(D.weeks[0].listed, 1);                // live visits on the list from today this week: INDTHR Thursday (WEKONE is next week)
+});
+
+test("no-shows and late cancels by patient over 30, 60 and 90 days", () => {
+  const L = [{ mrn: "1", code: "AAA", kind: "noshow", date: T - 5 }, { mrn: "1", code: "AAA", kind: "late", date: T - 45 }, { mrn: "1", code: "AAA", kind: "noshow", date: T - 80 },
+    { mrn: "2", code: "BBB", kind: "late", date: T - 20, exempt: "kpva" }, { mrn: "3", code: "CCC", kind: "noshow", date: T - 120 }, { mrn: "4", code: "DDD", kind: "review", date: T - 1 }];
+  const W = C.missWindows(L, T);
+  assert.deepEqual(W.map(x => [x.code, x.ns, x.lc, x.exempt]), [["AAA", [1, 1, 2], [0, 1, 1], ""], ["BBB", [0, 0, 0], [1, 1, 1], "kpva"]]);
+});

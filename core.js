@@ -937,6 +937,15 @@
     return { rows, booked: bk, lost, noshow: rows.reduce((n, r) => n + r.noshow, 0), late: rows.reduce((n, r) => n + r.late, 0), rate: bk ? lost / bk : 0 };
   }
   /* per patient over the missed list: how many no-shows and late cancels, and how many of them have no exemption */
+  /* no-shows and late cancels per patient in the last 30, 60 and 90 days (to today), most first */
+  function missWindows(L, today, spans) {
+    const D = spans || [30, 60, 90], m = new Map();
+    for (const x of L) { if (x.kind === "review" || x.date == null || x.date > today || x.date <= today - D[D.length - 1]) continue;
+      const o = m.get(x.mrn) || { mrn: x.mrn, code: x.code, ns: D.map(() => 0), lc: D.map(() => 0), last: null, exempt: x.exempt === "kpva" ? "kpva" : "" };
+      D.forEach((n, i) => { if (x.date > today - n) o[x.kind === "noshow" ? "ns" : "lc"][i]++; }); if (!o.last || x.date > o.last) o.last = x.date; m.set(x.mrn, o); }
+    const tot = o => o.ns[o.ns.length - 1] + o.lc[o.lc.length - 1];
+    return [...m.values()].sort((a, b) => tot(b) - tot(a) || (b.ns[0] + b.lc[0]) - (a.ns[0] + a.lc[0]) || (b.last ?? 0) - (a.last ?? 0) || String(a.code).localeCompare(String(b.code)));
+  }
   function missByPatient(L) {
     const m = new Map();
     for (const x of L) { if (x.kind === "review") continue; const o = m.get(x.mrn) || { mrn: x.mrn, code: x.code, noshow: 0, late: 0, open: 0, last: null, exempt: x.exempt === "kpva" ? "kpva" : "" };
@@ -1063,8 +1072,21 @@
         if (idxEnd < from) return afterRate * days / 7;
         return (perIdx * (idxEnd - from + 1) + afterRate * (b - idxEnd - 1)) / 7; });
       const booked = Array.from({ length: W }, (_, w) => fut.filter(f => f.date >= w0 + 7 * w && f.date < w0 + 7 * w + 7).length);
+      /* scheduled through: their last booked visit or hold from today. The cadence past it: from that visit (else their last
+         visit, else today) at their protocol; index patients at IndexPerWeek until treatment N, then AfterIndex (weekly). Each
+         projected visit lands in its week; one that's overdue counts today. PRN and no frequency: none. */
+      const thru = fut.length ? Math.max(...fut.map(f => f.date)) : null, proj = Array(W).fill(0), counts = idx || rate > 0;
+      if (counts) {
+        const past = o.appts.filter(a => a.mrn === p.mrn && a.date < T && !isCancelled(a) && !/no ?show/i.test(a.status)).reduce((m, a) => Math.max(m, a.date), -Infinity);
+        let d = thru ?? (past > -Infinity ? past : T - 1), k = idx ? (L ? L.length : (done ?? 0)) + fut.filter(f => f.hold).length : 0;
+        for (let g = 0; g < 400; g++) {
+          d += idx && k < N ? 7 / perIdx : 7 / (idx ? afterRate : rate); k++;
+          if (d < T) d = T;
+          const w = Math.floor((Math.floor(d) - w0) / 7); if (w >= W) break; if (w >= 0) proj[w]++;
+        }
+      }
       rows.push({ p, mrn: p.mrn, code: p.code, freq: idx ? "Index" : p.freq || "No frequency", proto: p.freq || "", rate: idx ? perIdx : rate, prn, unsched, paused, idx, idxEnd,
-        afterRate: idx ? afterRate : null, expect, booked, next: fut.sort((x, y) => x.date - y.date)[0] || null });
+        afterRate: idx ? afterRate : null, expect, booked, thru, proj, counts, next: fut.sort((x, y) => x.date - y.date)[0] || null });
     }
     const sum = (L, f) => L.reduce((n, x) => n + f(x), 0), win = (arr, n) => arr.slice(0, n).reduce((a, b) => a + b, 0);
     const weeks = Array.from({ length: W }, (_, w) => {
@@ -1073,7 +1095,11 @@
       if (o.X) for (let d = Math.max(a, T); d < a + 7; d++) { const wd = weekday(d); if (wd < 1 || wd > 5) continue; const S = daySlots(d, o.X).slots; slots += S.length; open += S.filter(s => s.open).length; }
       /* the step down from index to after-index visits that lands in this week */
       const steps = rows.filter(r => r.idx && r.idxEnd >= a && r.idxEnd < a + 7);
-      return { w, start: a, expect: exp, booked: bk, toBook: gap, slots, open, freed: sum(rows.filter(r => r.idx && r.idxEnd < a + 7), r => Math.max(0, perIdx - r.afterRate) * Math.min(7, a + 7 - Math.max(a, r.idxEnd + 1)) / 7), steps };
+      /* scheduled through this week: active, not paused, with a protocol (not PRN or blank), booked in this week or later */
+      const den = rows.filter(r => r.counts && !r.paused), thruN = den.filter(r => r.thru != null && r.thru >= a).length;
+      /* every IVK visit and hold on the list that week (anyone, on the tracker or not), against the template slots */
+      const lo = Math.max(a, T), listed = o.appts.filter(x => x.date >= lo && x.date < a + 7 && !isCancelled(x) && !/no ?show/i.test(x.status)).length + held.filter(h => h.date >= lo && h.date < a + 7).length;
+      return { w, start: a, expect: exp, booked: bk, listed, toBook: gap, slots, open, thruN, den: den.length, thruPct: den.length ? thruN / den.length : null, projNeed: sum(rows, r => r.proj[w]), freed: sum(rows.filter(r => r.idx && r.idxEnd < a + 7), r => Math.max(0, perIdx - r.afterRate) * Math.min(7, a + 7 - Math.max(a, r.idxEnd + 1)) / 7), steps };
     });
     const groups = new Map();
     for (const r of rows) { const g = groups.get(r.freq) || { freq: r.freq, rate: r.rate, n: 0, unsched: 0, paused: 0, perWeek: 0, rows: [] }; g.n++; g.rows.push(r); if (r.unsched) g.unsched++; if (r.paused) g.paused++; g.perWeek += r.expect.length ? (r.idx ? perIdx : r.rate) : 0; groups.set(r.freq, g); }
@@ -1083,7 +1109,8 @@
       d12: sum(g.rows, r => win(r.expect, 12)), b12: sum(g.rows, r => win(r.booked, 12)) }))
       .sort((a, b) => (a.freq === "Index" ? -1 : b.freq === "Index" ? 1 : 0) || (b.rate - a.rate) || a.freq.localeCompare(b.freq));
     const perWeek = sum(rows, r => r.idx ? perIdx : r.rate);
-    return { rows, groups: G, weeks, N, perIdx, after, perWeek, avg: rows.length ? perWeek / rows.length : 0, toBook4: tb(rows, 4), toBook8: tb(rows, 8),
+    const proj4 = sum(weeks.slice(0, 4), w => w.projNeed);
+    return { rows, groups: G, weeks, N, perIdx, after, perWeek, avg: rows.length ? perWeek / rows.length : 0, toBook4: tb(rows, 4), toBook8: tb(rows, 8), proj4,
       transitions: rows.filter(r => r.idx).sort((a, b) => a.idxEnd - b.idxEnd) };
   }
 
@@ -1485,5 +1512,5 @@
     lastSeen, tagKey, parseTag, tagStr, tagsOf, askProvider, REPLY_COLS, replyRows, replyAction, repliesDue,
     today, code, chairState, chairStatus, askDue, chairList, chairCount, needs, loud, consults, isStartedStage, keptStartOf, START_COLS, startKey, startRows, consultStarts, startList, fill, protoWords, arrivalText, askText,
     parseReport, shrink, week, DAYS5, dayNum, sameProv, OTHER_COLS, otherRows, isIvkVisit, FLAG_COLS, flagRows, PLAN_COLS, planRows, HOLD_COLS, holdRows,
-    onList, holding, holdState, holdConfirm, EX_COLS, CLOSED, exRows, exFor, closureOn, closureClashes, withExceptions, exClashes, MISS_COLS, missRows, isKpVa, missList, lateKeys, newCancels, missImpact, missByPatient, stepDue, daySlots, postCheckSlots, availOf, availText, fits, planIndex, altSlots, capacity, plannerLayout, plannerGrid };
+    onList, holding, holdState, holdConfirm, EX_COLS, CLOSED, exRows, exFor, closureOn, closureClashes, withExceptions, exClashes, MISS_COLS, missRows, isKpVa, missList, lateKeys, newCancels, missImpact, missByPatient, missWindows, stepDue, daySlots, postCheckSlots, availOf, availText, fits, planIndex, altSlots, capacity, plannerLayout, plannerGrid };
 });
