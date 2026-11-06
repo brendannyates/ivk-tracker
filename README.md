@@ -161,13 +161,13 @@ patient's name and date of birth.
   It's on the Index planner card (once a patient has holds), the patient card and the visit card (in the chair or checked out). A new
   patient who isn't on the Master Patient Tracker yet prints from their MRN; their name is typed for the consent or email, never saved. **Print this week** (Schedule): the clinic's week, codes only.
 - **Print start forms** (start visits, Induction patients): the schedule and the IV ketamine consent with the patient's name, DOB, the
-  clinic location and the clinician filled in. Consent wording is verbatim from `assets/ivk-consent.pdf`.
+  clinic location and the clinician filled in. The consent is signed in person on arrival, so it's printed, never emailed. Consent wording is verbatim from `assets/ivk-consent.pdf`.
 - **Start email**: the desk's "Upcoming Appointment(s)" email (Settings › Messages, HTML), subject "SECURE: Upcoming Visit
   Information | MHS", with the MRN, first name, clinic, first visit, clinic address and phone and the schedule table filled in. No
   signature is built in: Outlook adds the sender's, or they add one under Settings › You ({signature} in the template, else the end).
-  A checklist (patient's email address, CC set, clinic details entered, template, schedule, consent, BIDF attached in the window; BCC optional) has to be
+  A checklist (patient's email address, CC set, clinic details entered, template, schedule, BIDF attached in the window; BCC optional) has to be
   complete before **Outlook draft (.eml)** unlocks; the draft then has To, CC, BCC, the email and every attachment ({code} Appt
-  {code} schedule m.d.pdf, {code} IVK Consent.pdf, the BIDF and any extras). CC, BCC, the clinic address and phone are in Settings › Messages.
+  {code} schedule m.d.pdf, the BIDF and any extras; no consent). CC, BCC, the clinic address and phone are in Settings › Messages.
 - The date of birth comes from a DOB column on the tracker if there is one; otherwise the desk types it for the forms.
 
 ## Index planning
