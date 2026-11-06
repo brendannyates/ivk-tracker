@@ -614,7 +614,7 @@
     /* start paperwork is for a treatment start only; the start email goes out before it, so it's on the patient view */
     if (p && /start/i.test(v.a.event)) quiet.push(["startForms", "Start paperwork"]);
     /* today's payment: recorded at check-in or any time before check-out, and changed after it */
-    if (p && S.payOn && v.ph !== "booked" && v.ph !== "gone") quiet.push(["payEdit", PARTS.some(x => C.payOf(S.pays, v.key, x)) ? "Change today’s payment" : "Record today’s payment"]);
+    if (p && S.payOn && v.ph !== "booked" && v.ph !== "gone") quiet.push(["payEdit", !C.consentOf(S.pays, v.key)?.done ? "Copay check and payment" : PARTS.some(x => C.payOf(S.pays, v.key, x)) ? "Change today’s payment" : "Record today’s payment"]);
     const ish = p ? C.indexShort(p, S.A, v.a, S.cfg) : null;
     const bt = (cls, [a, l]) => `<button class="btn ${cls}" data-act="${a}" data-k="${k}" data-m="${esc(v.a.mrn)}">${esc(l)}</button>`;
     return `<aside class="card detail" aria-label="${esc(c)}"><div class="dh"><div><div class="name">${esc(c)}${loc ? `<span class="loc">${esc(loc)}</span>` : ""}</div><div class="meta">${esc(meta)}</div></div>
@@ -645,7 +645,8 @@
         <dt>Owes today</dt>${dd(esc(owes), !paid.length && d.total > 0 && v && v.ph !== "booked" ? "flag" : "")}
         ${authBad || authSoon ? `<dt>Auth</dt>${dd(`Ends ${C.fmtD(p.authExp)}${p.authNo ? `, ${esc(p.authNo)}` : ""}`, authBad ? "bad" : "flag")}` : ""}
         ${encLow ? `<dt>Visits on auth</dt>${dd(`${p.encLeft}${p.encAuth != null ? ` of ${p.encAuth}` : ""} left`, p.encLeft <= 0 ? "bad" : "flag")}` : ""}
-        ${L && L.balance > 0 ? `<dt>Balance</dt>${dd(`${C.money(L.balance)}${t?.card ? `, card on file${t.okCollect ? ", okay to charge" : ""}` : ""}`, "flag")}` : ""}
+        ${v && S.payOn && v.ph !== "booked" && v.ph !== "gone" ? (cc => `<dt>Copay check</dt>${dd(cc ? (cc.done ? `Card on file, verbal consent${cc.by ? `, ${esc(cc.by)}` : ""}` : `Not confirmed: ${consentMiss(cc)}${cc.by ? ` (${esc(cc.by)})` : ""}`) : "Not done at check-in", cc?.done ? "" : "flag")}`)(C.consentOf(S.pays, v.key)) : ""}
+        ${L && L.balance > 0 ? `<dt>Balance</dt>${dd(`${C.money(L.balance)}${t?.card ? `, card on file${t.okCollect ? ", consent to collect copay" : ""}` : ""}`, "flag")}` : ""}
       </dl>`;
   }
 
@@ -1347,7 +1348,7 @@
         <dt>Due each visit</dt><dd>${due.total ? C.money(due.total) : "Nothing"}</dd>
         <dt>Collected</dt><dd>${C.money(L.collected) || "$0"}</dd>
         <dt>Last reminder</dt><dd${remDue ? ' class="flag"' : ""}>${last ? `${C.fmtD(last.date)}${last.method ? `, ${esc(last.method)}` : ""}${last.by ? `, ${esc(last.by)}` : ""}` : L.balance > 0 ? "None sent" : "—"}</dd></dl>
-      ${chk("CardOnFile", t?.card, "Luma card on file")}${chk("OkToCollect", t?.okCollect, "Okay to charge at time of service", "The patient agreed we can charge the card on file at each visit")}
+      ${chk("CardOnFile", t?.card, "LumaPay card on file")}${chk("OkToCollect", t?.okCollect, "Verbal consent to collect copay at time of service", "The patient agreed we can charge the card on file for the copay. The desk asks again at every check-in.")}
       ${miss || cf ? `<ul class="steps">${miss}${cf}</ul>${conf.length > 8 ? `<p class="note">And ${plural(conf.length - 8, "older visit")} to confirm.</p>` : ""}` : ""}
       <div class="actions"><button class="btn ghost sm line" data-act="pay" data-m="${m}"${S.payOn ? "" : " disabled"}>Record a payment or reminder</button><button class="btn mute sm" data-act="profile" data-m="${m}">Change what's due</button></div>`;
   }
@@ -1645,25 +1646,54 @@
       ${amtBad(m) ? `<p class="note warn">What the patient owes has to be a number, like 40.</p>` : ""}
       ${changed ? `<label class="opt"><input type="checkbox" id="mAmtSave"${m.amtSave ? " checked" : ""}> Make this what they owe each visit<small>Writes Copay and Infusion on the Master Patient Tracker. Leave it unticked to change today only.</small></label>` : ""}
       ${L.balance > 0 ? `<p class="note warn">Balance from earlier visits: ${C.money(L.balance)}.</p>` : ""}
-      ${anyMissed ? `<p class="note">${t?.card && t?.okCollect ? "Luma card on file and okay to charge at time of service: charge it in Luma, then record the payment on the patient’s Financial page." : t?.card ? "Luma card on file, but not okay to charge at time of service yet. Ask the patient." : "No Luma card on file. Ask for one, or send a balance reminder."}</p>` : ""}</div>`;
+      ${anyMissed ? `<p class="note">${t?.card && t?.okCollect ? "LumaPay card on file and verbal consent to collect copay: charge it in Luma, then record the payment on the patient’s Financial page." : t?.card ? "LumaPay card on file, but no verbal consent to collect copay yet. Ask the patient." : "No LumaPay card on file. Ask for one, or send a balance reminder."}</p>` : ""}</div>`;
   }
   /* the modal's inputs back into S.m before a re-render, so nothing typed is lost */
   function keepPay() {
     const m = S.m; if (!m) return;
     for (const k of PARTS) { const el = $(`#mAmt_${k}`); if (el) m.amt = Object.assign({}, m.amt, { [k]: el.value }); }
     const as = $("#mAmtSave"); if (as) m.amtSave = as.checked;
+    const cd = $("#mCard"); if (cd) m.card = cd.checked;
+    const cs = $("#mConsent"); if (cs) m.consent = cs.checked;
     const pr = $("#mProto"); if (pr) m.proto = pr.checked;
     const fq = $("#mFreq"); if (fq) m.freq = fq.value;
     const rn = $("#mRn"); if (rn) m.rn = rn.checked;
     const ak = $("#mAsk"); if (ak) m.ask = ak.checked;
     const xc = $("#mXfer"); if (xc) m.xferOn = xc.checked;
   }
+  /* the copay check the desk does out loud at check-in: a LumaPay card on file, and the patient's verbal consent to collect the
+     copay at time of service. Unticked still checks in, and the visit then shows "not confirmed". Saved as a consent row on
+     tblIvkPay (Key = the visit, Method card+consent / card / consent / none); a tick also sets the patient's CardOnFile or
+     OkToCollect on tblIvkPatient. */
+  const consentInit = v => { const c = C.consentOf(S.pays, v.key); return { card: !!c?.card, consent: !!c?.consent, ck: true }; };
+  const consentMiss = m => [!m.card && "card on file", !m.consent && "verbal consent"].filter(Boolean).join(" and ");
+  function consentHTML(v, m, mode) {
+    if (!S.payOn || !m.ck) return "";
+    const t = ptOf(v.a.mrn), was = C.consentOf(S.pays, v.key);
+    const box = (id, on, l, sm) => `<label class="opt"><input type="checkbox" id="${id}"${on ? " checked" : ""}> ${l}<small>${sm}</small></label>`;
+    return `<div class="section"><div class="h"><h2>Copay check</h2><span>ask the patient${mode === "in" ? " now" : ""}</span></div>
+      ${box("mCard", m.card, "LumaPay card on file", t?.card ? "The patient record has a card on file. Check it’s still there in Luma." : "No card on the patient record. Check Luma, or ask the patient to add one.")}
+      ${box("mConsent", m.consent, "Verbal consent to collect copay at time of service", "The patient said yes out loud today")}
+      ${m.card && m.consent ? "" : `<p class="note warn">Not confirmed: ${consentMiss(m)}.${mode === "in" ? " You can still check in." : ""}</p>`}
+      ${was ? `<p class="hint">Saved as ${was.done ? "confirmed" : "not confirmed"}${was.by ? ` by ${esc(was.by)}` : ""}${was.at ? ` at ${timeOf(was.at)}` : ""}.</p>` : ""}</div>`;
+  }
+  /* the consent row to add: always at check-in (an explicit "none" too), otherwise only when the answer changed */
+  function consentRowsOf(v, m, mode) {
+    if (!S.payOn || !m.ck) return [];
+    const was = C.consentOf(S.pays, v.key), meth = C.consentMethod(m.card, m.consent);
+    if (was ? was.card === !!m.card && was.consent === !!m.consent : mode !== "in") return [];
+    const p = v.p || { mrn: v.a.mrn, code: C.code(v) };
+    return [payRow(p, { Date: C.isoOf(v.a.date), Key: v.key, Kind: "consent", Amount: 0, Method: meth,
+      Note: m.card && m.consent ? "Copay check: LumaPay card on file, verbal consent to collect copay" : `Copay check not confirmed: ${consentMiss(m)}` })];
+  }
   /* save today's payment answers (and, when ticked, the new amounts on the tracker). label for the toast; false when nothing saved */
-  async function savePay(v, m, what) {
-    const rows = payRowsOf(v, m), track = m.amtSave && PARTS.some(k => amtN(m, k) !== trackerDue(v.p, k));
+  async function savePay(v, m, what, mode) {
+    const cons = consentRowsOf(v, m, mode), rows = payRowsOf(v, m).concat(cons), track = m.amtSave && PARTS.some(k => amtN(m, k) !== trackerDue(v.p, k));
+    const t = ptOf(v.a.mrn), flags = cons.length ? Object.assign({}, m.card && !t?.card ? { CardOnFile: "TRUE" } : {}, m.consent && !t?.okCollect ? { OkToCollect: "TRUE" } : {}) : {};
     if (!rows.length && !track) return true;
     const ok = await write("Saving the payment…", async () => {
       if (rows.length) await Store.addPays(rows);
+      if (Object.keys(flags).length) await Store.savePt(v.a.mrn, ptPatch(v.p || { code: C.code(v) }, flags));
       if (track) { const H = mptHead(); return Store.saveRow("mpt", v.p.mrn, Object.fromEntries([[H("copay") || "Copay", amtN(m, "prov")], [H("infusion") || "Infusion", amtN(m, "inf")]])); }
       return true;
     });
@@ -1696,7 +1726,7 @@
         ${S.plan ? `<div class="fld">Chair${chairPick(m.chair, true)}</div>` : ""}
         <label class="preview opt"><input type="checkbox" id="mRn"${m.rn && aOk ? " checked" : ""}${aOk ? "" : " disabled"}><span><small>To ${esc(routeTo("arrival"))}</small>${aOk ? esc(arrTxt) + tagNote(S.tags.arrival) : "Arrivals aren’t set up yet (Settings › Teams)."}</span></label>
         ${v.p && v.ask.any ? `<label class="preview opt"><input type="checkbox" id="mAsk"${m.ask && pOk ? " checked" : ""}${pOk ? "" : " disabled"}><span><small>To ${esc(routeTo("protocol"))}, after the arrival${v.ask.why.length ? ` (${esc(v.ask.why.join("; "))})` : ""}</small>${pOk ? esc(askTxt) + tagNote(askTag(v, v.ask).tag) : "The group chat isn’t set up yet (Settings › Teams)."}</span></label>` : ""}
-        ${payPickHTML(v, m, "in")}
+        ${consentHTML(v, m, "in")}${payPickHTML(v, m, "in")}
         <div class="foot"><button class="btn mute" data-act="close">Cancel</button><button class="btn primary inl" data-act="doCheckin"${S.busy || amtBad(m) ? " disabled" : ""}>Check in</button></div>`;
     },
     /* start treatment in a chair (only with a chair map), or move to another one */
@@ -1734,7 +1764,7 @@
     payEdit() {
       const v = visitBy(S.m.key), m = S.m, c = C.code(v);
       return `<h2 id="mh">${esc(c)}${mrnH(v.a.mrn)}: today’s payment</h2><p class="sub muted">${C.fmtT(v.a.time)} visit${v.st.out != null ? `, checked out at ${C.fmtT(v.st.out)}` : ""}. A change is saved as a new answer with your name; the latest one counts.</p>
-        ${payPickHTML(v, m, "edit")}
+        ${consentHTML(v, m, "edit")}${payPickHTML(v, m, "edit")}
         <div class="foot"><button class="btn mute" data-act="close">Cancel</button><button class="btn primary inl" data-act="doPayEdit"${S.busy || amtBad(m) ? " disabled" : ""}>Save payment</button></div>`;
     },
     /* the cancellation waitlist for one patient (from a visit on the Schedule, or the patient view): which visit it would move
@@ -1823,7 +1853,7 @@
     /* a payment on account (comes off the oldest balance) or a balance reminder */
     pay() {
       const p = S.PM.get(S.m.mrn), L = C.ledger(p.mrn, S.pays), t = ptOf(p.mrn), today = C.isoOf(todayS());
-      return `<h2 id="mh">${esc(p.code)}${mrnH(p.mrn)}: payments</h2><p class="sub muted">${L.balance > 0 ? `Balance ${C.money(L.balance)}` : "No balance"}${t?.card ? `. Luma card on file${t.okCollect ? ", okay to charge at time of service" : ", not okay to charge at time of service yet"}` : ". No card on file in Luma"}.</p>
+      return `<h2 id="mh">${esc(p.code)}${mrnH(p.mrn)}: payments</h2><p class="sub muted">${L.balance > 0 ? `Balance ${C.money(L.balance)}` : "No balance"}${t?.card ? `. LumaPay card on file${t.okCollect ? ", verbal consent to collect copay" : ", no verbal consent to collect copay yet"}` : ". No LumaPay card on file"}.</p>
         <div class="section"><div class="h"><h2>Payment</h2></div><div class="two">
           <label class="fld">Amount<input id="pyAmt" inputmode="decimal" value="${L.balance > 0 ? L.balance : ""}"></label>
           <label class="fld">How<select id="pyHow">${["Luma card on file", "Card in person", "Cash or check", "Other"].map(h => `<option${t?.card && t.okCollect && h === "Luma card on file" ? " selected" : ""}>${h}</option>`).join("")}</select></label>
@@ -2144,11 +2174,11 @@
     },
     mPay: e => { keepPay(); S.m.pay = Object.assign({}, S.m.pay, { [e.dataset.p || "prov"]: e.dataset.v }); render(); },
     payEdit: e => { const v = visitBy(e.dataset.k); if (!v || !v.p) return; if (!S.payOn) return toast("Payments need the newer tables. Use Update the workbook in Settings.", true);
-      openModal("payEdit", Object.assign({ key: v.key }, payInit(v))); },
+      openModal("payEdit", Object.assign({ key: v.key }, payInit(v), consentInit(v))); },
     async doPayEdit() {
       keepPay(); const m = S.m, v = visitBy(m.key); if (!v) return closeModal();
-      if (!payRowsOf(v, m).length && !(m.amtSave && PARTS.some(k => amtN(m, k) !== trackerDue(v.p, k)))) return closeModal();
-      closeModal(); if (await savePay(v, m, null)) toast(`${C.code(v)}: today’s payment saved.`);
+      if (!payRowsOf(v, m).length && !consentRowsOf(v, m, "edit").length && !(m.amtSave && PARTS.some(k => amtN(m, k) !== trackerDue(v.p, k)))) return closeModal();
+      closeModal(); if (await savePay(v, m, null, "edit")) toast(`${C.code(v)}: today’s payment saved.`);
     },
     /* transfers */
     xfer: e => { const p = S.PM.get(e.dataset.m); if (!p) return; if (!S.xferOn) return toast("Transfers need the newer table. Use Update the workbook in Settings.", true);
@@ -2312,7 +2342,7 @@
   }
   async function ptFlag(t) {
     const p = S.PM.get(t.dataset.m); if (!p) return; const k = t.dataset.pt, on = t.checked;
-    const words = { CardOnFile: ["Luma card on file", "No Luma card on file"], OkToCollect: ["Okay to charge at time of service", "Not okay to charge at time of service"], Oakland: ["Oakland patient", "Not an Oakland patient"] }[k];
+    const words = { CardOnFile: ["LumaPay card on file", "No LumaPay card on file"], OkToCollect: ["Verbal consent to collect copay at time of service", "No verbal consent to collect copay"], Oakland: ["Oakland patient", "Not an Oakland patient"] }[k];
     await write("Saving…", () => Store.savePt(p.mrn, ptPatch(p, { [k]: on ? "TRUE" : "FALSE" })), `${p.code}: ${words[on ? 0 : 1].toLowerCase()}.`);
   }
   const ACT = {
@@ -2474,7 +2504,7 @@
     },
     setup: async () => { const r = await write("Setting up…", () => Store.setup()); if (r && r.blocked?.length) toast(`Couldn’t add ${r.blocked.join(", ")}: cells on the ${X.DATA_SHEET} tab already hold something.`, true); else if (r) toast("Workbook set up. Check-ins and Teams settings now save here."); },
     /* a chair is only asked for when a chair map is loaded: the first open one, or none yet (picked at the start of treatment) */
-    checkin: e => { if (needName()) return; const v = visitBy(e.dataset.k); if (!v) return; openModal("checkin", Object.assign({ key: v.key, chair: S.plan ? freeChair() : "", rn: true, ask: true }, payInit(v))); },
+    checkin: e => { if (needName()) return; const v = visitBy(e.dataset.k); if (!v) return; openModal("checkin", Object.assign({ key: v.key, chair: S.plan ? freeChair() : "", rn: true, ask: true }, payInit(v), consentInit(v))); },
     /* Start treatment: straight away with no map or a chair already picked; else which chair */
     start: async e => {
       const v = visitBy(e.dataset.k); if (!v) return;
@@ -2494,11 +2524,12 @@
       const ok = await write("Saving check-in…", () => Store.saveVisit(v.key, visitBase(v), Object.assign({ Arrived: t, Chair: chair, Seated: rnOn() ? "" : t, Out: "", Status: "" }, stamp()), "Arrived"));
       if (!ok) return;
       closeModal(); S.sel = v.key;
-      await savePay(v, m, `${C.code(v)} is checked in`);
+      await savePay(v, m, `${C.code(v)} is checked in`, "in");
       const msgs = [`${C.code(v)} checked in${chair ? ` to ${chairTxt(chair)}` : ""}.`];
+      if (S.payOn && !(m.card && m.consent)) msgs.push(`Copay check not confirmed (${consentMiss(m)}).`);
       if (rn) { const r = await sendArrival(v, chair); msgs.push(teamsWord(r, routeTo("arrival"))); }
       if (ask && v.p) { const r = await sendAsk(v.p, C.askText(v.p, v.ask, S.tpl, v.p.freq), v.p.freq, v.key, v.ask.proto); msgs.push(r.ok ? `Asked ${routeTo("protocol")}.` : r.reason); }
-      toast(msgs.join(" "), msgs.some(x => /answered|couldn’t|No Teams|off/i.test(x)));
+      toast(msgs.join(" "), msgs.some(x => /answered|couldn’t|No Teams|off|not confirmed/i.test(x)));
     },
     /* the chair picked at the start of treatment (it starts now), or a move to another chair (the start time stays) */
     async doSeat() {
@@ -3035,7 +3066,7 @@
     }
     else if (t.id === "mRn") S.m.rn = t.checked;
     else if (t.id === "mAsk") S.m.ask = t.checked;
-    else if (/^mAmt_/.test(t.id) || t.id === "mAmtSave" || t.id === "mXfer") { keepPay(); render(); }
+    else if (/^mAmt_/.test(t.id) || t.id === "mAmtSave" || t.id === "mXfer" || t.id === "mCard" || t.id === "mConsent") { keepPay(); render(); }
     else if (S.modal === "xfer" && ["xfTo", "xfDate"].includes(t.id)) { keepXfer(); render(); }
   });
   document.addEventListener("input", e => { if (e.target.id === "ptSearch") { S.q = e.target.value; const pos = e.target.selectionStart; render(); const s = $("#ptSearch"); if (s) { s.focus(); s.setSelectionRange(pos, pos); } } });

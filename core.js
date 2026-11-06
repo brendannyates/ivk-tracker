@@ -836,7 +836,10 @@
   /* Id | Date | MRN | Patient | Key | Kind | Amount | Method | Note | By | At, one row per event:
      collected / missed  the payment due at a visit (Key = the visit), collected at the desk or not
      paid / waived       a missed payment settled later, or waived (Key = the missed visit)
-     reminder            a balance reminder sent (Method: In-person or Luma) */
+     reminder            a balance reminder sent (Method: In-person or Luma)
+     consent             the desk's copay check at check-in (Key = the visit, Amount 0): Method is "card+consent", "card",
+                         "consent" or "none" (LumaPay card on file; patient's verbal consent to collect the copay at time of
+                         service). The latest row for the visit counts; no row means nobody did the check. */
   const PAY_COLS = ["Id", "Date", "MRN", "Patient", "Key", "Kind", "Amount", "Method", "Note", "By", "At"];
   const REMIND_METHODS = ["In-person", "Luma"];
   const money = n => n == null ? "" : `$${(+n).toFixed(2).replace(/\.00$/, "")}`;
@@ -857,6 +860,15 @@
   /* the visit's own answer: the last collected or missed row for its key. With a part, that part's row, or a row for the whole
      visit (saved before the parts were split) */
   const payOf = (pays, key, part) => pays.filter(r => (r.key === key || (part && r.key === partKey(key, part))) && (r.kind === "collected" || r.kind === "missed")).pop() || null;
+  /* the copay check at check-in for a visit (consent rows): null when nobody did it */
+  const CONSENT_METHODS = ["card+consent", "card", "consent", "none"];
+  const consentMethod = (card, consent) => card && consent ? "card+consent" : card ? "card" : consent ? "consent" : "none";
+  function consentOf(pays, key) {
+    const r = (pays || []).filter(x => x.kind === "consent" && x.key === key).pop();
+    if (!r) return null;
+    const m = r.method.toLowerCase();
+    return { card: m === "card+consent" || m === "card", consent: m === "card+consent" || m === "consent", done: m === "card+consent", by: r.by, at: r.at, date: r.date };
+  }
   /* every part due at this visit answered */
   const visitAnswered = (pays, key, p) => dueParts(p).every(([part]) => !!payOf(pays, key, part));
   /* A patient's money: every missed visit with what's been paid or waived against it, the balance, the last reminder. */
@@ -1503,8 +1515,8 @@
     return b.includes("{signature}") ? b.replace("{signature}", "{map}\n{signature}") : b + "\n{map}";
   }
 
-  return { DEFAULTS, VISIT_COLS, TEMPLATES, norm, clinicFromName, USER_COLS, userKey, userRows, pickOrder, cleanName, wbKeyOf, whoRec, whoToday, whoPick, AUTO_SHOW, autoFullOf, autoAny, ADMIN_MIN, adminOk, CLINIC_WIDE, lockedCfg, sigFromFile, withSignature, tplImages, withMap, txt, num, serialOf, dateOf, isoOf, fromIso, toSerial, toMin, fmtT, fmtD, fmtDay, weekday, weekStart,
-    PT_COLS, ptRows, AV_LEVELS, avName, availGrid, availStr, canCome, prefCells, awayList, awayStr, awayOn, PAY_COLS, REMIND_METHODS, money, amt, payRows, dueOf, payOf, ledger, toConfirm,
+  return { DEFAULTS, VISIT_COLS, TEMPLATES, norm, clinicFromName, USER_COLS, userKey, userRows, pickOrder, cleanName, wbKeyOf, whoRec, whoToday, whoPick, AUTO_SHOW, autoFullOf, autoAny, tplImages, withMap, ADMIN_MIN, adminOk, CLINIC_WIDE, lockedCfg, sigFromFile, withSignature, txt, num, serialOf, dateOf, isoOf, fromIso, toSerial, toMin, fmtT, fmtD, fmtDay, weekday, weekStart,
+    PT_COLS, ptRows, AV_LEVELS, avName, availGrid, availStr, canCome, prefCells, awayList, awayStr, awayOn, PAY_COLS, REMIND_METHODS, CONSENT_METHODS, consentMethod, consentOf, money, amt, payRows, dueOf, payOf, ledger, toConfirm,
     PARTS, partKey, dueParts, visitAnswered, PROFILE_COLS, COVER_MODES, modeOf, modeParts, isSelf, SOHAR_KEYS, profileRows, coverage, profileGaps, parseSohar, planSoharImport, demand,
     fullPlan, eligibleStarts, memoX, indexState, indexShort, nextStart, XFER_COLS, xferRows, xferState, elsewhere, visitCounts, SOONER_COLS, soonerRows, soonerKey, soonerMatch, soonerLast, soonerKind, parseWants, wantsCell, OFFER_COLS, offerKey, offerRows, offerState, openSlots, freedTimes, ELSE_COLS, elseRows, sameLoc, isOurs, bookedAt, prefCols, indexN: cfg => Math.max(1, Math.round(+cfg.IndexPerWeek * +cfg.IndexWeeks)),
     treatments, txNo, isOak, oakState, WAIT_ON, waitlist, waitMove, provFull, fullName, firstName, scheduleOf, START_TPL, longWhen,

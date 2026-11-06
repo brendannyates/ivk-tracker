@@ -84,7 +84,9 @@ the add-in asks the desk to print it and saves the day they tick it. The start e
 
 ## The visit, at the desk
 
-1. **Check in.** With a chair map loaded, pick the chair (or No chair yet). Payment can be recorded here (optional). The RN's chat
+1. **Check in.** With a chair map loaded, pick the chair (or No chair yet). The **Copay check** is asked out loud: tick
+   **LumaPay card on file** and **Verbal consent to collect copay at time of service**. Check-in still works with either unticked;
+   the toast and the visit card then say "Not confirmed". Payment can be recorded here too (optional). The RN's chat
    gets "SMIJAN is here for their 1:30 PM IVK visit with Dr. Rivera." (plus "Chair 2." with a map). If the patient needs booking
    out or a protocol confirmation, the group chat gets the ask at the same time.
 2. **Start treatment.** Straight away with no map; with a map and no chair yet, it asks which chair and can tell the RN.
@@ -102,9 +104,16 @@ Each IVK visit owes the provider visit (the tracker's Copay) and the infusion (I
 **Collected** or **Not collected** for each part that owes something and has no answer from check-in; what the patient owes today can be changed there (and, ticked, saved as their Copay and Infusion on the tracker). **Record / Change today’s payment** on the visit card changes the answer any time, after check-out too (a new row; the latest answer counts); what isn't collected becomes the patient's balance. Payment
 rows are kept per part (the visit's key with |prov or |inf); rows saved for the whole visit before the split still count. On the
 patient's Financial page: the balance and each missed part (**Collected**, **Waive**), past visits nobody answered (since the
-payment log started), **Luma card on file** and **Okay to charge at time of service**, and **Record a payment
+payment log started), **LumaPay card on file** and **Verbal consent to collect copay at time of service** (the patient's
+standing answer; ticking either at check-in sets it), and **Record a payment
 or reminder**: a payment on account (comes off the oldest balance first) or a balance reminder sent (date, In-person or Luma). A
 balance with no reminder in 14 days is a need.
+
+**Copay check, per visit.** Each check-in adds one tblIvkPay row with Kind `consent`, Key = the visit's key, Amount 0, and
+Method `card+consent`, `card`, `consent` or `none`, with By and At. Changing it later (Copay check and payment on the visit
+card) adds a new row; the latest one counts. No consent row for a visit means nobody did the check. To list a day: filter
+tblIvkPay on Date and Kind = consent; visits on the Appt List with no row were checked in without it (or not checked in).
+Consent rows never count toward balances or collected totals.
 
 ## Transfers
 
@@ -253,14 +262,14 @@ Index planner gets the newer tables from Update the workbook):
 | tblIvkHolds | Every hold: patient, date, time, provider, treatment, held / booked / released, who and when |
 | tblIvkOther | The providers' other NextGen visits from the wider report: date, time, provider, event, status (no patient) |
 | tblIvkFlags | Patients who require a post-check |
-| tblIvkPatient | Per patient: Luma card on file, okay to collect, Oakland, OAK tasked, availability, dates away, waitlist order and waiting on |
+| tblIvkPatient | Per patient: LumaPay card on file, verbal consent to collect copay, Oakland, OAK tasked, availability, dates away, waitlist order and waiting on |
 | tblIvkExceptions | Provider time off: provider, dates, who covers, whether they work the absent provider's template |
 | tblIvkTransfers | Transfers to another clinic: to, date, scheduled / done / cancelled, note, confirmed |
 | tblIvkSooner | The cancellation waitlist: visit to move (or none), earliest date, what they want (days, dates, times, latest date), same provider, status, openings already shown |
 | tblIvkOffers | Openings offered to waitlisted patients: patient, opening, the visit it replaces, outcome (to offer, no answer, declined, accepted, moved), note, by |
 | tblIvkElsewhere | IVK visits at the other clinics from a wider report: MRN, LASFIR, date, time, provider, event, status, location |
 | tblIvkProfile | Per patient: insurance or self pay and the payer for the provider visit and the infusion, the latest Sohar benefits, BIDF printed |
-| tblIvkPay | Payments due at each visit (collected / missed), later payments and waivers, balance reminders |
+| tblIvkPay | Payments due at each visit (collected / missed), later payments and waivers, balance reminders, the copay check at check-in (consent) |
 | tblIvkUsers | The people who use this workbook (the "Who's at the desk?" list) and their own settings (an optional email signature); no patient |
 
 The provider templates are on two visible tabs: **IVK Template** (the grids) and **Slot Types** (tblIvkSlotTypes).
