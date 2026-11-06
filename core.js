@@ -1157,29 +1157,100 @@
   /* their first visit at another clinic (one named like "to", or any when "to" is blank) on or after "from", not cancelled */
   const bookedAt = (E, mrn, to, from) => (E || []).filter(a => a.mrn === mrn && a.date >= from && !isCancelled(a) && !/no ?show/i.test(a.status) && (!txt(to) || sameLoc(a.loc, to)))
     .sort((a, b) => a.date - b.date || (a.time ?? 0) - (b.time ?? 0))[0] || null;
-  /* ---------- sooner waitlist ---------- */
-  /* tblIvkSooner: a patient booked on one date who'd take an earlier one, one row per patient. Days "1am,3pm" (weekday 1-5 and
-     half), blank = any. SameProv TRUE = only with the provider they're booked with. Status waiting, done or removed. Seen: the
-     openings already shown ("2026-11-10|600|rivera;..."), so a refreshed list only alerts what's new. */
+  /* ---------- cancellation waitlist (sooner, or a better day and time) ---------- */
+  /* tblIvkSooner: one row per patient. Booked/BookedTime = the visit they'd move (blank = not tied to a visit: any opening that
+     fits). SameProv TRUE = only with the provider they're booked with. Status waiting, done or removed. Seen: the openings already
+     shown ("2026-11-10|600|rivera;..."), so a refreshed list only alerts what's new.
+     Days holds what they asked for, comma separated (blank = any day):
+       1am..5pm        a weekday and half, every week
+       2026-11-12      one date (any time); 2026-11-12am / 2026-11-12pm a half of it; 2026-11-12@840 one time (minutes)
+       t540-780        only openings starting between these times (minutes after midnight)
+       to2026-11-20    the last day to look. Without it: the day before the booked visit (sooner only), or the last date named */
   const SOONER_COLS = ["MRN", "Patient", "Booked", "BookedTime", "Provider", "From", "Days", "SameProv", "Status", "Note", "Seen", "By", "Updated"];
+  function parseWants(s) {
+    const o = { days: new Set(), dates: [], tw: null, to: null };
+    txt(s).split(/[,\s]+/).filter(Boolean).forEach(k => { let m;
+      if (/^[1-5](am|pm)$/.test(k)) o.days.add(k);
+      else if ((m = /^(\d{4}-\d\d-\d\d)(am|pm|@\d{1,4})?$/.exec(k))) { const d = fromIso(m[1]), x = m[2] || "";
+        if (d != null) o.dates.push({ d, h: /^(am|pm)$/.test(x) ? x : "", t: x[0] === "@" ? +x.slice(1) : null }); }
+      else if ((m = /^t(\d{1,4})-(\d{1,4})$/.exec(k)) && +m[1] <= +m[2]) o.tw = { from: +m[1], to: +m[2] };
+      else if ((m = /^to(\d{4}-\d\d-\d\d)$/.exec(k))) o.to = fromIso(m[1]); });
+    o.dates.sort((a, b) => a.d - b.d || (a.t ?? -1) - (b.t ?? -1));
+    return o;
+  }
+  const wantsCell = o => [...[...(o.days || [])].sort(), ...(o.dates || []).map(x => `${isoOf(x.d)}${x.t != null ? `@${x.t}` : x.h || ""}`),
+    o.tw ? `t${o.tw.from}-${o.tw.to}` : "", o.to != null ? `to${isoOf(o.to)}` : ""].filter(Boolean).join(",");
   function soonerRows(values) {
     const m = new Map();
-    byHeader(values).rows.forEach(x => { const g = x.get, mrn = mrnKey(g("mrn")), booked = toSerial(g("booked")); if (!mrn || booked == null) return;
-      m.set(mrn, { mrn, code: txt(g("patient")), booked, bookedTime: toMin(g("bookedtime")), provider: txt(g("provider")), from: toSerial(g("from")),
-        days: new Set(txt(g("days")).split(/[,\s]+/).filter(d => /^[1-5](am|pm)$/.test(d))), sameProv: /^(true|yes|1)$/i.test(txt(g("sameprov"))),
-        status: txt(g("status")).toLowerCase() || "waiting", note: txt(g("note")), seen: new Set(txt(g("seen")).split(";").map(txt).filter(Boolean)), by: txt(g("by")) }); });
+    byHeader(values).rows.forEach(x => { const g = x.get, mrn = mrnKey(g("mrn")); if (!mrn) return;
+      const w = parseWants(g("days")), booked = toSerial(g("booked"));
+      m.set(mrn, { mrn, code: txt(g("patient")), booked, bookedTime: booked == null ? null : toMin(g("bookedtime")), provider: txt(g("provider")), from: toSerial(g("from")),
+        days: w.days, dates: w.dates, tw: w.tw, to: w.to, sameProv: booked != null && /^(true|yes|1)$/i.test(txt(g("sameprov"))),
+        status: txt(g("status")).toLowerCase() || "waiting", note: txt(g("note")), seen: new Set(txt(g("seen")).split(";").map(txt).filter(Boolean)), by: txt(g("by")), at: txt(g("updated")) }); });
     return m;
   }
   const soonerKey = c => `${isoOf(c.date)}|${c.time}|${TM.provKey(c.provider)}`;
-  /* which of the openings (open slots, or times a cancellation freed) would move them sooner: from From (or tomorrow) to the day
-     before the visit they have, on the days and halves they said, with their provider if asked; a start needs an index start slot */
-  function soonerMatch(r, cands, today, isStart) {
+  /* the last day to look: what they set, else the day before the booked visit or the last date they named, whichever is later;
+     null = no end (not tied to a visit, only weekdays asked) */
+  function soonerLast(r) {
+    if (r.to != null) return r.to;
+    const L = (r.dates || []).map(x => x.d).concat(r.booked != null ? [r.booked - 1] : []);
+    return L.length ? Math.max(...L) : null;
+  }
+  /* "sooner" when every opening they'd take is before the visit they have; otherwise they want a better day or time */
+  const soonerKind = r => r.booked != null && soonerLast(r) != null && soonerLast(r) < r.booked ? "sooner" : "better";
+  /* which openings (open slots, or times a cancellation freed) they'd take: from From (or tomorrow) to soonerLast, on the days,
+     halves, dates and times they said, with their provider if asked, never the visit they already have or a day they already
+     come in (busy: those dates). A start needs an index start slot. */
+  function soonerMatch(r, cands, today, isStart, busy) {
     if (!r || r.status !== "waiting") return [];
-    const from = Math.max(today + 1, r.from ?? 0), seen = new Set();
-    return cands.filter(c => c.date >= from && c.date < r.booked && c.time != null && c.mrn !== r.mrn && (!isStart || c.index !== false)
-      && (!r.days.size || r.days.has(`${weekday(c.date)}${c.time < 720 ? "am" : "pm"}`)) && (!r.sameProv || sameProv(c.provider, r.provider)))
+    const from = Math.max(today + 1, r.from ?? 0), last = soonerLast(r), seen = new Set(), half = t => t < 720 ? "am" : "pm";
+    const dates = r.dates || [], days = r.days || new Set(), any = !days.size && !dates.length;
+    const exact = c => dates.some(x => x.d === c.date && x.t === c.time);
+    const fits = c => (any || days.has(`${weekday(c.date)}${half(c.time)}`) || dates.some(x => x.d === c.date && x.t == null && (!x.h || x.h === half(c.time))))
+      && (!r.tw || (c.time >= r.tw.from && c.time <= r.tw.to));
+    return cands.filter(c => c.date >= from && (last == null || c.date <= last) && c.time != null && c.mrn !== r.mrn
+      && !(c.date === r.booked && (r.bookedTime == null || c.time === r.bookedTime)) && !(busy && busy.has(c.date)) && (!isStart || c.index !== false)
+      && (exact(c) || fits(c)) && (!r.sameProv || sameProv(c.provider, r.provider)))
       .map(c => Object.assign({}, c, { key: soonerKey(c) })).filter(c => !seen.has(c.key) && seen.add(c.key))
       .sort((a, b) => a.date - b.date || a.time - b.time);
+  }
+  /* tblIvkOffers: each opening offered to a waitlisted patient, one row per patient and opening (Key "mrn|2026-11-10|600|rivera").
+     Rows come from an upload (a cancellation that fits someone, Outcome blank: to offer) or from Offer on a screen.
+     Outcome: "" to offer, noanswer, declined, accepted (taking it, not changed in NextGen yet), moved (changed in NextGen). */
+  const OFFER_COLS = ["Key", "MRN", "Patient", "Date", "Time", "Provider", "Source", "Booked", "BookedTime", "Outcome", "Note", "By", "Updated"];
+  const offerKey = (mrn, c) => `${mrnKey(mrn)}|${soonerKey(c)}`;
+  function offerRows(values) {
+    return byHeader(values).rows.map(x => { const g = x.get, mrn = mrnKey(g("mrn")), date = toSerial(g("date")), time = toMin(g("time")); if (!mrn || date == null || time == null) return null;
+      const o = { mrn, code: txt(g("patient")), date, time, provider: txt(g("provider")), src: txt(g("source")).toLowerCase(), booked: toSerial(g("booked")),
+        outcome: txt(g("outcome")).toLowerCase(), note: txt(g("note")), by: txt(g("by")), at: txt(g("updated")) };
+      o.bookedTime = o.booked == null ? null : toMin(g("bookedtime")); o.key = txt(g("key")) || offerKey(mrn, o); return o; }).filter(Boolean);
+  }
+  /* where an offer is, against the appointment list:
+       offer / retry   still to offer (retry = no answer last time)
+       taken           someone else is booked in it, or took it from this list
+       past            its day has come
+       declined        they said no
+       book            they're taking it, not changed in NextGen yet
+       moved           changed in NextGen, not on an uploaded list yet ("missing" when a list uploaded after it still lacks it)
+       cancelold       the new visit is on the list but the old one is still booked
+       done            the new visit is on the list and the old one isn't */
+  function offerState(o, A, today, offers, listAt) {
+    const live = a => !isCancelled(a) && !/no ?show/i.test(a.status), pk = TM.provKey(o.provider);
+    const hasNew = A.some(a => live(a) && a.mrn === o.mrn && a.date === o.date && a.time === o.time);
+    const oldOn = o.booked != null && A.some(a => live(a) && a.mrn === o.mrn && a.date === o.booked && (o.bookedTime == null || a.time === o.bookedTime));
+    if (o.outcome === "accepted" || o.outcome === "moved") {
+      if (hasNew) return oldOn ? "cancelold" : "done";
+      if (o.outcome === "accepted") return o.date < today ? "past" : "book";
+      const at = Date.parse(o.at);
+      return listAt != null && !isNaN(at) && msSerial(at) < listAt ? "missing" : "moved";
+    }
+    if (hasNew) return "done";
+    if (o.outcome === "declined") return "declined";
+    if (o.date <= today) return "past";
+    if (A.some(a => live(a) && a.mrn !== o.mrn && a.date === o.date && a.time === o.time && TM.provKey(a.provider) === pk)) return "taken";
+    if ((offers || []).some(x => x.mrn !== o.mrn && x.date === o.date && x.time === o.time && TM.provKey(x.provider) === pk && (x.outcome === "accepted" || x.outcome === "moved"))) return "taken";
+    return o.outcome === "noanswer" ? "retry" : "offer";
   }
   /* open template slots from tomorrow to a date (index: false for follow-up-only slots) */
   function openSlots(X, today, until) {
@@ -1408,7 +1479,7 @@
   return { DEFAULTS, VISIT_COLS, TEMPLATES, norm, clinicFromName, USER_COLS, userKey, userRows, pickOrder, cleanName, wbKeyOf, whoRec, whoToday, whoPick, AUTO_SHOW, autoFullOf, autoAny, ADMIN_MIN, adminOk, CLINIC_WIDE, lockedCfg, sigFromFile, withSignature, tplImages, withMap, txt, num, serialOf, dateOf, isoOf, fromIso, toSerial, toMin, fmtT, fmtD, fmtDay, weekday, weekStart,
     PT_COLS, ptRows, AV_LEVELS, avName, availGrid, availStr, canCome, prefCells, awayList, awayStr, awayOn, PAY_COLS, REMIND_METHODS, money, amt, payRows, dueOf, payOf, ledger, toConfirm,
     PARTS, partKey, dueParts, visitAnswered, PROFILE_COLS, COVER_MODES, modeOf, modeParts, isSelf, SOHAR_KEYS, profileRows, coverage, profileGaps, parseSohar, planSoharImport, demand,
-    fullPlan, eligibleStarts, memoX, indexState, indexShort, nextStart, XFER_COLS, xferRows, xferState, elsewhere, visitCounts, SOONER_COLS, soonerRows, soonerKey, soonerMatch, openSlots, freedTimes, ELSE_COLS, elseRows, sameLoc, isOurs, bookedAt, prefCols, indexN: cfg => Math.max(1, Math.round(+cfg.IndexPerWeek * +cfg.IndexWeeks)),
+    fullPlan, eligibleStarts, memoX, indexState, indexShort, nextStart, XFER_COLS, xferRows, xferState, elsewhere, visitCounts, SOONER_COLS, soonerRows, soonerKey, soonerMatch, soonerLast, soonerKind, parseWants, wantsCell, OFFER_COLS, offerKey, offerRows, offerState, openSlots, freedTimes, ELSE_COLS, elseRows, sameLoc, isOurs, bookedAt, prefCols, indexN: cfg => Math.max(1, Math.round(+cfg.IndexPerWeek * +cfg.IndexWeeks)),
     treatments, txNo, isOak, oakState, WAIT_ON, waitlist, waitMove, provFull, fullName, firstName, scheduleOf, START_TPL, longWhen,
     lasfir, provName, mrnKey, pickRow, eventShort, freqDays, byHeader, patients, appts, isCancelled, visitKey, visitRows, phase, isActive, futureOf, asks,
     lastSeen, tagKey, parseTag, tagStr, tagsOf, askProvider, REPLY_COLS, replyRows, replyAction, repliesDue,

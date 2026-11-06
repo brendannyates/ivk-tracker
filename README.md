@@ -106,12 +106,19 @@ balance with no reminder in 14 days is a need.
 
 A patient whose Primary Location isn’t this clinic (or an Oakland patient) has **Transfer** on the patient view’s Protocol page: **Discontinue now** (Status Discontinued, a dated transfer note in Clinic Notes, a log line) or **Schedule a transfer** for a future date (tblIvkTransfers). A scheduled transfer is confirmed at check-out of their last visit here; visits booked here after the date are a need. Transferring to Oakland can mark OAK tasked to schedule them.
 
-## Sooner waitlist
+## Cancellation waitlist
 
-Click a visit on the Schedule to open the patient or waitlist them for a sooner date: the earliest day, the days and halves they can
-come (from their availability) and whether only their provider will do (tblIvkSooner). The Sooner waitlist under the schedule shows
-each patient's openings: open template slots before their visit, with a Hold button. Each NextGen upload also looks at the times a
-cancellation freed and pops up any opening nobody has been shown yet. Done takes them off.
+A patient can be waitlisted for a sooner visit or a day and time they'd rather have, from a visit on the Schedule or from the
+patient view (Schedule › Cancellation waitlist). The form takes the visit to move (or none), the earliest and latest dates (latest
+blank = the day before the visit, so sooner only; later = a better time, not just sooner), weekdays and halves (from their
+availability), particular dates ("Thursday the 13th", AM/PM or one time), a start-time window, and whether only their provider will
+do (tblIvkSooner, one row per patient; the Days cell holds the tokens, see core.js). Days they already come in are never offered.
+
+Openings are open template slots and times a cancellation freed. Each NextGen upload pops up the openings nobody has been shown yet;
+cancellations that fit also go on Today's **Cancellation openings** card (tblIvkOffers). **Offer** opens the call: **They'll take
+it** (then the NextGen steps: book the new time, cancel the old visit; **Done in NextGen** takes them off the waitlist), **Not that
+one**, or **No answer** (stays on Today to try again). When more than one patient fits a time, the card lists them by who waitlisted
+first. The next upload confirms the move, or says the new visit isn't on it, or that the old visit still needs cancelling.
 
 ## Index booking
 
@@ -245,7 +252,8 @@ Index planner gets the newer tables from Update the workbook):
 | tblIvkPatient | Per patient: Luma card on file, okay to collect, Oakland, OAK tasked, availability, dates away, waitlist order and waiting on |
 | tblIvkExceptions | Provider time off: provider, dates, who covers, whether they work the absent provider's template |
 | tblIvkTransfers | Transfers to another clinic: to, date, scheduled / done / cancelled, note, confirmed |
-| tblIvkSooner | The sooner waitlist: booked visit, earliest date, days, same provider, status, openings already shown |
+| tblIvkSooner | The cancellation waitlist: visit to move (or none), earliest date, what they want (days, dates, times, latest date), same provider, status, openings already shown |
+| tblIvkOffers | Openings offered to waitlisted patients: patient, opening, the visit it replaces, outcome (to offer, no answer, declined, accepted, moved), note, by |
 | tblIvkElsewhere | IVK visits at the other clinics from a wider report: MRN, LASFIR, date, time, provider, event, status, location |
 | tblIvkProfile | Per patient: insurance or self pay and the payer for the provider visit and the infusion, the latest Sohar benefits, BIDF printed |
 | tblIvkPay | Payments due at each visit (collected / missed), later payments and waivers, balance reminders |

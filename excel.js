@@ -26,6 +26,8 @@
      tblIvkUsers      GR1  Name | Added | Updated | Settings (JSON)   (who uses this workbook: the "Who's at the desk?" list; no patient)
      tblIvkMissed     GX1  Key | Date | Time | MRN | Patient | Provider | Kind | Exempt | Reason | Source | By | Updated
                           (late cancels, cancellations the desk still has to call, exemptions; no-shows come from NextGen)
+     tblIvkOffers     HK1  Key | MRN | Patient | Date | Time | Provider | Source | Booked | BookedTime | Outcome | Note | By | Updated
+                          (openings offered to patients on the cancellation waitlist, and what they said)
    (AK1 held tblIvkSlots, the first template; it is no longer read.)
    Text cells only on that sheet ("1:22 PM" stays text). The chair map is a document setting (a map file can be larger than a cell holds).
    Two visible tabs hold the provider templates, in the Clinic Template Tool's format so that tool can read them (template.js):
@@ -64,7 +66,8 @@
     { name: "tblIvkStarts", anchor: "FV", columns: C.START_COLS, rows: [C.START_COLS.map(() => "")] },
     { name: "tblIvkReplies", anchor: "GD", columns: C.REPLY_COLS, rows: [C.REPLY_COLS.map(() => "")] },
     { name: "tblIvkUsers", anchor: "GR", columns: C.USER_COLS, rows: [C.USER_COLS.map(() => "")] },
-    { name: "tblIvkMissed", anchor: "GX", columns: C.MISS_COLS, rows: [C.MISS_COLS.map(() => "")] }
+    { name: "tblIvkMissed", anchor: "GX", columns: C.MISS_COLS, rows: [C.MISS_COLS.map(() => "")] },
+    { name: "tblIvkOffers", anchor: "HK", columns: C.OFFER_COLS, rows: [C.OFFER_COLS.map(() => "")] }
   ];
   const BIG = ["tblIvkVisits", "tblIvkLog", "tblIvkHolds", "tblIvkOther", "tblIvkPay", "tblIvkElsewhere", "tblIvkReplies"];
   const IP_RANGE = "A1:AZ60";   // the Index Planner tab: 9 weeks of Mon-Fri across, half hours down, the slot list below
@@ -156,7 +159,7 @@
         t.getDataBodyRange().values = s.rows.map(r => r.map(String));
         made.push(s.name);
       }
-      if (made.length) { ws.getRange("A:HI").format.autofitColumns(); ws.visibility = Excel.SheetVisibility.hidden; }
+      if (made.length) { ws.getRange("A:HW").format.autofitColumns(); ws.visibility = Excel.SheetVisibility.hidden; }
       await ctx.sync();
       return { made, blocked };
     });
@@ -579,6 +582,16 @@
   /* the start checklist, one row per treatment start by Key (start day|MRN); missed visits, one row per visit by Key */
   const saveStart = (key, patch) => saveByKey("tblIvkStarts", key, patch);
   const saveMissed = (key, patch) => saveByKey("tblIvkMissed", key, patch);
+  const saveOffer = (key, patch) => saveByKey("tblIvkOffers", key, patch);
+  /* offers found on an upload: only keys not already on the table (read fresh, so two desks uploading don't double them) */
+  async function addOffers(rows) {
+    if (!rows || !rows.length) return 0;
+    return Excel.run(async ctx => {
+      const { t, b, cols } = await openTable(ctx, "tblIvkOffers"), cK = cols.indexOf("key"), have = new Set(b.values.map(r => String(r[cK])));
+      const add = rows.filter(r => r.Key && !have.has(r.Key) && have.add(r.Key)); if (!add.length) return 0;
+      addRows(t, cols, b, add); await ctx.sync(); return add.length;
+    });
+  }
   /* the cancellations an upload found, all in one go: [{ Key, ...patch }]; a key already on the table keeps its row */
   async function addMissed(rows) {
     if (!rows || !rows.length) return 0;
@@ -699,5 +712,5 @@
 
   return { DATA_SHEET, SHEETS, PLANNER, TPL_SHEET, TYPES_SHEET, SPEC, load, setup, saveVisit, confirmProtocol, replaceAppts, saveKeyed, saveRoutes, appendLog, addReply, setReply, openRow,
     setupTemplate, addGrid, setCells, saveTypes, replaceOther, replaceElse, saveSooner, savePlan, saveFlag, placeHolds, setHolds, fillPlanner, getDoc, setDoc, refreshDoc,
-    readRow, saveRow, savePt, addPays, saveRanks, saveException, saveProfile, upsertMany, saveXfer, addMpt, saveStart, saveMissed, addMissed, saveUser };
+    readRow, saveRow, savePt, addPays, saveRanks, saveException, saveProfile, upsertMany, saveXfer, addMpt, saveStart, saveMissed, addMissed, saveUser, saveOffer, addOffers };
 });
