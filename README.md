@@ -26,12 +26,16 @@ the task pane, full screen sits at the top right of every page with refresh and 
   press it for "This visit does not match the templated slot-type". Pressing a booked visit opens the patient view; pressing an
   open slot holds it for a patient (an open index start can plan all 6 index visits from there instead).
 - **Access**: four pages, picked with the chips at the top.
-  - **Demand**: what the schedule has to hold at everyone's current protocol (the tracker's Frequency), by protocol: patients,
-    visits a week each and in all, and for the next 4 and 8 weeks what's needed, booked (NextGen visits and holds) and still to
-    book; then week by week against the template's IVK slots and how many are open. Include paused patients, or exclude or show
-    only unscheduled ones (nothing booked). Induction patients count at 2 a week until treatment 6, then at the after-index
-    protocol (Settings, 1x per week); **When index creates access** lists each one with the week they step down and the visits a
-    week that frees.
+  - **Demand**: how far out active patients are scheduled, and what's still to book. **Week by week** (Sunday to Saturday, every
+    active patient, not paused): **Avg Need** at current protocols (Induction at 2 a week until treatment 6, then the after-index
+    protocol, Settings, 1x per week; PRN and blank none), **Booked** (IVK visits and holds on the list) out of the template's IVK
+    slots, **Scheduled Through** (the share of active patients with a protocol, not PRN or paused, booked that week or later), and
+    **Projected Need** (the visits still to book if each patient keeps their cadence past their last booked visit; index patients
+    weekly after treatment 6). The tiles lead with the share scheduled out 4 weeks; the clinic decides what share it wants before
+    starting new patients. **By protocol** below keeps the Unscheduled only / Everyone / Scheduled only filter and Include paused.
+    **No-shows and late cancels** lists patients by count in the last 30, 60 and 90 days (each one, with its exemption, folded
+    away below). **Projected Access Post-Index** lists each index patient with the week they step down and the visits a week
+    that frees.
   - **Waitlist** (below), **Index planner** (below) and **Templates** (the provider grids; the providers are toggled at the top
     right of the template card).
 - **Patients**: a table of everyone on the Master Patient Tracker that sorts by any column, ascending or descending (press the
@@ -115,12 +119,19 @@ Consent rows never count toward balances or collected totals.
 
 A patient whose Primary Location isn’t this clinic (or an Oakland patient) has **Transfer** on the patient view’s Protocol page: **Discontinue now** (Status Discontinued, a dated transfer note in Clinic Notes, a log line) or **Schedule a transfer** for a future date (tblIvkTransfers). A scheduled transfer is confirmed at check-out of their last visit here; visits booked here after the date are a need. Transferring to Oakland can mark OAK tasked to schedule them.
 
-## Sooner waitlist
+## Cancellation waitlist
 
-Click a visit on the Schedule to open the patient or waitlist them for a sooner date: the earliest day, the days and halves they can
-come (from their availability) and whether only their provider will do (tblIvkSooner). The Sooner waitlist under the schedule shows
-each patient's openings: open template slots before their visit, with a Hold button. Each NextGen upload also looks at the times a
-cancellation freed and pops up any opening nobody has been shown yet. Done takes them off.
+A patient can be waitlisted for a sooner visit or a day and time they'd rather have, from a visit on the Schedule or from the
+patient view (Schedule › Cancellation waitlist). The form takes the visit to move (or none), the earliest and latest dates (latest
+blank = the day before the visit, so sooner only; later = a better time, not just sooner), weekdays and halves (from their
+availability), particular dates ("Thursday the 13th", AM/PM or one time), a start-time window, and whether only their provider will
+do (tblIvkSooner, one row per patient; the Days cell holds the tokens, see core.js). Days they already come in are never offered.
+
+Openings are open template slots and times a cancellation freed. Each NextGen upload pops up the openings nobody has been shown yet;
+cancellations that fit also go on Today's **Cancellation openings** card (tblIvkOffers). **Offer** opens the call: **They'll take
+it** (then the NextGen steps: book the new time, cancel the old visit; **Done in NextGen** takes them off the waitlist), **Not that
+one**, or **No answer** (stays on Today to try again). When more than one patient fits a time, the card lists them by who waitlisted
+first. The next upload confirms the move, or says the new visit isn't on it, or that the old visit still needs cancelling.
 
 ## Index booking
 
@@ -254,7 +265,8 @@ Index planner gets the newer tables from Update the workbook):
 | tblIvkPatient | Per patient: LumaPay card on file, verbal consent to collect copay, Oakland, OAK tasked, availability, dates away, waitlist order and waiting on |
 | tblIvkExceptions | Provider time off: provider, dates, who covers, whether they work the absent provider's template |
 | tblIvkTransfers | Transfers to another clinic: to, date, scheduled / done / cancelled, note, confirmed |
-| tblIvkSooner | The sooner waitlist: booked visit, earliest date, days, same provider, status, openings already shown |
+| tblIvkSooner | The cancellation waitlist: visit to move (or none), earliest date, what they want (days, dates, times, latest date), same provider, status, openings already shown |
+| tblIvkOffers | Openings offered to waitlisted patients: patient, opening, the visit it replaces, outcome (to offer, no answer, declined, accepted, moved), note, by |
 | tblIvkElsewhere | IVK visits at the other clinics from a wider report: MRN, LASFIR, date, time, provider, event, status, location |
 | tblIvkProfile | Per patient: insurance or self pay and the payer for the provider visit and the infusion, the latest Sohar benefits, BIDF printed |
 | tblIvkPay | Payments due at each visit (collected / missed), later payments and waivers, balance reminders, the copay check at check-in (consent) |
