@@ -30,7 +30,9 @@
     CmStage: "6. Started", StartBackDays: 14,
     /* cancellations: a visit cancelled on its own day is always a late cancel; one cancelled up to LateCancelDays before it goes to
        the desk to say whether it was late. MissWeeks: how many past weeks the no-show and late-cancel rate is taken from */
-    LateCancelDays: 1, MissWeeks: 8 };
+    LateCancelDays: 1, MissWeeks: 8,
+    /* RN functions: the desk's Start treatment step between check-in and check-out. Off: check-in starts the visit */
+    RnFunctions: "FALSE" };
   const ACTIVE = ["ongoing", "induction"];
   const DAY_NAMES = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
   const MONTHS = ["January", "February", "March", "April", "May", "June", "July", "August", "September", "October", "November", "December"];
@@ -1286,13 +1288,14 @@
   const longWhen = (d, t) => { const x = dateOf(d); return `${DAY_NAMES[x.getDay()]}, ${MONTHS[x.getMonth()]} ${ordinal(x.getDate())}, ${x.getFullYear()}${t != null ? `, at ${fmtT(t)}` : ""}`; };
   /* The desk's start email ("MHS: Upcoming Appointment(s)"), as HTML. {mrn} {first} {clinic} {firstVisit} {address} {phone} are
      filled in; {schedule} is where the appointment table goes and {signature} the sender's own (blank unless they added one in
-     Settings › You: Outlook adds theirs to a new message). Edit it in Settings › Messages. */
+     Settings › You: Outlook adds theirs to a new message). {map} is the clinic's location/parking map (Settings › Messages), with its
+     own "Getting Here" heading; nothing shows there until a map is loaded. Edit it in Settings › Messages. */
   const LI = s => `<li style="margin:0">${s}</li>`, UL = a => `<ul style="margin-top:0;margin-bottom:0">${a.map(LI).join("")}</ul>`, H = (s, m) => `<p style="margin:${m || "12pt"} 0 0"><b>${s}</b></p>`;
   const START_TPL = {
     startSubject: "SECURE: Upcoming Visit Information | MHS",
     startEmail: [
       `<p style="margin:0"><b>MRN: {mrn}</b><br><br>Hi {first}!<br><br>Thank you for connecting with me via phone recently. As mentioned, please see the information below pertaining to your upcoming visit(s).<br><br>We’re looking forward to meeting you at our {clinic} clinic, <b>{firstVisit}</b> for your first treatment at <b>{address}</b>. Below is a brief overview of what to expect and how to prepare, so your first session goes as smoothly and comfortably as possible. Please note that you may want to budget extra time for your first appointment, though you typically can expect appointments to last at least 2 hours. Your Benefits Investigation Disclosure Form (BIDF) has also been included for your review.</p>`,
-      H("Your Upcoming Appointments:", "6pt"), "{schedule}",
+      H("Your Upcoming Appointments:", "6pt"), "{schedule}", "{map}",
       H("Before Your Appointment:", "6pt"), UL(["<b>Avoid food for at least 4 hours</b> prior to your infusion. Small sips of water are okay up to 1 hour before.",
         "<b>Hydrate well earlier in the day</b>, but limit liquids in the hour leading up to your appointment.", "<b>Take your usual medications</b> unless your provider has instructed otherwise.",
         "<b>Avoid alcohol or recreational substances</b> for at least 24 hours beforehand.", "<b>Arrange a ride home.</b> You will not be able to drive or take rideshare alone after your session.",
@@ -1353,6 +1356,12 @@
   function whoRec(json) { try { const o = JSON.parse(json || "{}"); return { day: txt(o.day), name: txt(o.name), used: Array.isArray(o.used) ? o.used.map(txt).filter(Boolean) : [] }; } catch (e) { return { day: "", name: "", used: [] }; } }
   const whoToday = (rec, dayIso) => rec && rec.day === dayIso ? rec.name : "";
   const whoPick = (rec, name, dayIso) => ({ day: dayIso, name, used: [name].concat((rec?.used || []).filter(n => userKey(n) !== userKey(name))).slice(0, 20) });
+  /* "Open in full screen whenever I open this workbook": each person's own choice (autoFull in their settings). Excel can only open
+     the add-in with the workbook for everyone (document setting Office.AutoShowTaskpaneWithDocument), so it's on while anyone has
+     theirs on. users = userRows(); name/on = a change not saved yet. */
+  const AUTO_SHOW = "Office.AutoShowTaskpaneWithDocument";
+  const autoFullOf = u => !!(u && u.set && u.set.autoFull === true);
+  const autoAny = (users, name, on) => (users || []).some(u => name != null && userKey(u.name) === userKey(name) ? !!on : autoFullOf(u)) || (name != null && !!on);
   /* Admin: code 0582 unlocks on any workbook. Compared as a salted SHA-256 so the code isn't written here in plain text. The repo is
      public, so this keeps honest people from changing clinic-wide settings by accident; it is not a security control. */
   const ADMIN_SALT = "ivk-tracker-admin", ADMIN_HASH = "14068cdf14b0b225199c46811cd9623fd862c9bee291adc30e89c36649a1bf77", ADMIN_MIN = 15;
@@ -1385,8 +1394,30 @@
     const s = txt(sig), b = String(body || ""), blk = html ? (s ? `<div style="margin:12pt 0 0">${s}</div>` : "") : (s ? `\n\n${sigText(s)}` : "");
     return b.includes("{signature}") ? b.replace(/\{signature\}/g, blk) : b + blk;
   }
+  /* The start email's directions map is kept in the workbook (document setting ivkStartMap), not in the template: a picture is far
+     bigger than an Excel cell holds (32,767 characters). A template pasted with the map in it gives the picture up to be saved as
+     the map and {map} takes its place. Pictures that can't travel in an email (cid:, blob:, file:, local paths) become {map} too, so
+     the loaded map shows there; web pictures (https) stay as they are. Returns { html, img: { type, b64 } | null, lost }. */
+  function tplImages(html) {
+    let img = null, lost = 0, token = /\{map\}/.test(String(html || ""));
+    const out = String(html || "").replace(/<img\b[^>]*>/gi, tag => {
+      if (/\ssrc\s*=\s*["']?\s*https:\/\//i.test(tag)) return tag;
+      const m = tag.match(/\ssrc\s*=\s*(["'])\s*data:(image\/(?:png|jpe?g|gif));base64,([A-Za-z0-9+/=\s]+)\1/i);
+      if (m) { if (!img) img = { type: m[2].toLowerCase().replace("jpg", "jpeg"), b64: m[3].replace(/\s+/g, "") }; } else lost++;
+      if (token) return ""; token = true; return "{map}";
+    });
+    return { html: out, img, lost };
+  }
+  /* one {map} in the body when a map is loaded (after the schedule when the template has no {map}, as saved templates don't); none without */
+  function withMap(body, has) {
+    const b = String(body || "");
+    if (!has) return b.replace(/<p[^>]*>\s*\{map\}\s*<\/p>\s*/gi, "").replace(/\{map\}\n?/g, "");
+    if (b.includes("{map}")) { let n = 0; return b.replace(/\{map\}/g, () => n++ ? "" : "{map}"); }
+    if (b.includes("{schedule}")) return b.replace("{schedule}", "{schedule}\n{map}");
+    return b.includes("{signature}") ? b.replace("{signature}", "{map}\n{signature}") : b + "\n{map}";
+  }
 
-  return { DEFAULTS, VISIT_COLS, TEMPLATES, norm, clinicFromName, USER_COLS, userKey, userRows, pickOrder, cleanName, wbKeyOf, whoRec, whoToday, whoPick, ADMIN_MIN, adminOk, CLINIC_WIDE, lockedCfg, sigFromFile, withSignature, txt, num, serialOf, dateOf, isoOf, fromIso, toSerial, toMin, fmtT, fmtD, fmtDay, weekday, weekStart,
+  return { DEFAULTS, VISIT_COLS, TEMPLATES, norm, clinicFromName, USER_COLS, userKey, userRows, pickOrder, cleanName, wbKeyOf, whoRec, whoToday, whoPick, AUTO_SHOW, autoFullOf, autoAny, tplImages, withMap, ADMIN_MIN, adminOk, CLINIC_WIDE, lockedCfg, sigFromFile, withSignature, txt, num, serialOf, dateOf, isoOf, fromIso, toSerial, toMin, fmtT, fmtD, fmtDay, weekday, weekStart,
     PT_COLS, ptRows, AV_LEVELS, avName, availGrid, availStr, canCome, prefCells, awayList, awayStr, awayOn, PAY_COLS, REMIND_METHODS, CONSENT_METHODS, consentMethod, consentOf, money, amt, payRows, dueOf, payOf, ledger, toConfirm,
     PARTS, partKey, dueParts, visitAnswered, PROFILE_COLS, COVER_MODES, modeOf, modeParts, isSelf, SOHAR_KEYS, profileRows, coverage, profileGaps, parseSohar, planSoharImport, demand,
     fullPlan, eligibleStarts, memoX, indexState, indexShort, nextStart, XFER_COLS, xferRows, xferState, elsewhere, visitCounts, SOONER_COLS, soonerRows, soonerKey, soonerMatch, openSlots, freedTimes, ELSE_COLS, elseRows, sameLoc, isOurs, bookedAt, prefCols, indexN: cfg => Math.max(1, Math.round(+cfg.IndexPerWeek * +cfg.IndexWeeks)),

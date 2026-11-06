@@ -12,6 +12,9 @@
   const C = window.IvkCore, N = window.IvkNotify, X = window.IvkExcel, TM = window.IvkTemplate;
   const FULL = new URLSearchParams(location.search).has("full");
   const MAP_KEY = "ivkBayPlan", POLL_MS = 15000, TICK_MS = 20000, CHUNK = 8000, CALL_MS = 120000;
+  /* the start email's directions map (a picture), in the workbook's settings: { name, type, b64, w, h }. Never in the repo. */
+  const START_MAP_KEY = "ivkStartMap", MAP_MAX_W = 960, MAP_MAX_B64 = 700000;
+  const okMap = v => v && typeof v.b64 === "string" && v.b64 && /^image\/(png|jpeg|gif)$/.test(v.type) && v.w > 0 && v.h > 0 ? v : null;
   const BUILDER = "https://brendannyates.github.io/bay-map-builder/";
   const $ = s => document.querySelector(s);
   const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
@@ -48,7 +51,7 @@
   function setWho(name) {
     S.name = name || "";
     if (!FULL && whoKey()) { const rec = whoRead(); LS.set(whoKey(), JSON.stringify(name ? C.whoPick(rec, name, dayIso()) : Object.assign(rec, { day: "", name: "" }))); }
-    toChild({ k: "who", name: S.name });
+    toChild({ k: "who", name: S.name }); if (name) maybeAutoFull();
   }
   const me = () => (S.users || []).find(u => C.userKey(u.name) === C.userKey(S.name)) || null;
   /* the signature is cleaned again whenever it's used: anyone who can edit the workbook can edit the cell */
@@ -166,7 +169,7 @@
   const Local = {
     saveVisit: (k, b, p, g) => X.saveVisit(k, b, p, g), confirmProtocol: (m, f, s) => X.confirmProtocol(m, f, s), replaceAppts: (r, s) => X.replaceAppts(r, s),
     saveKeyed: (t, p) => X.saveKeyed(t, p), saveRoutes: r => X.saveRoutes(r), appendLog: r => X.appendLog(r), addReply: o => X.addReply(o), openRow: (k, m) => X.openRow(k, m),
-    setup: () => X.setup(), setDoc: (k, v) => X.setDoc(k, v),
+    setup: () => X.setup(), setDoc: (k, v) => X.setDoc(k, v), getStartMap: async () => X.getDoc(START_MAP_KEY) || null,
     savePlan: (m, p) => X.savePlan(m, p), saveFlag: (m, p) => X.saveFlag(m, p), placeHolds: (r, by) => X.placeHolds(r, by), setHolds: (ids, st, by) => X.setHolds(ids, st, by),
     readRow: (k, m) => X.readRow(k, m), saveRow: (k, m, p) => X.saveRow(k, m, p), savePt: (m, p) => X.savePt(m, p), addPays: r => X.addPays(r), saveRanks: (o, by) => X.saveRanks(o, by), saveException: (i, p) => X.saveException(i, p),
     setupTemplate: () => X.setupTemplate(), addGrid: (o, t) => X.addGrid(o, t), setCells: (a, r, c, v, m, s) => X.setCells(a, r, c, v, m, s),
@@ -176,7 +179,7 @@
     /* the pane reads first so the tab gets every hold anyone has placed, not just this screen's copy */
     fillPlanner: async () => { await refresh(true); return X.fillPlanner(S.A, S.holds, S.raw.apptUpdated); }
   };
-  const QUIET = ["openRow", "readRow"];   // reads: no refresh after them
+  const QUIET = ["openRow", "readRow", "getStartMap"];   // reads: no refresh after them
   const Store = {};
   for (const k of Object.keys(Local)) Store[k] = FULL ? (...a) => callPane(k, a) : async (...a) => { const r = await Local[k](...a); if (!QUIET.includes(k)) await refresh(true); return r; };
   /* Excel's refusals in plain words: AccessDenied is a protected sheet or a workbook open for viewing only */
@@ -258,6 +261,20 @@
       pop.dlg.addEventHandler(Office.EventType.DialogEventReceived, () => { pop.dlg = null; if (window.DevUpdates) DevUpdates.setSend(null); render(); });
     });
   }
+  /* full screen on open: once per session, as soon as we know who's at the desk (today's pick, or the pick at the prompt) */
+  function maybeAutoFull() {
+    if (FULL || S.autoDone || !S.name) return; S.autoDone = true;
+    if (C.autoFullOf(me()) && !pop.dlg) openFull();
+  }
+  async function saveAutoFull(on) {
+    if (!S.name) return;
+    const any = C.autoAny(S.users, S.name, on);
+    await write("Saving…", async () => {
+      if (!S.raw.tables?.own?.tblIvkUsers) await Store.setup(); if (!me()) await Store.saveUser(S.name, {});
+      await Store.saveUser(S.name, { autoFull: !!on });
+      await Store.setDoc(C.AUTO_SHOW, any ? true : null);
+    }, on ? "Saved. Next time you open this workbook, the tracker opens in full screen." : any ? "Saved. You’ll open beside the sheet; someone else still has full screen on, so the tracker keeps opening with the workbook." : "Saved. The tracker no longer opens by itself with this workbook.");
+  }
   function closeFull() { if (pop.dlg) { try { pop.dlg.close(); } catch (e) { /* closed */ } pop.dlg = null; } if (window.DevUpdates) DevUpdates.setSend(null); render(); }
 
   /* ---------- reading ---------- */
@@ -278,7 +295,7 @@
       const raw = await X.load(S.raw ? null : bootStep); raw.plan = X.getDoc(MAP_KEY) || null;
       const sig = hash(JSON.stringify(raw));
       S.live = true; S.err = "";
-      if (force || sig !== S.sig) { const first = !S.raw; S.sig = sig; S.raw = raw; derive(); loadWho(); if (first) bootDone(); toChild({ k: "snap", raw, who: S.name }); if (!S.modal && !typing()) render(); if (first) carryCastro(); }
+      if (force || sig !== S.sig) { const first = !S.raw; S.sig = sig; S.raw = raw; derive(); loadWho(); if (first) bootDone(); toChild({ k: "snap", raw, who: S.name }); if (!S.modal && !typing()) render(); if (first) { carryCastro(); maybeAutoFull(); } }
       if (C.repliesDue(S.replies).length && !applying) setTimeout(applyReplies, 0);
     } catch (e) { console.error(e); S.err = "Couldn’t read the workbook. Check you’re still signed in; the tracker tries again in a few seconds."; render(); }
   }
@@ -404,13 +421,15 @@
 
   /* ---------- Today ---------- */
   function todayHTML() {
-    const F = floor();
-    const sub = S.list.length ? `${F.tx.length} in treatment, ${F.inn.length} checked in, ${F.coming.length} still to come.` : "No IVK visits on the list today.";
+    const F = floor(), rn = rnOn();
+    /* without RN functions, check-in starts the visit: one "Here now" list (checked in before the switch, or in treatment) */
+    const here = rn ? F.tx : F.tx.concat(F.inn);
+    const sub = !S.list.length ? "No IVK visits on the list today." : rn ? `${F.tx.length} in treatment, ${F.inn.length} checked in, ${F.coming.length} still to come.` : `${here.length} checked in, ${F.coming.length} still to come.`;
     if (!S.sel || !visitBy(S.sel)) { const v = pickVisit(F); S.sel = v ? v.key : null; }
     return `${setupBanner()}${apptStale()}${head("Today", sub, true)}
       <div class="today"><div class="tmain">${S.plan ? chairsHTML(F) : planErrHTML()}
-        ${listHTML("In treatment", `${F.tx.length} now`, F.tx, "Nobody is in treatment.")}
-        ${listHTML("Checked in", `${F.inn.length} today`, F.inn, "Nobody is checked in.")}
+        ${rn ? `${listHTML("In treatment", `${F.tx.length} now`, F.tx, "Nobody is in treatment.")}
+        ${listHTML("Checked in", `${F.inn.length} today`, F.inn, "Nobody is checked in.")}` : listHTML("Checked in", `${here.length} now`, here, "Nobody is checked in.")}
         ${listHTML("Still to come", F.coming.length ? `${F.coming.length} more today` : "", F.coming, "Nobody else is booked today.")}
         ${actionsHTML()}${startsHTML()}${doneHTML(F)}${gapsHTML(6)}</div>
       <div class="tside">${visitCardHTML(visitBy(S.sel), F)}</div></div>`;
@@ -438,6 +457,8 @@
   }
   /* a tblIvkMissed row for a visit */
   const missRow = (m, patch) => Object.assign({ Date: C.isoOf(m.date), Time: m.time != null ? C.fmtT(m.time) : "", MRN: m.mrn, Patient: m.code || "", Provider: m.provider || "", By: S.name, Updated: new Date().toISOString() }, patch);
+  /* RN functions (Settings › Timing): the desk's Start treatment step. Off by default: Check in, then Check out */
+  const rnOn = () => /^(true|yes|1)$/i.test(C.txt(S.cfg.RnFunctions));
   const planErrHTML = () => S.planErr ? `<div class="msg warn">${esc(S.planErr)}</div>` : "";
   /* patients on the appointment list without a profile (treatment starts first): the tech makes one before they come */
   /* the start checklist: a newly booked start needs a profile; on the day, Case Management in NextGen goes to CmStage.
@@ -538,10 +559,10 @@
     const why = !p ? "" : v.ask.proto ? `The protocol hasn’t been confirmed since ${p.protoAt != null ? C.fmtD(p.protoAt) : "it was set"}.` : v.ask.thru != null ? `Booked through ${C.fmtD(v.ask.thru)}.` : "Nothing is booked after today.";
     if (v.ph === "booked") { const late = v.a.time != null && nowMin() - v.a.time > 15;
       return { lead: late ? `${C.fmtT(v.a.time)} visit, not checked in yet` : inTxt(v.a.time) || `Booked at ${C.fmtT(v.a.time)}`, body: `Expected at ${C.fmtT(v.a.time)}.${p && v.ask.any ? " The group chat gets the ask at check-in." : ""}`, pri: ["checkin", "Check in"] }; }
-    if (v.ph === "in") return { lead: "Checked in", body: `Checked in at ${C.fmtT(v.st.arr)} for a ${C.fmtT(v.a.time)} visit.`, pri: ["start", "Start treatment"] };
+    if (v.ph === "in") return { lead: "Checked in", body: `Checked in at ${C.fmtT(v.st.arr)} for a ${C.fmtT(v.a.time)} visit.`, pri: rnOn() ? ["start", "Start treatment"] : ["checkout", "Check out"] };
     if (v.ph === "tx") {
       if (C.askDue(v)) return { warn: true, lead: "Ask the group chat", body: `${why} Ask now so the provider can answer before discharge.`, pri: ["ask", "Ask the group chat"] };
-      return { lead: "In treatment", body: `Since ${C.fmtT(v.st.seat)}.${post != null ? ` Requires a post-check at ${C.fmtT(post)} with ${prov}.` : " Nothing needed from the desk until check-out."}`, pri: ["checkout", "Check out"] };
+      return { lead: rnOn() ? "In treatment" : "Checked in", body: `Since ${C.fmtT(v.st.seat)}.${post != null ? ` Requires a post-check at ${C.fmtT(post)} with ${prov}.` : " Nothing needed from the desk until check-out."}`, pri: ["checkout", "Check out"] };
     }
     if (v.ph === "done") { const open = v.st.booked === "later" && v.ask.book;
       return { warn: open, lead: `Checked out at ${C.fmtT(v.st.out)}`, body: open ? "Next visit not booked yet." : "Nothing left for this visit.", pri: open ? ["markBooked", "Mark next visit booked"] : v.p ? ["printSched", "Print schedule"] : null }; }
@@ -552,7 +573,7 @@
     if (!v) return `<aside class="card detail"><div class="name">No visit picked</div><p class="body">${S.list.length ? "Pick a row or a chair to see the visit." : "Nobody is on today’s IVK list. Upload a fresh appointment list in Settings if that looks wrong."}</p></aside>`;
     const vs = visitState(v), k = esc(v.key), c = C.code(v), p = v.p, pc = hasPc(v), T = todayS();
     const sv = /start/i.test(v.a.event || "") ? S.SL.find(s => s.key === C.startKey(v.a.date, v.a.mrn)) || null : null;
-    const where = ({ in: "Checked in", tx: "In treatment", done: "Checked out", noshow: "No-show", gone: "Not coming" })[v.ph] || "";
+    const where = ({ in: "Checked in", tx: rnOn() ? "In treatment" : "Checked in", done: "Checked out", noshow: "No-show", gone: "Not coming" })[v.ph] || "";
     const loc = where + (S.plan && v.st.chair && (v.ph === "in" || v.ph === "tx") ? ` · ${chairTxt(v.st.chair)}` : "");
     const meta = [`${C.fmtT(v.a.time)} ${kindTxt(v).toLowerCase()}`, C.provName(v.a.provider), `MRN ${v.a.mrn}`].filter(Boolean).join(" · ");
     const ix = p ? C.indexState(p, S.A, T, S.cfg) : null, kd = kindOf(v), pt = p ? ptOf(p.mrn) : null;
@@ -563,12 +584,12 @@
     const steps = [
       v.st.arr != null ? st("done", "Checked in", arr ? `${esc(routeTo("arrival"))} told in Teams at ${timeOf(arr.at)}` : teamsReady("arrival") ? `${esc(routeTo("arrival"))} not told in Teams` : "Teams not set up for arrivals", C.fmtT(v.st.arr))
         : st(v.ph === "booked" || v.ph === "noshow" ? "now" : "next", "Check in", `${esc(routeTo("arrival"))} is told in Teams`, C.fmtT(v.a.time)),
-      v.st.seat != null ? st("done", "In treatment", [S.plan && v.st.chair ? chairTxt(v.st.chair) : "", post != null ? `Post check at ${C.fmtT(post)}` : ""].filter(Boolean).join(" · "), `since ${C.fmtT(v.st.seat)}`)
+      !rnOn() ? "" : v.st.seat != null ? st("done", "In treatment", [S.plan && v.st.chair ? chairTxt(v.st.chair) : "", post != null ? `Post check at ${C.fmtT(post)}` : ""].filter(Boolean).join(" · "), `since ${C.fmtT(v.st.seat)}`)
         : st(v.ph === "in" ? "now" : "next", "Start treatment", "", ""),
       p && (v.ask.any || v.st.asked != null) ? (v.st.asked != null ? st("done", "Asked the providers", ask ? esc(routeTo("protocol")) : "Marked asked", C.fmtT(v.st.asked))
         : st(v.ph === "tx" ? "soon" : "next", "Ask the providers", v.ask.proto ? `Protocol not confirmed since ${p.protoAt != null ? C.fmtD(p.protoAt) : "it was set"}` : v.ask.thru != null ? `Booked through ${C.fmtD(v.ask.thru)}` : "Nothing booked after today", "")) : "",
       v.st.out != null ? st("done", "Checked out", v.st.booked === "yes" ? "Next visit booked" : v.st.booked === "no" ? "No next visit needed" : v.ask.book ? "Next visit not booked yet" : "Next visit on the list", C.fmtT(v.st.out))
-        : st(v.ph === "tx" && !C.askDue(v) ? "now" : "next", "Check out", "Next visit, protocol, payment", ""),
+        : st((v.ph === "tx" || (v.ph === "in" && !rnOn())) && !C.askDue(v) ? "now" : "next", "Check out", "Next visit, protocol, payment", ""),
       sv ? (sv.cmDone ? st("done", "Case Management updated", `In NextGen, ${esc(cmStage())}`, sv.cmAt != null ? C.fmtD(sv.cmAt) : "")
         : st(v.ph === "done" ? "soon" : "next", "Update Case Management", `In NextGen, to “${esc(cmStage())}”, once the start is kept`, "")) : ""
     ].join("");
@@ -586,8 +607,8 @@
     const xs = p ? C.xferState(S.XF.get(p.mrn), S.A, T, S.x.E) : null;
     if (xs && xs.due && v.ph !== "booked") sec.push(["xfer", `Confirm transfer to ${xs.to}`]);
     if (v.ph === "booked") quiet.push(["gone", "Not coming today"]);
-    if (v.ph === "in") quiet.push(["undoIn", "Undo check-in"]);
-    if (v.ph === "tx") quiet.push(["undoSeat", "Back to checked in"]);
+    if (v.ph === "in" || (v.ph === "tx" && !rnOn())) quiet.push(["undoIn", "Undo check-in"]);
+    if (v.ph === "tx" && rnOn()) quiet.push(["undoSeat", "Back to checked in"]);
     if (v.ph === "done") quiet.push(["undoOut", "Undo check-out"]);
     /* start paperwork is for a treatment start only; the start email goes out before it, so it's on the patient view */
     if (p && /start/i.test(v.a.event)) quiet.push(["startForms", "Start paperwork"]);
@@ -1422,6 +1443,7 @@
     return `${head("Settings", "", false)}${setupBanner()}<div class="sgrid2">
       <section class="card set"><h3>You</h3><p>${S.name ? `At the desk today: <b>${esc(S.name)}</b>. Your name goes on Teams posts and in the log.` : "Nobody picked yet."} The tracker asks who’s at the desk the first time it opens each day.</p>
         <div class="actions"><button class="btn ghost sm line" data-act="switchUser">Switch user</button></div>
+        <label class="opt"><input type="checkbox" id="autoFull"${C.autoFullOf(me()) ? " checked" : ""}${S.name ? "" : " disabled"}> Open in full screen whenever I open this workbook<small>${S.name ? "Saved with your name. While anyone has this on, the tracker opens by itself when the workbook opens (beside the sheet for everyone else)." : "Pick who’s at the desk first."}</small></label>
         <details class="fold"><summary>Add a signature <span>only if Outlook doesn’t add yours</span></summary>
           <p class="small muted">The start email leaves the signature to Outlook: set yours once in Outlook (Settings › Mail › Signatures on the web, or File › Options › Mail › Signatures), then use <b>Copy email</b> and paste it into a new message. The <b>Outlook draft (.eml)</b> file may open without your signature, so add it here if you use the draft.</p>
           <ol class="how"><li>In File Explorer, click the address bar, paste <code>%APPDATA%\\Microsoft\\Signatures</code> and press Enter.</li><li>Choose the <b>.htm</b> file named after your signature below (the .txt file works too). Pictures in a signature don’t come along.</li></ol>
@@ -1460,7 +1482,8 @@
       <section class="card set"><h3>Messages</h3><p>{patient} is the code, {time} the visit time, {provider} the provider, {chair} the chair, {protocol} the frequency (“every 2 week”).</p>
         ${tplF("arrival", "Arrival")}${tplF("seated", "Chair picked at the start of treatment")}${tplF("protocol", "Confirm protocol and book")}${tplF("protocolOnly", "Confirm protocol only")}${tplF("bookOnly", "Book only")}
         <label class="fld">Start email subject<input id="tp_startSubject" value="${esc(S.tpl.startSubject)}"></label>
-        <label class="fld">Start email (HTML)<textarea id="tp_startEmail" rows="9" spellcheck="false">${esc(S.tpl.startEmail)}</textarea><span class="hint">The desk’s “Upcoming Appointment(s)” email. {mrn}, {first} (first name), {clinic}, {firstVisit} (“Wednesday, November 4th, 2026, at 10:00 AM”), {address}, {phone}, {schedule} where the appointment table goes, and {signature} where the sender’s signature goes (only when they’ve added one in Settings › You).</span></label>
+        <label class="fld">Start email (HTML)<textarea id="tp_startEmail" rows="9" spellcheck="false">${esc(S.tpl.startEmail)}</textarea><span class="hint">The desk’s “Upcoming Appointment(s)” email. {mrn}, {first} (first name), {clinic}, {firstVisit} (“Wednesday, November 4th, 2026, at 10:00 AM”), {address}, {phone}, {schedule} where the appointment table goes, {map} where the location/parking map goes, and {signature} where the sender’s signature goes (only when they’ve added one in Settings › You). The MHS logo goes at the top by itself.</span></label>
+        ${startMapHTML()}
         <div class="two"><label class="fld">Clinic address in the start email<input id="cf_ClinicAddress" value="${esc(S.cfg.ClinicAddress)}" autocomplete="off"${lockA("ClinicAddress")}>${lockH("ClinicAddress")}</label>
         <label class="fld">Clinic phone in the start email<input id="cf_ClinicPhone" value="${esc(S.cfg.ClinicPhone)}" autocomplete="off"${lockA("ClinicPhone")}><span class="hint">${locked("ClinicPhone") ? "Saved for this workbook. Unlock Admin below to change it." : "For example 844-867-8444 ext. 1234"}</span></label></div>
         <div class="two"><label class="fld">CC on every start email<input id="cf_StartCc" value="${esc(S.cfg.StartCc)}" autocomplete="off" placeholder="the clinic’s help email"${lockA("StartCc")}>${lockH("StartCc")}</label><label class="fld">BCC on every start email (optional)<input id="cf_StartBcc" value="${esc(S.cfg.StartBcc)}" autocomplete="off"${lockA("StartBcc")}>${lockH("StartBcc")}</label></div>
@@ -1476,6 +1499,7 @@
         <label class="fld">Ask to book when booked less than, weeks<input id="cf_AheadWeeks" inputmode="numeric" value="${esc(c.AheadWeeks)}"></label><label class="fld">Confirm protocol every, days<input id="cf_ProtocolDays" inputmode="numeric" value="${esc(c.ProtocolDays)}"></label>
         <label class="fld">Auth ending within, days<input id="cf_AuthWarnDays" inputmode="numeric" value="${esc(c.AuthWarnDays)}"></label><label class="fld">Visits left on auth, at most<input id="cf_EncountersWarn" inputmode="numeric" value="${esc(c.EncountersWarn)}"></label></div>
         <label class="fld">Clinic<input id="cf_Clinic" value="${esc(c.Clinic)}" autocomplete="off"${lockA("Clinic")}>${locked("Clinic") ? lockH("Clinic") : S.clinicFromName ? '<span class="hint">From the workbook’s name. Save to keep it for everyone.</span>' : ""}</label>
+        <label class="opt"><input type="checkbox" id="cf_RnFunctions"${rnOn() ? " checked" : ""}> RN functions<small>Adds a Start treatment step between Check in and Check out. Off: checking in starts the visit, so the desk only checks in and checks out.</small></label>
         <div class="actions"><button class="btn ghost sm line" data-act="saveCfg">Save timing</button></div></section>
 
       <section class="card set"><h3>Index protocol</h3><p>The standard for new starts. Week 1 begins on the day of treatment 1. A patient’s own protocol can be changed in the Index planner.</p>
@@ -1950,7 +1974,7 @@
   function openForms(data) {
     closeForms();
     const wrap = document.createElement("div"); wrap.className = "formwrap"; wrap.id = "formwrap";
-    wrap.innerHTML = `<iframe title="Forms" src="forms.html?v=6"></iframe>`; document.body.appendChild(wrap);
+    wrap.innerHTML = `<iframe title="Forms" src="forms.html?v=7"></iframe>`; document.body.appendChild(wrap);
     const fr = wrap.querySelector("iframe");
     const onMsg = ev => { if (ev.source !== fr.contentWindow || ev.origin !== location.origin) return; const d = ev.data || {};
       if (d.forms === "ready") fr.contentWindow.postMessage({ forms: "data", data }, location.origin);
@@ -1963,17 +1987,21 @@
   /* The patient schedule, as the TMS Tracker makes it: the NextGen appointment list's columns for the visits in a date range
      (Next 14 days, Next 30 days, Rest of course, or From/To), "As of" the list's run time, named "{code} schedule m.d.pdf". */
   const pad2 = n => String(n).padStart(2, "0");
-  const ymd = s => { const d = C.dateOf(s); return `${d.getMonth() + 1}/${d.getDate()}/${d.getFullYear()}`; };
   const schedVisits = (p, from, to) => S.A.filter(a => a.mrn === p.mrn && a.date >= Math.max(from ?? todayS(), todayS()) && a.date <= (to ?? Infinity) && !C.isCancelled(a) && !/no ?show/i.test(a.status))
     .sort((a, b) => a.date - b.date || (a.time ?? 0) - (b.time ?? 0));
   function asOfText() {
     const u = S.raw.apptUpdated, d = new Date(), s = u != null ? Math.floor(u) : C.serialOf(d), mins = u != null ? C.toMin(u) : d.getHours() * 60 + d.getMinutes(), x = C.dateOf(s);
     return `${pad2(x.getMonth() + 1)}/${pad2(x.getDate())}/${x.getFullYear()}  ${C.fmtT(mins)}`;
   }
+  /* the patient's schedule as they see it (email, PDF, print): Date | Time | Appointment | Provider | Location, the start in bold */
+  const DAY3 = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"], MON3 = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+  const dayShort = s => { const x = C.dateOf(s); return `${DAY3[x.getDay()]}, ${MON3[x.getMonth()]} ${x.getDate()}, ${x.getFullYear()}`; };
   function schedObj(p, from, to) {
-    const d = C.dateOf(todayS());
-    return { fname: `${p.code} schedule ${d.getMonth() + 1}.${d.getDate()}.pdf`, asOf: `As of: ${asOfText()}`,
-      rows: schedVisits(p, from, to).map(a => [a.mrn, a.loc || S.cfg.Clinic, ymd(a.date), C.fmtT(a.time), a.provider, a.event, a.status || "Expected"]) };
+    const d = C.dateOf(todayS()), V = schedVisits(p, from, to), c = S.cfg;
+    return { fname: `${p.code} schedule ${d.getMonth() + 1}.${d.getDate()}.pdf`, asOf: `As of ${asOfText().replace(/\s{2,}/, " ")}`, mrn: p.mrn,
+      clinic: c.Clinic || "", address: C.txt(c.ClinicAddress), phone: C.txt(c.ClinicPhone),
+      rows: V.map(a => [dayShort(a.date), C.fmtT(a.time), /start/i.test(a.event) ? "Treatment start" : "IV ketamine infusion", C.provFull(a.provider), a.loc || c.Clinic || ""]),
+      starts: V.map(a => /start/i.test(a.event)) };
   }
   function schedRangeHTML(p, m) {
     const t = todayS(), all = schedVisits(p, t, null), last = all.length ? all[all.length - 1].date : t;
@@ -1993,13 +2021,15 @@
     /* the template is HTML (the desk's email), so what goes in is escaped; the sender's signature (already cleaned) goes in as is */
     const first = sched[0], html = /<[a-z]/i.test(S.tpl.startEmail), enc = v => html ? esc(v) : String(v);
     const nm = o.name || p.name, vals = { first: C.firstName(nm) || "there", clinic: o.loc || c.Clinic, patient: p.code, mrn: p.mrn, address: c.ClinicAddress, phone: c.ClinicPhone, firstVisit: first ? C.longWhen(first.date, first.time) : "(no visit booked yet)" };
-    const pt = ptOf(p.mrn), body = C.withSignature(String(S.tpl.startEmail).replace(/\{(\w+)\}/g, (x, k) => vals[k] != null ? enc(vals[k]) : x), sigOf(), html);
+    const map = o.email ? okMap(o.map) : null;
+    const pt = ptOf(p.mrn), body = C.withSignature(C.withMap(String(S.tpl.startEmail), !!map).replace(/\{(\w+)\}/g, (x, k) => vals[k] != null ? enc(vals[k]) : x), sigOf(), html);
     /* clinic details the template uses but nobody has entered yet: the checklist holds the draft until they're in */
     const blanks = [["clinic", "the clinic"], ["address", "the clinic address"], ["phone", "the clinic phone"]].filter(([k]) => String(S.tpl.startEmail).includes(`{${k}}`) && !C.txt(vals[k])).map(x => x[1]);
     return { parts: o.parts, code: p.code, mrn: p.mrn, name: C.fullName(nm), dob: d != null ? `${C.dateOf(d).getMonth() + 1}/${C.dateOf(d).getDate()}/${C.dateOf(d).getFullYear()}` : "",
       clinic: o.loc || c.Clinic, provider: o.prov || "", asOf: `As of ${C.fmtDay(todayS())}, ${C.dateOf(todayS()).getFullYear()}`, sch: schedObj(p, o.from, o.to), index: +c.OakIndex, total: L.length,
       avail: pt ? { grid: pt.avail, eff: pt.availEff != null ? C.fmtD(pt.availEff) : "", exp: pt.availExp != null ? C.fmtD(pt.availExp) : "", note: pt.availNote } : null,
-      email: o.email ? { subject: C.fill(S.tpl.startSubject, { clinic: c.Clinic, patient: p.code }), body, html, cc: C.txt(c.StartCc), bcc: C.txt(c.StartBcc), blanks } : null };
+      email: o.email ? { subject: C.fill(S.tpl.startSubject, { clinic: c.Clinic, patient: p.code }), body, html, cc: C.txt(c.StartCc), bcc: C.txt(c.StartBcc), blanks,
+        map: map ? Object.assign({ alt: `Map and parking for the ${c.Clinic || "MHS"} clinic` }, map) : null } : null };
   }
   /* the patient the forms are for: their tracker row, or a new index patient planned by LASFIR and MRN (no name or DOB on file) */
   function formsPatient(mrn) {
@@ -2125,12 +2155,15 @@
     printSched: e => formsModal(e.dataset.m, "print", { sched: true }),
     startForms: e => formsModal(e.dataset.m, "print", { sched: true, consent: true }),
     startEmail: e => formsModal(e.dataset.m, "email", { sched: true, consent: true }),
-    doForms() {
+    async doForms() {
       const m = S.m, p = formsPatient(m.mrn), parts = m.mode === "email" ? { sched: true, consent: true } : { sched: !!$("#fp_sched")?.checked, consent: !!$("#fp_consent")?.checked, avail: !!$("#fp_avail")?.checked };
       if (!Object.values(parts).some(Boolean)) return toast("Pick at least one form.", true);
       keepForms(); const from = C.toSerial(m.from), to = C.toSerial(m.to);
       if (parts.sched && (from == null || to == null || to < from)) return toast("Pick the schedule’s From and To dates.", true);
-      const d = formsData(p, { parts, name: C.txt(m.name), dob: m.dob, loc: C.txt(m.loc), prov: m.prov, email: m.mode === "email", from, to });
+      /* the directions map is kept in the workbook's settings: full screen asks the pane for it; no map is no reason to stop */
+      let map = null; if (m.mode === "email") try { map = okMap(await Store.getStartMap()); } catch (e) { console.error(e); }
+      if (S.modal !== "forms" || S.m !== m) return;
+      const d = formsData(p, { parts, name: C.txt(m.name), dob: m.dob, loc: C.txt(m.loc), prov: m.prov, email: m.mode === "email", from, to, map });
       if (parts.sched && !d.sch.rows.length) return toast(`No scheduled visits in that date range${p.onTracker ? "" : ". If they're booked in NextGen, upload the NextGen report first"}.`, true);
       const bidf = m.mode !== "email" && parts.consent ? !!m.bidf : null;
       closeModal(); openForms(d);
@@ -2333,7 +2366,8 @@
     async doCheckin() {
       keepPay(); const m = S.m, v = visitBy(m.key), chair = S.plan ? m.chair : "", rn = $("#mRn")?.checked, ask = $("#mAsk")?.checked, t = hm();
       if (!v) return closeModal();
-      const ok = await write("Saving check-in…", () => Store.saveVisit(v.key, visitBase(v), Object.assign({ Arrived: t, Chair: chair, Seated: "", Out: "", Status: "" }, stamp()), "Arrived"));
+      /* without RN functions, check-in starts the visit (Seated = the check-in time), so it goes straight to check-out */
+      const ok = await write("Saving check-in…", () => Store.saveVisit(v.key, visitBase(v), Object.assign({ Arrived: t, Chair: chair, Seated: rnOn() ? "" : t, Out: "", Status: "" }, stamp()), "Arrived"));
       if (!ok) return;
       closeModal(); S.sel = v.key;
       await savePay(v, m, `${C.code(v)} is checked in`, "in");
@@ -2470,16 +2504,25 @@
       toast(r.ok ? (r.unconfirmed ? "Sent. The browser couldn’t read the workflow’s answer; check the chat." : `The workflow accepted the test (${r.status}). It should show in the chat within a minute.`) : r.reason, !r.ok);
     },
     async saveTpl() { const o = {}; const D = Object.assign({}, C.TEMPLATES, C.START_TPL); for (const k of Object.keys(D)) { const el = $(`#tp_${k}`); if (el) o[k] = el.value.trim() || D[k]; }
+      /* a template pasted with the map in it: the picture is saved as the directions map and {map} takes its place in the template */
+      let note = ""; if (o.startEmail) { const x = C.tplImages(o.startEmail);
+        if (x.img) { const held = heldFields(); if (!await saveStartMap(b64Blob(x.img.b64, x.img.type), "Map from the template", "Map taken from the template.")) return; held(); }
+        if (x.img || x.lost) { o.startEmail = x.html; const el = $("#tp_startEmail"); if (el) el.value = x.html; }
+        note = x.img ? " The picture in the template is now the location/parking map ({map})." : x.lost && !S.smap ? " The template’s picture can’t travel in an email: use Upload Location/Parking Map below, and it goes where {map} is." : x.lost ? " The template’s picture is now {map}, which shows the loaded map." : "";
+        if (o.startEmail.length > 32000) return toast("The start email is too long for the workbook (a cell holds about 32,000 characters). Take out any pasted pictures or styling and try again.", true); }
       /* the clinic's address, phone, CC and BCC: saved by whoever enters them first; once saved, only an admin changes them */
       const cf = {}; for (const k of ["ClinicAddress", "ClinicPhone", "StartCc", "StartBcc"]) { const el = $(`#cf_${k}`); if (el && !locked(k) && (C.txt(el.value) || C.txt(S.saved?.[k]))) cf[k] = el.value.trim(); }
       const bad = ["StartCc", "StartBcc"].find(k => cf[k] && !cf[k].split(/[;,]\s*/).every(a => /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(a))); if (bad) return toast(`${bad === "StartCc" ? "CC" : "BCC"} needs email addresses, separated by commas.`, true);
-      await write("Saving messages…", async () => { await Store.saveKeyed("tblIvkTemplates", o); await Store.saveKeyed("tblIvkConfig", cf); }, "Messages saved."); },
+      await write("Saving messages…", async () => { await Store.saveKeyed("tblIvkTemplates", o); await Store.saveKeyed("tblIvkConfig", cf); }, "Messages saved." + note); },
+    startMapRemove: () => openModal("confirm", { title: "Remove the location/parking map?", body: "Start emails go out without it. You can upload it again any time.", yes: "Remove the map",
+      run: async () => { await Store.setDoc(START_MAP_KEY, null); S.smap = null; } }),
     async resetTpl() { await write("Saving messages…", () => Store.saveKeyed("tblIvkTemplates", Object.assign({}, C.TEMPLATES, C.START_TPL)), "Standard wording restored."); },
     async saveCfg() {
       const o = {}; for (const k of ["VisitMin", "AheadWeeks", "ProtocolDays", "AuthWarnDays", "EncountersWarn"]) { const n = C.num($(`#cf_${k}`).value); if (n == null || n < 0) return toast(`${k} needs a number.`, true); o[k] = n; }
       /* the clinic: saved once by whoever enters it; after that only an admin changes it. Never a built-in clinic */
       if (!locked("Clinic")) { const cl = C.txt($("#cf_Clinic")?.value); if (cl || C.txt(S.saved?.Clinic)) o.Clinic = cl; }
       if (!S.plan) { const n = C.num($("#cf_Chairs").value); if (n == null || n < 1) return toast("Chairs in the room needs a number.", true); o.Chairs = String(n); }
+      if ($("#cf_RnFunctions")) o.RnFunctions = $("#cf_RnFunctions").checked ? "TRUE" : "FALSE";
       await write("Saving…", () => Store.saveKeyed("tblIvkConfig", o), "Timing saved.");
     },
     mapDown: () => { const P = S.raw.plan, a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([JSON.stringify(P, null, 1)], { type: "application/json" })); a.download = `Chair map - ${S.cfg.Clinic || "IVK"} IVK.json`.replace("IVK IVK", "IVK"); a.click(); },
@@ -2770,6 +2813,43 @@
     u.sh = C.shrink(u.rows, S.A.map(a => a.date)); u.sh.had = S.A.length;
     return u;
   }
+  /* ---------- the start email's directions map ---------- */
+  /* Settings › Messages: what's loaded. S.smap: undefined = not asked yet (full screen asks the pane), null = none */
+  function startMapHTML() {
+    if (S.smap === undefined) { S.smap = null; S.smapAsk = true; Store.getStartMap().then(v => { S.smap = okMap(v); S.smapAsk = false; render(); }).catch(() => { S.smapAsk = false; }); }
+    const M = S.smap;
+    return `<div class="fld">Location/parking map in the start email
+        <div class="status${M ? " ok" : ""}"><span class="dot"></span>${M ? `${esc(M.name || "Map")} · ${M.w} × ${M.h}` : S.smapAsk ? "Checking…" : "No map yet. Upload the clinic’s location/parking map, or paste a template that has the map in it."}</div>
+        ${M ? `<img src="data:${M.type};base64,${M.b64}" alt="The location/parking map" style="display:block;max-width:180px;height:auto;margin:8px 0;border:1px solid #d5dde3;border-radius:4px">` : ""}
+        <div class="actions"><label class="btn ghost sm line" style="cursor:pointer">Upload Location/Parking Map<input type="file" id="startMapFile" accept="image/png,image/jpeg,image/gif" hidden></label>${M ? `<button class="btn mute sm" data-act="startMapRemove">Remove the map</button>` : ""}</div>
+        <span class="hint">Goes under the schedule with a “Getting Here” heading, or wherever {map} is in the template. Kept in this workbook, not in the template (a cell can’t hold a picture). Use a map only: nothing about a patient.</span></div>`;
+  }
+  /* a picture as the map: no wider than MAP_MAX_W, PNG or JPEG, whichever is smaller (a flat map is often smaller as PNG) */
+  async function mapPicture(blob, name) {
+    const url = URL.createObjectURL(blob);
+    try {
+      const img = new Image();
+      await new Promise((res, rej) => { img.onload = res; img.onerror = () => rej(new Error("That file isn’t a picture the tracker can read. Use a PNG or JPG.")); img.src = url; });
+      if (!img.naturalWidth) throw new Error("That picture has no size. Use a PNG or JPG.");
+      const k = Math.min(1, MAP_MAX_W / img.naturalWidth), w = Math.round(img.naturalWidth * k), h = Math.round(img.naturalHeight * k);
+      const cv = document.createElement("canvas"); cv.width = w; cv.height = h; const g = cv.getContext("2d"); g.fillStyle = "#fff"; g.fillRect(0, 0, w, h); g.drawImage(img, 0, 0, w, h);
+      const png = cv.toDataURL("image/png"), jpg = cv.toDataURL("image/jpeg", 0.9), best = png.length <= jpg.length * 1.2 ? png : jpg;
+      const mm = best.match(/^data:(image\/\w+);base64,(.*)$/); if (!mm) throw new Error("Couldn’t read that picture. Try a PNG or JPG.");
+      if (mm[2].length > MAP_MAX_B64) throw new Error("That picture is too large to keep in the workbook, even made smaller. Try a smaller copy of the map.");
+      return { name: C.txt(name).replace(/\.[a-z0-9]+$/i, "").slice(0, 60) || "Location/parking map", type: mm[1], b64: mm[2], w, h };
+    } finally { URL.revokeObjectURL(url); }
+  }
+  const b64Blob = (b64, type) => { const s = atob(b64), u = new Uint8Array(s.length); for (let i = 0; i < s.length; i++) u[i] = s.charCodeAt(i); return new Blob([u], { type }); };
+  async function saveStartMap(blob, name, done) {
+    let m; try { m = await mapPicture(blob, name); } catch (e) { toast(String(e.message || e), true); return false; }
+    const held = heldFields(), r = await write("Saving the location/parking map…", () => Store.setDoc(START_MAP_KEY, m), done || "Location/parking map saved. It shows in start emails under the schedule.");
+    if (r) S.smap = m; render(); held(); return !!r;
+  }
+  /* Messages fields typed but not saved yet survive the re-render after the map is saved or removed */
+  function heldFields() {
+    const v = [...document.querySelectorAll('[id^="tp_"],[id^="cf_"]')].map(el => [el.id, el.value]);
+    return () => v.forEach(([id, x]) => { const el = document.getElementById(id); if (el && !el.disabled) el.value = x; });
+  }
   async function readMap(f) {
     let x; try { x = JSON.parse(await f.text()); } catch (e) { return toast("That file isn’t a map file from the Bay Map Builder.", true); }
     const c = bpCheck(x); if (c.err) return toast(c.err, true);
@@ -2778,6 +2858,7 @@
   document.addEventListener("change", e => {
     const t = e.target;
     if (t.id === "apptFile" && t.files[0]) readAppt(t.files[0]);
+    else if (t.id === "startMapFile" && t.files[0]) saveStartMap(t.files[0], t.files[0].name);
     else if (t.id === "sigFile" && t.files[0]) readSig(t.files[0]).catch(err => toast(String(err.message || err), true));
     else if (t.id === "mapFile" && t.files[0]) readMap(t.files[0]);
     else if (t.id === "sohFile" && t.files[0]) readSohar(t.files[0]);
@@ -2787,6 +2868,7 @@
     else if (S.modal === "profile" && t.id === "pfStatus") keepProfile();
     else if (t.dataset && t.dataset.cm != null) cmSet(t.dataset.m, t.dataset.cm, t.checked);
     else if (t.dataset && t.dataset.prof != null) { t.checked = false; ACT.profile({ dataset: { m: t.dataset.prof } }); }
+    else if (t.id === "autoFull") saveAutoFull(t.checked);
     else if (t.id === "darkOn") { S.theme = t.checked ? "dark" : "light"; LS.set("ivkTheme", S.theme); document.documentElement.dataset.theme = S.theme; }
     else if (t.id === "mFreq" && S.modal === "ask") { S.m.freq = t.value; S.m.text = C.askText(S.PM.get(S.m.mrn), S.m.ask, S.tpl, t.value); $("#mText").value = S.m.text; }
     else if (t.id === "mFreq" && (S.modal === "checkout" || S.modal === "proto")) { S.m.freq = t.value; S.m.proto = $("#mProto")?.checked ?? S.m.proto; render(); }
