@@ -1911,8 +1911,8 @@
         <div class="two"><label class="fld">Date of birth<input id="fmDob" type="date" value="${esc(m.dob)}"><span class="hint">${p.dob != null ? "From the tracker" : "Not on the tracker; type it for the forms (not saved)"}</span></label>
           <label class="fld">Clinic location<input id="fmLoc" value="${esc(m.loc)}" autocomplete="off"></label></div>
         <label class="fld">Clinician<select id="fmProv">${provs.map(x => `<option${x === m.prov ? " selected" : ""}>${esc(x)}</option>`).join("")}</select></label>
-        ${email ? `<p class="note">The email gets the start template (Settings › Messages) with the schedule in the body, and the schedule and the filled-in IVK consent attached. In the next window, upload the BIDF as a PDF (save it from NextGen first).</p>`
-          : `<div class="fld">Print${part("sched", "Schedule")}${part("consent", "IV ketamine consent", "Name, date of birth, clinic location and clinician filled in")}${part("avail", "Availability form", "Name and date of birth filled in")}</div>
+        ${email ? `<p class="note">The email gets the start template (Settings › Messages) with the schedule in the body, and the schedule attached. The IV ketamine consent isn’t sent: the patient signs it in person when they arrive. In the next window, upload the BIDF as a PDF (save it from NextGen first).</p>`
+          : `<div class="fld">Print${part("sched", "Schedule")}${part("consent", "IV ketamine consent", "For the patient to sign in person on arrival; name, date of birth, clinic location and clinician filled in")}${part("avail", "Availability form", "Name and date of birth filled in")}</div>
             ${m.parts.consent ? `<div class="msg warn bidfp"><b>Print the BIDF from NextGen too.</b> The benefits team completes it; it isn’t made here.${p.bidf ? ` The tracker has it: ${esc(p.bidf)}.` : " The tracker doesn’t show one yet: check with the benefits team before the start."}
               <label class="opt"><input type="checkbox" id="fp_bidf"${m.bidf ? " checked" : ""}> I printed the BIDF from NextGen<small>Saves today’s date on the patient’s profile</small></label></div>` : ""}`}
         ${email || m.parts.sched ? schedRangeHTML(p, m) : ""}
@@ -2086,7 +2086,7 @@
   function openForms(data) {
     closeForms();
     const wrap = document.createElement("div"); wrap.className = "formwrap"; wrap.id = "formwrap";
-    wrap.innerHTML = `<iframe title="Forms" src="forms.html?v=7"></iframe>`; document.body.appendChild(wrap);
+    wrap.innerHTML = `<iframe title="Forms" src="forms.html?v=8"></iframe>`; document.body.appendChild(wrap);
     const fr = wrap.querySelector("iframe");
     const onMsg = ev => { if (ev.source !== fr.contentWindow || ev.origin !== location.origin) return; const d = ev.data || {};
       if (d.forms === "ready") fr.contentWindow.postMessage({ forms: "data", data }, location.origin);
@@ -2266,9 +2266,9 @@
     printAvail: e => { if (S.modal === "avail") keepAvail(); formsModal(e.dataset.m || S.m.mrn, "print", { avail: true }); },
     printSched: e => formsModal(e.dataset.m, "print", { sched: true }),
     startForms: e => formsModal(e.dataset.m, "print", { sched: true, consent: true }),
-    startEmail: e => formsModal(e.dataset.m, "email", { sched: true, consent: true }),
+    startEmail: e => formsModal(e.dataset.m, "email", { sched: true }),
     async doForms() {
-      const m = S.m, p = formsPatient(m.mrn), parts = m.mode === "email" ? { sched: true, consent: true } : { sched: !!$("#fp_sched")?.checked, consent: !!$("#fp_consent")?.checked, avail: !!$("#fp_avail")?.checked };
+      const m = S.m, p = formsPatient(m.mrn), parts = m.mode === "email" ? { sched: true } : { sched: !!$("#fp_sched")?.checked, consent: !!$("#fp_consent")?.checked, avail: !!$("#fp_avail")?.checked };
       if (!Object.values(parts).some(Boolean)) return toast("Pick at least one form.", true);
       keepForms(); const from = C.toSerial(m.from), to = C.toSerial(m.to);
       if (parts.sched && (from == null || to == null || to < from)) return toast("Pick the schedule’s From and To dates.", true);

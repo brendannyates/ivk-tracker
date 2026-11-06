@@ -6,11 +6,12 @@
 <title>IVK forms</title>
 <!--
   The forms the IVK Tracker prints for a patient: their schedule, the IV ketamine consent, the patient availability form, and the
-  start email (schedule in the body; the schedule PDF and the filled-in consent PDF attached, as an Outlook draft .eml).
+  start email (schedule in the body, the schedule PDF attached, as an Outlook draft .eml). The consent is never emailed: the
+  patient signs it in person on arrival.
   Shown in a frame over the add-in. The details arrive by postMessage from the add-in (same origin) and live only in this page's
   memory: nothing goes in the URL, storage, the console or the workbook.
-  Consent wording is verbatim from MHS_Consent_for_IV_Ketamine_Fillable.pdf (assets/ivk-consent.pdf, which is also the PDF that is
-  filled and attached to the email). Do not edit the wording here without compliance sign-off, and change both together.
+  Consent wording is verbatim from MHS_Consent_for_IV_Ketamine_Fillable.pdf (assets/ivk-consent.pdf). Do not edit the wording here
+  without compliance sign-off, and change both together.
   Availability form wording is from the IVN Availability Form, laid out in the consent's design.
 -->
 <style>
@@ -99,7 +100,6 @@ table.av .half{color:var(--accent);font-weight:700}
   <span class="msg" id="msg" role="status">Waiting for the details from the IVK Tracker…</span>
   <button class="pri" id="bPrint" disabled>Print</button>
   <button id="bSched" hidden disabled>Schedule PDF</button>
-  <button id="bConsent" hidden disabled>Consent PDF</button>
   <button id="bEml" hidden disabled>Outlook draft (.eml)</button>
   <button id="bCopy" hidden disabled>Copy email</button>
   <button id="bClose">Close</button>
@@ -276,7 +276,7 @@ table.av .half{color:var(--accent);font-weight:700}
     if (parts.avail) out.push(availForm(d));
     $("out").innerHTML = out.join("");
     const em = !!d.email;
-    ["bSched", "bConsent", "bEml", "bCopy"].forEach(id => { $(id).hidden = !em; $(id).disabled = !em; });
+    ["bSched", "bEml", "bCopy"].forEach(id => { $(id).hidden = !em; $(id).disabled = !em; });
     $("bPrint").disabled = false; $("bPrint").focus();
     if (em) check();
     const W = [parts.week && "the week", parts.sched && "the schedule", parts.consent && "the consent", parts.avail && "the availability form"].filter(Boolean), what = W.length > 1 ? `${W.slice(0, -1).join(", ")} and ${W[W.length - 1]}` : W[0];
@@ -296,7 +296,6 @@ table.av .half{color:var(--accent);font-weight:700}
       ["Start email template", !/\[Start email template/i.test(D.email.body), /\[Start email template/i.test(D.email.body) ? "Still the placeholder: paste the template in Settings › Messages" : "Filled in"],
       ["Location/parking map", true, D.email.map ? "In the email" : "None loaded (optional): add it in Settings › Messages"],
       ["Schedule in the body and as a PDF", D.sch.rows.length > 0, D.sch.rows.length ? `${D.sch.rows.length} visit${D.sch.rows.length === 1 ? "" : "s"}` : "No visits in the date range"],
-      ["IV ketamine consent PDF", !!(D.name && D.dob && D.provider), D.name && D.dob && D.provider ? "Name, DOB, clinic and clinician filled in" : `Missing ${[!D.name && "the name", !D.dob && "the date of birth", !D.provider && "the clinician"].filter(Boolean).join(", ")}: close and open the start email again`],
       ["BIDF", !!X.bidf, X.bidf ? X.bidf.name : "Attach it above"]
     ].concat(X.more.map(f => [f.name, true, "Extra attachment"]));
   }
@@ -305,7 +304,7 @@ table.av .half{color:var(--accent);font-weight:700}
     $("eChk").innerHTML = L.map(([t, ok, s]) => `<li class="${ok ? "ok" : "no"}"><span aria-hidden="true">${ok ? "✓" : "!"}</span><b>${esc(t)}</b> <small>${esc(s)}</small></li>`).join("");
     $("bEml").disabled = miss.length > 0 || !!X.busy;
     $("bEml").title = miss.length ? `Still needed: ${miss.map(i => i[0]).join(", ")}` : "";
-    $("msg").textContent = miss.length ? `Start email: still needed before Outlook: ${miss.map(i => i[0].toLowerCase()).join(", ")}.` : "Everything is in. Outlook draft makes one message with the address, the email, the schedule, the consent and the BIDF.";
+    $("msg").textContent = miss.length ? `Start email: still needed before Outlook: ${miss.map(i => i[0].toLowerCase()).join(", ")}.` : "Everything is in. Outlook draft makes one message with the address, the email, the schedule and the BIDF.";
     return miss;
   }
   const readFile = async f => ({ name: f.name, type: f.type || "application/octet-stream", bytes: new Uint8Array(await f.arrayBuffer()) });
@@ -346,19 +345,6 @@ table.av .half{color:var(--accent);font-weight:700}
         doc.text(footLine(S), W / 2, H - 40, { align: "center" }); doc.text(POLICY, W / 2, H - 28, { align: "center" }); } });
     return new Uint8Array(doc.output("arraybuffer"));
   }
-  /* the official consent PDF with its three fields filled, and the patient's and provider's printed names on page 4 */
-  async function consentPdf() {
-    if (!window.PDFLib) await load(["https://cdnjs.cloudflare.com/ajax/libs/pdf-lib/1.17.1/pdf-lib.min.js", "https://unpkg.com/pdf-lib@1.17.1/dist/pdf-lib.min.js"]);
-    const { PDFDocument, StandardFonts, rgb } = window.PDFLib;
-    const pdf = await PDFDocument.load(await (await fetch("assets/ivk-consent.pdf")).arrayBuffer()), form = pdf.getForm();
-    const set = (n, v) => { try { form.getTextField(n).setText(v || ""); } catch (e) { /* field renamed */ } };
-    set("patient_name", D.name); set("patient_dob", D.dob); set("clinic_location", D.clinic);
-    const font = await pdf.embedFont(StandardFonts.Helvetica), p4 = pdf.getPages()[3];
-    try { form.updateFieldAppearances(font); } catch (e) { /* the viewer draws them */ }
-    /* page 4's Printed Name lines (from the PDF's layout): patient at y 593, provider at y 341, right of the label */
-    if (p4) { if (D.name) p4.drawText(D.name, { x: 150, y: 593, size: 10, font, color: rgb(0.18, 0.18, 0.18) }); if (D.provider) p4.drawText(D.provider, { x: 150, y: 341, size: 10, font, color: rgb(0.18, 0.18, 0.18) }); }
-    return await pdf.save();
-  }
   const download = (bytes, name, type) => { const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([bytes], { type })); a.download = name; document.body.appendChild(a); a.click(); setTimeout(() => { URL.revokeObjectURL(a.href); a.remove(); }, 4000); };
   const b64 = u8 => { let s = ""; for (let i = 0; i < u8.length; i += 0x8000) s += String.fromCharCode.apply(null, u8.subarray(i, i + 0x8000)); return btoa(s); };
   const b64t = t => b64(new TextEncoder().encode(t));
@@ -368,7 +354,7 @@ table.av .half{color:var(--accent);font-weight:700}
   const logoBytes = async () => LOGO || (LOGO = new Uint8Array(await (await fetch("assets/logo.png")).arrayBuffer()));
   const CID = { logo: "ivk-logo@mhs", map: "ivk-map@mhs" };
   async function eml() {
-    const [sp, cp, lb] = await Promise.all([schedulePdf(), consentPdf(), logoBytes()]), B = "=_ivk_" + Date.now().toString(36), B2 = B + "_alt", B3 = B + "_rel", m = D.email.map;
+    const [sp, lb] = await Promise.all([schedulePdf(), logoBytes()]), B = "=_ivk_" + Date.now().toString(36), B2 = B + "_alt", B3 = B + "_rel", m = D.email.map;
     /* attachment names in RFC 2231 form so any file name (spaces, accents) survives */
     const att = (bytes, name, type = "application/pdf") => { const n = String(name).replace(/["\r\n]/g, ""), enc = encodeURIComponent(n);
       return [`--${B}`, `Content-Type: ${type}; name="${n}"`, `Content-Disposition: attachment; filename="${n}"; filename*=UTF-8''${enc}`, "Content-Transfer-Encoding: base64", "", wrap(b64(bytes))]; };
@@ -383,7 +369,7 @@ table.av .half{color:var(--accent);font-weight:700}
       `--${B3}`, 'Content-Type: text/html; charset="utf-8"', "Content-Transfer-Encoding: base64", "", wrap(b64t(html)),
       ...pic(b64(lb), "mhs-logo.png", "image/png", CID.logo), ...(m ? pic(m.b64, `directions-map.${m.type === "image/jpeg" ? "jpg" : m.type.split("/")[1]}`, m.type, CID.map) : []),
       `--${B3}--`, `--${B2}--`,
-      ...att(sp, fname("schedule", "pdf")), ...att(cp, fname("consent", "pdf")), ...extra, `--${B}--`, ""].join("\r\n");
+      ...att(sp, fname("schedule", "pdf")), ...extra, `--${B}--`, ""].join("\r\n");
   }
   async function busy(btn, label, fn) {
     const was = btn.textContent; btn.disabled = true; btn.textContent = label; X.busy = true;
@@ -391,13 +377,12 @@ table.av .half{color:var(--accent);font-weight:700}
     try { await fn(); } catch (e) { err = e; console.error(e); }
     finally { X.busy = false; btn.disabled = false; btn.textContent = was; if (D && D.email) check(); }
     if (err) $("msg").textContent = `Couldn’t make it (${err.message || err}). Try again, or use Print and choose Save as PDF.`;
-    if (X.done) { X.done = false; $("msg").textContent = "Saved to Downloads. Open it and Outlook shows one draft: the address, the email, the schedule, the consent and the BIDF. Read it over, then send."; }
+    if (X.done) { X.done = false; $("msg").textContent = "Saved to Downloads. Open it and Outlook shows one draft: the address, the email, the schedule and the BIDF. Read it over, then send."; }
   }
 
   $("bPrint").onclick = () => window.print();
   $("bClose").onclick = () => { D = null; $("out").innerHTML = ""; tell({ forms: "close" }); };
   $("bSched").onclick = e => busy(e.target, "Making…", async () => { download(await schedulePdf(), fname("schedule", "pdf"), "application/pdf"); tell({ forms: "saved", text: "Schedule PDF saved to Downloads." }); });
-  $("bConsent").onclick = e => busy(e.target, "Making…", async () => { download(await consentPdf(), fname("consent", "pdf"), "application/pdf"); tell({ forms: "saved", text: "Consent PDF saved to Downloads." }); });
   $("bEml").onclick = e => busy(e.target, "Making…", async () => { if (check().length) return; download(new TextEncoder().encode(await eml()), fname("start email", "eml"), "message/rfc822");
     X.done = true; tell({ forms: "saved", text: "Outlook draft saved to Downloads." }); });
   $("bCopy").onclick = e => busy(e.target, "Copying…", async () => {
@@ -405,7 +390,7 @@ table.av .half{color:var(--accent);font-weight:700}
     const m = D.email.map, html = mailHtml(D, { logo: `data:image/png;base64,${b64(await logoBytes())}`, map: m ? `data:${m.type};base64,${m.b64}` : "" }), text = mailText(D);
     if (window.ClipboardItem && navigator.clipboard?.write) await navigator.clipboard.write([new ClipboardItem({ "text/html": new Blob([html], { type: "text/html" }), "text/plain": new Blob([text], { type: "text/plain" }) })]);
     else await navigator.clipboard.writeText(text);
-    $("msg").textContent = "Copied. Paste it into a new Outlook message, then attach the schedule and consent PDFs (the buttons above) and the BIDF.";
+    $("msg").textContent = "Copied. Paste it into a new Outlook message, then attach the schedule PDF (the button above) and the BIDF.";
   });
 
   window.addEventListener("message", ev => { if (ev.origin !== location.origin || ev.source !== parent) return; const m = ev.data || {}; if (m.forms === "data" && m.data) render(m.data); });
