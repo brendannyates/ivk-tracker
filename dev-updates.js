@@ -72,16 +72,16 @@
   /* The bell can be dragged anywhere and stays there (per computer, anchored to the nearest corner so it holds its place when
      the window is resized or goes full screen). When a new screen or menu puts a button under it, it steps aside to the left
      or right of that card, whichever is closer, GAP px off, and goes back once the way is clear. A press without moving opens it. */
-  const SIZE = 44, EDGE = 4, GAP = 6, DEF = { r: 16, t: 14 };
+  const SIZE = 44, EDGE = 4, GAP = 6, DEF = { r: 16, b: 16 };
   const P = { saved: null, nudge: null, drag: null, justDragged: false, raf: 0 };
   const posKey = () => `${S.key}_bell`;
   function loadPos() { try { const p = JSON.parse(localStorage.getItem(posKey()) || "null"); if (p && isFinite(p.dx) && isFinite(p.dy)) P.saved = p; } catch { /* none */ } }
   function savePos() { try { localStorage.setItem(posKey(), JSON.stringify(P.saved)); } catch { /* this session only */ } }
   const clampX = x => Math.min(Math.max(EDGE, x), innerWidth - SIZE - EDGE), clampY = y => Math.min(Math.max(EDGE, y), innerHeight - SIZE - EDGE);
-  /* where the bell lives before any stepping aside: the saved spot, else the default top right */
+  /* where the bell lives before any stepping aside: the saved spot, else the default bottom right (clear of the toolbar) */
   function home() {
     const p = P.saved;
-    if (!p) return { x: innerWidth - SIZE - DEF.r, y: DEF.t };
+    if (!p) return { x: innerWidth - SIZE - DEF.r, y: innerHeight - SIZE - DEF.b };
     return { x: clampX(p.h === "l" ? p.dx : innerWidth - SIZE - p.dx), y: clampY(p.v === "t" ? p.dy : innerHeight - SIZE - p.dy) };
   }
   function apply(x, y) {

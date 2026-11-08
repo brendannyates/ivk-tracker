@@ -1,6 +1,17 @@
 {
   "updates": [
     {
+      "id": "2026-11-08-patient-wide",
+      "date": "2026-11-08",
+      "bullets": [
+        "Changed: In full screen, the patient view uses the whole width. Needs and Clinic notes sit on the right; Schedule, Protocol, Benefits and Financial are tabs above the section.",
+        "New: Add a note on the patient view. The box opens only when you press Add a note, and the note goes to Clinic Notes on the Master Patient Tracker with the date and your name.",
+        "Changed: Light/dark shows half of each symbol with a slash between them.",
+        "Changed: This bell floats again. Drag it anywhere; it starts at the bottom right.",
+        "Changed: On Today, Action items are laid out like Treatment starts, the two start checks sit side by side, and the count is a pill (for example 3 open items)."
+      ]
+    },
+    {
       "id": "2026-11-07-toolbar-bell",
       "date": "2026-11-07",
       "bullets": [
