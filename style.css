@@ -619,13 +619,13 @@ html.ivk-busy,html.ivk-busy *{cursor:progress!important}
 .tt.ns .g1{border-left:1px solid var(--surface-2)}
 /* the patient view: needs and clinic notes in a column on the right in full screen (stacked around the sections in the pane);
    the sections as tabs above their card */
-.pvwrap{display:grid;grid-template-columns:minmax(0,1fr);grid-template-areas:"need" "main" "notes";gap:18px;margin-top:14px;align-items:start}
+.pvwrap{display:grid;grid-template-columns:minmax(0,1fr);grid-template-areas:"need" "tabs" "main" "notes";gap:18px;margin-top:14px;align-items:start}
 .pvneed{grid-area:need;padding:16px 18px 18px}.pvmain{grid-area:main;min-width:0}.pvnotes{grid-area:notes;padding:16px 18px 18px}
 .pvneed>.h,.pvnotes>.h{display:flex;justify-content:space-between;align-items:baseline;gap:12px}.pvneed>.h h2,.pvnotes>.h h2{font-size:16px}
 .pvneed>.h span,.pvnotes>.h span{font-size:13px;color:var(--muted)}
 .pvneed .lead{margin-top:8px}.pvneed>.btn.primary{margin-top:12px}
 .pvneed .needs{margin-top:14px;padding-top:6px;box-shadow:0 -1px 0 var(--surface-2)}
-.pvtabs{display:flex;gap:4px;overflow-x:auto;margin-bottom:10px;padding:2px}
+.pvtabs{grid-area:tabs;display:flex;gap:4px;overflow-x:auto;margin-bottom:-8px;padding:2px}
 .pvtabs button{min-height:40px;padding:0 16px;border-radius:10px;font-weight:500;color:var(--muted);white-space:nowrap}
 .pvtabs button:hover{background:var(--surface-2);color:var(--ink)}
 .pvtabs button[aria-current="true"]{background:var(--surface);box-shadow:var(--shadow);color:var(--ink);font-weight:600}
@@ -634,7 +634,7 @@ html.ivk-busy,html.ivk-busy *{cursor:progress!important}
 .pvnotes>.btn{margin-top:12px}
 .noteadd{margin-top:12px}.noteadd textarea{width:100%;resize:vertical;min-height:72px}
 @media (min-width:1100px){
-  .pvwrap{grid-template-columns:minmax(0,1fr) minmax(300px,360px);grid-template-areas:"main need" "main notes";grid-template-rows:auto 1fr}
+  .pvwrap{grid-template-columns:minmax(0,1fr) minmax(300px,360px);grid-template-areas:"tabs ." "main need" "main notes";grid-template-rows:auto auto 1fr}
 }
 /* Today and Schedule: the clock and the tools on one line, the title under them */
 .ttl h1{margin:0}

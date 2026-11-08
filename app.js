@@ -1262,8 +1262,8 @@
           <p class="lead ${first ? (first.bad ? "late" : "soon") : ""}">${esc(first ? first.t : "Nothing needed right now")}</p>${quiet ? `<div class="tags">${quiet}</div>` : ""}
           ${first && first.act ? `<button class="btn primary" ${A(first)}>${esc(first.act[0])}</button>` : ""}
           ${also ? `<div class="needs">${also}</div>` : ""}</section>
-        <div class="pvmain"><nav class="pvtabs" aria-label="Sections">${PV_SECT.map(([k, l]) => `<button data-act="pvShow" data-v="${k}" aria-current="${on === k}">${l}</button>`).join("")}</nav>
-          <div class="pvs card" data-sect="${on}">${sect[on](p)}</div></div>
+        <nav class="pvtabs" aria-label="Sections">${PV_SECT.map(([k, l]) => `<button data-act="pvShow" data-v="${k}" aria-current="${on === k}">${l}</button>`).join("")}</nav>
+        <div class="pvmain"><div class="pvs card" data-sect="${on}">${sect[on](p)}</div></div>
         ${pvNotes(p)}</div></div>`;
   }
   /* Clinic notes: what's on the Master Patient Tracker, and a note box that opens only when asked. A note is added to the
