@@ -1,6 +1,15 @@
 {
   "updates": [
     {
+      "id": "2026-11-08-bell-home",
+      "date": "2026-11-08",
+      "bullets": [
+        "Changed: The Dev updates bell now sits next to the clinic name in full screen, and isn't in the side pane. A red dot means something new. Click the bell to read it; nothing pops up on its own.",
+        "Changed: The light/dark button shows the whole sun and moon again.",
+        "Changed: In full screen, the patient view's Needs card lines up with the main section."
+      ]
+    },
+    {
       "id": "2026-11-08-patient-wide",
       "date": "2026-11-08",
       "bullets": [

@@ -36,6 +36,8 @@ a{color:var(--accent)}
 .rail{display:flex;flex-direction:column;gap:2px;padding:24px 14px 20px;background:var(--surface);box-shadow:var(--shadow);z-index:1;overflow:auto}
 .brand{font-weight:500;font-size:15px;padding:0 10px 22px;line-height:1.2}
 .brand small{display:block;font-weight:400;font-size:12.5px;color:var(--muted)}
+.brand{display:flex;align-items:center;justify-content:space-between;gap:8px}
+.brand .du-home{margin:-12px -6px -12px 0}
 .item{display:flex;justify-content:space-between;align-items:center;width:100%;min-height:44px;padding:10px 12px;border-radius:10px;font-size:15px;transition:background .2s}
 .item:hover{background:var(--surface-3)}
 .item[aria-current="page"]{background:var(--accent-soft);color:var(--accent);font-weight:600}
@@ -596,11 +598,8 @@ html.ivk-busy,html.ivk-busy *{cursor:progress!important}
 .ibtn.theme.swap .tgo{animation:ivkswapR .38s cubic-bezier(.3,.7,.3,1)}
 @keyframes ivkswapL{from{transform:translateX(12px) rotate(-90deg);opacity:1}}
 @keyframes ivkswapR{from{transform:translateX(-12px) rotate(90deg);opacity:.6}}
-/* half and half: the left half of where you are, the slash, the right half of the mode to press ("mo/un" in dark mode) */
-.ibtn.theme{gap:0;padding:0 9px}.ibtn.theme svg{width:20px;height:20px}
-.ibtn.theme .tcur svg{clip-path:inset(0 50% 0 0)}.ibtn.theme .tgo svg{clip-path:inset(0 0 0 50%)}
-.ibtn.theme .tcur{margin-right:-8px;opacity:.6}.ibtn.theme .tgo{margin-left:-8px}
-.ibtn.theme .tsl{position:relative;z-index:1;padding:0 1px}
+/* both symbols whole, the same 18px as the other toolbar icons */
+.ibtn.theme svg{width:18px;height:18px}
 /* narrow pane: the clock left and the tools right on one line; a tool row that wraps stays on the right */
 @media (max-width:760px){
   .top.tclock{flex-wrap:nowrap;gap:8px}

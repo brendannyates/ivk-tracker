@@ -367,7 +367,7 @@
        refresh and dark mode at the top right). While a refresh reads the workbook the page dims and can't be pressed. */
     $("#app").innerHTML = `<div class="app">
       <nav class="rail" aria-label="IVK Tracker">
-        <div class="brand">${S.cfg.Clinic ? `${esc(S.cfg.Clinic)}<small>IV ketamine</small>` : `IV ketamine<small>Patient tracker</small>`}</div>
+        <div class="brand"><span>${S.cfg.Clinic ? `${esc(S.cfg.Clinic)}<small>IV ketamine</small>` : `IV ketamine<small>Patient tracker</small>`}</span>${FULL ? '<span class="du-home" aria-hidden="true"></span>' : ""}</div>
         ${NAV.map(item).join("")}
         <div class="spacer"></div>
         ${S.name ? `<button class="item who" data-act="switchUser" title="Switch user">${esc(S.name)}<small>Switch user</small></button>` : ""}
