@@ -371,7 +371,7 @@
         ${NAV.map(item).join("")}
         <div class="spacer"></div>
         ${S.name ? `<button class="item who" data-act="switchUser" title="Switch user">${esc(S.name)}<small>Switch user</small></button>` : ""}
-        <button class="item fs" data-act="full"${!FULL && pop.dlg ? ' title="Full screen is open"' : ""}>${ICON.full}${FULL ? "Exit full screen" : "Full screen"}</button>
+        <button class="item fs" data-act="full" aria-label="${FULL ? "Exit full screen" : "Full screen"}"${!FULL && pop.dlg ? ' title="Full screen is open"' : ""}>${ICON.full}<span>${FULL ? "Exit full screen" : "Full screen"}</span></button>
         ${item(["settings", "Settings"])}
         <div class="conn${S.err ? " off" : ""}${S.busy || S.reading ? " busy" : ""}" title="${esc(C.txt(S.raw.wbName))}"><span class="cdot"></span>${S.err ? "Not connected" : S.busy ? esc(S.busy) : S.reading ? "Reading the workbook…" : FULL ? "Saving through the task pane" : "Connected to the workbook"}</div>
       </nav>
@@ -393,11 +393,14 @@
     full: `<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>`,
     sun: `<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>`
   };
-  const tools = () => { const dark = S.theme === "dark", busy = !!S.reading;
-    const fl = FULL ? "Exit full screen" : pop.dlg ? "Full screen is open" : "Full screen";
-    const full = `<button class="ibtn" data-act="full" title="${fl}" aria-label="${fl}">${ICON.full}</button>`;
-    return `<div class="tools"><button class="ibtn${busy ? " spin" : ""}" data-act="reload" title="Refresh: read the workbook again" aria-label="Refresh from the workbook"${busy ? " disabled" : ""}>${ICON.refresh}</button>${full}
-      <button class="ibtn" data-act="theme" title="${dark ? "Light mode" : "Dark mode"}" aria-label="${dark ? "Switch to light mode" : "Switch to dark mode"}" aria-pressed="${dark}">${dark ? ICON.sun : ICON.moon}</button></div>`; };
+  /* top right: refresh, full screen, light / dark, then the Dev Update bell (dev-updates.js docks it in .du-slot).
+     Each shows its label on hover; the theme label is the mode a press switches to. The sun and moon swap places when the
+     mode changes: the one on the right is the one to press. */
+  const tools = () => { const dark = S.theme === "dark", busy = !!S.reading, swap = S.themeSwap ? " swap" : "";
+    const fl = FULL ? "Exit full screen" : pop.dlg ? "Full screen is open" : "Full screen", tl = dark ? "Light mode" : "Dark mode";
+    const full = `<button class="ibtn" data-act="full" data-tip="${fl}" aria-label="${fl}">${ICON.full}</button>`;
+    const theme = `<button class="ibtn theme${dark ? " is-dark" : ""}${swap}" data-act="theme" data-tip="${tl}" aria-label="Switch to ${tl.toLowerCase()}" aria-pressed="${dark}">${dark ? `<span class="tcur">${ICON.moon}</span><span class="tsl">/</span><span class="tgo">${ICON.sun}</span>` : `<span class="tcur">${ICON.sun}</span><span class="tsl">/</span><span class="tgo">${ICON.moon}</span>`}</button>`;
+    return `<div class="tools"><button class="ibtn${busy ? " spin" : ""}" data-act="reload" data-tip="${busy ? "Reading the workbook…" : "Refresh"}" aria-label="Refresh from the workbook"${busy ? " disabled" : ""}>${ICON.refresh}</button>${full}${theme}<span class="du-slot"></span></div>`; };
   const head = (title, sub, clock) => clock
     ? `<div class="top tclock"><div class="clock"><div class="t">${hm()}</div><div class="d">${esc(C.fmtDay(todayS()))}</div></div><div class="topr">${tools()}</div></div><div class="ttl"><h1>${title}</h1>${sub ? `<p class="sub">${sub}</p>` : ""}</div>`
     : `<div class="top"><div><h1>${title}</h1>${sub ? `<p class="sub">${sub}</p>` : ""}</div><div class="topr">${tools()}</div></div>`;
@@ -692,7 +695,7 @@
     const blk = a => { const s = stateOf(a), p = a.p, flag = p && a.date >= T && C.futureOf(S.A, p.mrn, a.date).length === 0 && C.isActive(p) && !/prn/i.test(p.freq);
       const k = visitKind(a), bk = bookOf(a), miss = !!bk?.miss, pc = !!p?.reqPost, pk = bk?.post ? `${a.date}|${bk.postAt}|${bk.pkey}` : "";
       const label = `${a.code || "No code"}, MRN ${a.mrn}, at ${C.fmtT(a.time)}, ${C.provName(a.provider)}${k ? `, ${KIND_WORD[k]}` : ""}${pc ? ", requires a post-check" : ""}, ${a.status}${miss ? `. ${MISS_TXT}` : ""}`;
-      return `<div class="blkw"><button class="blk ${s}${k ? ` k-${k}` : ""}${shutOn(a.date) && s !== "cx" && s !== "lc" ? " shut" : ""}" data-act="schedPick" data-m="${esc(a.mrn)}" data-d="${a.date}" data-t="${a.time}"${pk ? ` data-pc="${esc(pk)}"` : ""} aria-label="${esc(label)}"><b>${esc(a.code || "No code")}</b> <span class="pm">${esc(a.mrn)}</span> ${C.fmtT(a.time)}${pc ? ` <span class="pcb" title="Requires a post-check">PC</span>` : ""}${S.SO.get(a.mrn)?.status === "waiting" && S.SO.get(a.mrn).booked === a.date ? ` <span class="pcb so" title="On the cancellation waitlist">Waitlist</span>` : ""}<small>${esc(C.provName(a.provider))}${k === "st" ? ", start" : k === "ix" ? `, index${(() => { const n = p ? C.txNo(p, S.A, a.date, a.time) : null; return n ? ` ${n}` : ""; })()}` : ""}${s === "noshow" ? ", no-show" : s === "lc" ? ", late cancel" : shutOn(a.date) ? ", clinic closed" : flag ? ", last booked" : ""}</small></button>${miss ? missTag() : ""}</div>`; };
+      return `<div class="blkw"><button class="blk ${s}${k ? ` k-${k}` : ""}${shutOn(a.date) && s !== "cx" && s !== "lc" ? " shut" : ""}" data-act="schedPick" data-m="${esc(a.mrn)}" data-d="${a.date}" data-t="${a.time}"${pk ? ` data-pc="${esc(pk)}"` : ""} aria-label="${esc(label)}"><span class="br"><b>${esc(a.code || "No code")}</b>${pc ? ` <span class="pcb" title="Requires a post-check">PC</span>` : ""}${S.SO.get(a.mrn)?.status === "waiting" && S.SO.get(a.mrn).booked === a.date ? ` <span class="pcb so" title="On the cancellation waitlist">Waitlist</span>` : ""}<span class="pm">${esc(a.mrn)}</span></span><span class="br sm"><span class="bp">${esc(C.provName(a.provider))}${k === "st" ? ", start" : k === "ix" ? `, index${(() => { const n = p ? C.txNo(p, S.A, a.date, a.time) : null; return n ? ` ${n}` : ""; })()}` : ""}${s === "noshow" ? ", no-show" : s === "lc" ? ", late cancel" : shutOn(a.date) ? ", clinic closed" : flag ? ", last booked" : ""}</span><span class="bt">${C.fmtT(a.time)}</span></span></button>${miss ? missTag() : ""}</div>`; };
     const hblk = b => { const late = C.holdState(b.h, S.A, Date.now(), S.cfg) === "late", pk = `${b.h.date}|${b.postAt}|${b.pkey}`;
       return `<button class="blk hold k-ix${late ? " late" : ""}" data-act="ipPick" data-m="${esc(b.mrn)}" data-pc="${esc(pk)}" aria-label="${esc(`Hold for ${b.code} at ${C.fmtT(b.time)}${late ? ", not confirmed booked" : ""}`)}">Hold <b>${esc(b.code)}</b> ${C.fmtT(b.time)}<small>${esc(provLabel(b.provider))}${late ? ", not confirmed" : b.h.by ? `, by ${esc(b.h.by)}` : ""}</small></button>`; };
     /* an open slot: pressed, it's held for a patient (or, for an index start, planned from) */
@@ -1515,9 +1518,9 @@
     const tplF = (k, l) => `<label class="fld">${l}<textarea id="tp_${k}" rows="2">${esc(S.tpl[k])}</textarea></label>`;
     const P = S.plan;
     return `${head("Settings", "", false)}${setupBanner()}<div class="sgrid2">
-      <section class="card set"><h3>You</h3><p>${S.name ? `At the desk today: <b>${esc(S.name)}</b>. Your name goes on Teams posts and in the log.` : "Nobody picked yet."} The tracker asks who’s at the desk the first time it opens each day.</p>
+      <section class="card set"><h3>You</h3>
         <div class="actions"><button class="btn ghost sm line" data-act="switchUser">Switch user</button></div>
-        <label class="opt"><input type="checkbox" id="autoFull"${C.autoFullOf(me()) ? " checked" : ""}${S.name ? "" : " disabled"}> Open in full screen whenever I open this workbook<small>${S.name ? "Saved with your name. While anyone has this on, the tracker opens by itself when the workbook opens (beside the sheet for everyone else)." : "Pick who’s at the desk first."}</small></label>
+        <label class="opt"><input type="checkbox" id="autoFull"${C.autoFullOf(me()) ? " checked" : ""}${S.name ? "" : " disabled"}> Open in full screen whenever I open this workbook<small>${S.name ? "Saved with your name. While anyone has this on, the tracker opens by itself when the workbook opens (beside the sheet for everyone else)." : "Pick your name first."}</small></label>
         <details class="fold"><summary>Add a signature <span>only if Outlook doesn’t add yours</span></summary>
           <p class="small muted">The start email leaves the signature to Outlook: set yours once in Outlook (Settings › Mail › Signatures on the web, or File › Options › Mail › Signatures), then use <b>Copy email</b> and paste it into a new message. The <b>Outlook draft (.eml)</b> file may open without your signature, so add it here if you use the draft.</p>
           <ol class="how"><li>In File Explorer, click the address bar, paste <code>%APPDATA%\\Microsoft\\Signatures</code> and press Enter.</li><li>Choose the <b>.htm</b> file named after your signature below (the .txt file works too). Pictures in a signature don’t come along.</li></ol>
@@ -1557,6 +1560,7 @@
         ${tplF("arrival", "Arrival")}${tplF("seated", "Chair picked at the start of treatment")}${tplF("protocol", "Confirm protocol and book")}${tplF("protocolOnly", "Confirm protocol only")}${tplF("bookOnly", "Book only")}
         <label class="fld">Start email subject<input id="tp_startSubject" value="${esc(S.tpl.startSubject)}"></label>
         <label class="fld">Start email (HTML)<textarea id="tp_startEmail" rows="9" spellcheck="false">${esc(S.tpl.startEmail)}</textarea><span class="hint">The desk’s “Upcoming Appointment(s)” email. {mrn}, {first} (first name), {clinic}, {firstVisit} (“Wednesday, November 4th, 2026, at 10:00 AM”), {address}, {phone}, {schedule} where the appointment table goes, {map} where the location/parking map goes, and {signature} where the sender’s signature goes (only when they’ve added one in Settings › You). The MHS logo goes at the top by itself.</span></label>
+        <div class="actions"><button class="btn ghost sm line" data-act="startPreview">Preview the start email</button><span class="hint">A sample patient, with what’s typed above (saved or not), your signature and the map.</span></div>
         ${startMapHTML()}
         <div class="two"><label class="fld">Clinic address in the start email<input id="cf_ClinicAddress" value="${esc(S.cfg.ClinicAddress)}" autocomplete="off"${lockA("ClinicAddress")}>${lockH("ClinicAddress")}</label>
         <label class="fld">Clinic phone in the start email<input id="cf_ClinicPhone" value="${esc(S.cfg.ClinicPhone)}" autocomplete="off"${lockA("ClinicPhone")}><span class="hint">${locked("ClinicPhone") ? "Saved for this workbook. Unlock Admin below to change it." : "For example 844-867-8444 ext. 1234"}</span></label></div>
@@ -1722,7 +1726,27 @@
       return { i, h, label: h.replace(/\s+/g, " ").trim(), type, cur, formula: !!f, shown: type === "date" && C.toSerial(v) != null ? C.fmtD(C.toSerial(v)) : C.txt(v), opts, long: /notes?\b/i.test(h) };
     }).filter(Boolean);
   }
+  /* Settings › start email preview: invented sample patient and visits; the clinic's own address, phone, signature and map */
+  function startPreviewDoc(m) {
+    const c = S.cfg, FF = "Aptos,Calibri,Arial,sans-serif", html = /<[a-z]/i.test(m.body), enc = v => html ? esc(v) : String(v);
+    let d = todayS() + 1; const wk = x => { while ([0, 6].includes(C.dateOf(x).getDay())) x++; return x; };
+    d = wk(d); const d2 = wk(d + 2), d3 = wk(d2 + 2);
+    const vals = { first: "Jordan", clinic: c.Clinic || "the clinic", patient: "SAMJOR", mrn: "000000", address: C.txt(c.ClinicAddress) || "(clinic address not set)", phone: C.txt(c.ClinicPhone) || "(clinic phone not set)", firstVisit: C.longWhen(d, 570) };
+    const map = S.smap, body = C.withSignature(C.withMap(String(m.body || ""), !!map).replace(/\{(\w+)\}/g, (x, k) => vals[k] != null ? enc(vals[k]) : x), sigOf(), html);
+    const td = `padding:8px;border-top:1px solid #DCE3E8;font:14px/1.35 ${FF};color:#1c2a33;text-align:left`;
+    const rows = [[d, "IV ketamine, treatment start"], [d2, "IV ketamine"], [d3, "IV ketamine"]].map(([x, v], i) => `<tr${i % 2 ? ' style="background:#F7F9FA"' : ""}><td style="${td}${i ? "" : ";font-weight:700"}">${esc(C.longWhen(x))}</td><td style="${td};white-space:nowrap">9:30 AM</td><td style="${td}">${v}</td></tr>`).join("");
+    const sched = `<table width="100%" cellpadding="0" cellspacing="0" style="border-collapse:collapse;max-width:680px;margin:8px 0 6px;border:1px solid #C9D3DB"><tr><td colspan="3" style="background:#156082;padding:10px 12px;font:700 15px/1.3 ${FF};color:#fff">Upcoming Appointment(s)</td></tr>${rows}</table>`;
+    const mapImg = map ? `<p style="margin:12pt 0 0"><b>Getting Here:</b></p><p style="text-align:center"><img src="data:${map.type};base64,${map.b64}" alt="Map" style="max-width:520px;width:100%;height:auto;border:1px solid #DCE3E8;border-radius:6px"></p>` : "";
+    const paras = html ? body : body.split(/\n{2,}/).map(p => /^\{(schedule|map)\}$/.test(p.trim()) ? p.trim() : `<p style="margin:0 0 10px">${esc(p).replace(/\n/g, "<br>")}</p>`).join("");
+    const logo = new URL("assets/logo.png", location.href).href;
+    return `<!doctype html><html><body style="margin:0;padding:18px;background:#fff"><div style="font:12pt/1.4 ${FF};color:#000"><div style="text-align:center;padding:0 0 14px;border-bottom:2px solid #F8902A;margin-bottom:16px"><img src="${logo}" width="200" alt="Mindful Health Solutions" style="max-width:60%;height:auto"></div>${paras.replace("{schedule}", () => sched).replace("{map}", () => mapImg)}</div></body></html>`;
+  }
   const MODALS = {
+    startPreview: () => { const m = S.m, c = S.cfg, subj = C.fill(String(m.subject || ""), { clinic: c.Clinic, patient: "SAMJOR" });
+      return `<h2 id="mh">Start email preview</h2><p class="sub muted">A sample patient (SAMJOR, MRN 000000) and sample visits. The real email fills in the patient's own name, schedule and first visit.</p>
+        <div class="mailmeta"><div><span>Subject</span><b>${esc(subj) || "(no subject)"}</b></div>${C.txt(c.StartCc) ? `<div><span>CC</span>${esc(c.StartCc)}</div>` : ""}${C.txt(c.StartBcc) ? `<div><span>BCC</span>${esc(c.StartBcc)}</div>` : ""}</div>
+        <iframe class="mailprev" title="Start email preview" sandbox srcdoc="${esc(startPreviewDoc(m))}"></iframe>
+        <div class="foot"><button class="btn primary inl" data-act="close" autofocus>Close</button></div>`; },
     checkin() {
       const v = visitBy(S.m.key), m = S.m, c = C.code(v), aOk = teamsReady("arrival"), pOk = teamsReady("protocol");
       const arrTxt = C.arrivalText(v, S.plan ? m.chair : "", S.tpl.arrival), askTxt = C.askText(v.p, v.ask, S.tpl, v.p?.freq);
@@ -2018,10 +2042,10 @@
   /* ---------- actions ---------- */
   const visitBase = v => ({ Date: C.isoOf(v.a.date), MRN: v.a.mrn, Patient: C.code(v), Appt: C.fmtT(v.a.time) });
   const stamp = () => ({ By: S.name, Updated: new Date().toISOString() });
-  const needName = () => { if (S.name) return false; toast("Pick who’s at the desk first, so Teams posts say who sent them."); S.picking = true; S.modal = null; render(); return true; };
+  const needName = () => { if (S.name) return false; toast("Pick your name first, so Teams posts say who sent them."); S.picking = true; S.modal = null; render(); return true; };
   /* the signature is kept with the person on the workbook (tblIvkUsers › Settings), so it follows them to any computer */
   async function saveSig(sig) {
-    if (!S.name) return toast("Pick who’s at the desk first.", true);
+    if (!S.name) return toast("Pick your name first.", true);
     if (sig.length > 20000) return toast("That signature is too long to keep in the workbook. Try the .txt file, or type it.", true);
     await write("Saving your signature…", async () => { if (!S.raw.tables?.own?.tblIvkUsers) await Store.setup(); if (!me()) await Store.saveUser(S.name, {}); return Store.saveUser(S.name, { sig }); }, sig ? "Signature saved. It’s added to the start emails you send." : "Signature removed.");
   }
@@ -2271,6 +2295,7 @@
     printSched: e => formsModal(e.dataset.m, "print", { sched: true }),
     startForms: e => formsModal(e.dataset.m, "print", { sched: true, consent: true }),
     startEmail: e => formsModal(e.dataset.m, "email", { sched: true }),
+    startPreview: () => openModal("startPreview", { subject: $("#tp_startSubject")?.value ?? S.tpl.startSubject, body: $("#tp_startEmail")?.value ?? S.tpl.startEmail }),
     async doForms() {
       const m = S.m, p = formsPatient(m.mrn), parts = m.mode === "email" ? { sched: true } : { sched: !!$("#fp_sched")?.checked, consent: !!$("#fp_consent")?.checked, avail: !!$("#fp_avail")?.checked };
       if (!Object.values(parts).some(Boolean)) return toast("Pick at least one form.", true);
@@ -2352,7 +2377,7 @@
   const ACT = {
     nav: e => { S.view = e.dataset.v === "access" && inAccess(S.view) ? "access" : e.dataset.v === "access" ? (S.acLast || "access") : e.dataset.v; if (inAccess(S.view)) S.acLast = S.view; S.pv = null; render(); },
     async reload() { S.reading = true; render(); try { await refresh(true); toast(S.err ? S.err : `Up to date. Read ${plural(S.list.length, "visit")} today and ${plural(S.P.length, "patient")} at ${hm()}.`, !!S.err); } finally { S.reading = false; render(); } },
-    theme: () => { S.theme = S.theme === "dark" ? "light" : "dark"; LS.set("ivkTheme", S.theme); document.documentElement.dataset.theme = S.theme; render(); },
+    theme: () => { S.theme = S.theme === "dark" ? "light" : "dark"; LS.set("ivkTheme", S.theme); document.documentElement.dataset.theme = S.theme; S.themeSwap = true; render(); S.themeSwap = false; },
     full: () => openFull(),
     sel: e => { S.sel = e.dataset.k; render(); const v = visitBy(S.sel); if (v) follow("mpt", v.a.mrn); },
     bSel: e => { const c = floor().chairs.find(x => x.id === e.dataset.b); if (c && c.v) { S.sel = c.v.key; render(); follow("mpt", c.v.a.mrn); } else toast(`${chairTxt(e.dataset.b)} is open.`); },
@@ -2635,7 +2660,7 @@
     },
     admLock: () => { S.adminUntil = 0; render(); },
     rmUser: e => { const n = e.dataset.v; if (!adminOn() || !n) return;
-      openModal("confirm", { title: `Take ${n} off the list?`, body: "They won’t be offered when someone picks who’s at the desk. Their name stays on what they already saved.", yes: "Remove",
+      openModal("confirm", { title: `Take ${n} off the list?`, body: "They won’t be offered on the name screen. Their name stays on what they already saved.", yes: "Remove",
         run: async () => { await Store.saveUser(n, null, true); if (C.userKey(n) === C.userKey(S.name)) { await Store.setWho(""); S.name = ""; } } }); },
     async sigSave() {
       if (!S.name) return; const t = $("#sigText")?.value || "", cur = sigOf(), same = C.txt(t) === C.withSignature("", cur, false).trim();

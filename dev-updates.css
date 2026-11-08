@@ -22,3 +22,13 @@
 .devupd.du-drag .du-bell{cursor:grabbing;box-shadow:0 8px 28px -8px rgba(16,24,20,.35)}
 .devupd.du-left .du-card,.devupd.du-left .du-panel{right:auto;left:0}
 .devupd.du-up .du-card,.devupd.du-up .du-panel{top:auto;bottom:52px}
+/* docked in the add-in's toolbar (.du-slot, right of light/dark): a plain icon button like its neighbours */
+.du-slot{display:contents}
+.devupd.du-docked{position:relative;top:auto;right:auto;left:auto;z-index:30}
+.devupd.du-docked .du-bell{width:40px;height:40px;border-radius:12px;background:none;box-shadow:none;margin:0}
+.devupd.du-docked .du-bell:hover{background:var(--surface-3,#F0F1EE);color:var(--ink,#1B211F)}
+.devupd.du-docked .du-dot{top:8px;right:9px}
+.devupd.du-docked .du-card,.devupd.du-docked .du-panel{top:46px;right:0;left:auto;bottom:auto}
+/* hover label (also used by the add-in's toolbar buttons via [data-tip]) */
+.du-bell[data-tip]:hover::after,.du-bell[data-tip]:focus-visible::after{content:attr(data-tip);position:absolute;top:calc(100% + 6px);right:0;white-space:nowrap;padding:5px 9px;border-radius:8px;background:var(--ink,#1B211F);color:var(--surface,#FFFFFF);font-size:12px;font-weight:500;line-height:1.2;pointer-events:none;z-index:60}
+.du-bell[aria-expanded="true"]::after{display:none}
