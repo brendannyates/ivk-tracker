@@ -393,14 +393,14 @@
     full: `<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5"/></svg>`,
     sun: `<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>`
   };
-  /* top right: refresh, full screen, light / dark, then the Dev Update bell (dev-updates.js docks it in .du-slot).
+  /* top right: refresh, full screen, light / dark. The Dev Update bell floats (dev-updates.js) and can be dragged anywhere.
      Each shows its label on hover; the theme label is the mode a press switches to. The sun and moon swap places when the
      mode changes: the one on the right is the one to press. */
   const tools = () => { const dark = S.theme === "dark", busy = !!S.reading, swap = S.themeSwap ? " swap" : "";
     const fl = FULL ? "Exit full screen" : pop.dlg ? "Full screen is open" : "Full screen", tl = dark ? "Light mode" : "Dark mode";
     const full = `<button class="ibtn" data-act="full" data-tip="${fl}" aria-label="${fl}">${ICON.full}</button>`;
     const theme = `<button class="ibtn theme${dark ? " is-dark" : ""}${swap}" data-act="theme" data-tip="${tl}" aria-label="Switch to ${tl.toLowerCase()}" aria-pressed="${dark}">${dark ? `<span class="tcur">${ICON.moon}</span><span class="tsl">/</span><span class="tgo">${ICON.sun}</span>` : `<span class="tcur">${ICON.sun}</span><span class="tsl">/</span><span class="tgo">${ICON.moon}</span>`}</button>`;
-    return `<div class="tools"><button class="ibtn${busy ? " spin" : ""}" data-act="reload" data-tip="${busy ? "Reading the workbook…" : "Refresh"}" aria-label="Refresh from the workbook"${busy ? " disabled" : ""}>${ICON.refresh}</button>${full}${theme}<span class="du-slot"></span></div>`; };
+    return `<div class="tools"><button class="ibtn${busy ? " spin" : ""}" data-act="reload" data-tip="${busy ? "Reading the workbook…" : "Refresh"}" aria-label="Refresh from the workbook"${busy ? " disabled" : ""}>${ICON.refresh}</button>${full}${theme}</div>`; };
   const head = (title, sub, clock) => clock
     ? `<div class="top tclock"><div class="clock"><div class="t">${hm()}</div><div class="d">${esc(C.fmtDay(todayS()))}</div></div><div class="topr">${tools()}</div></div><div class="ttl"><h1>${title}</h1>${sub ? `<p class="sub">${sub}</p>` : ""}</div>`
     : `<div class="top"><div><h1>${title}</h1>${sub ? `<p class="sub">${sub}</p>` : ""}</div><div class="topr">${tools()}</div></div>`;
@@ -453,12 +453,12 @@
   }
   function actionsHTML() {
     const I = actionItems(); if (!I.n) return "";
-    const pRow = x => `<div class="nrow"><b>${esc(x.p.code)}</b><span class="i">${esc(x.n.t)} · MRN ${esc(x.p.mrn)}</span>
-      <button class="btn line sm" data-act="${x.n.act[1]}" data-m="${esc(x.p.mrn)}">${esc(x.n.act[0])}</button></div>`;
-    const rRow = m => `<div class="nrow"><b>${esc(m.code || "—")}</b><span class="i">Cancelled ${dshort(m.date)} ${C.fmtT(m.time)} · ${esc(C.provName(m.provider) || "")} · MRN ${esc(m.mrn)}${m.exempt === "kpva" ? " · Kaiser/VA: no fee" : ""}</span>
+    const pRow = x => `<div class="nrow stack"><b>${esc(x.p.code)}</b><span class="i"><span class="ktab ix"></span>${esc(x.n.t)} · MRN ${esc(x.p.mrn)}</span>
+      <span class="acts"><button class="btn line sm" data-act="${x.n.act[1]}" data-m="${esc(x.p.mrn)}">${esc(x.n.act[0])}</button></span></div>`;
+    const rRow = m => `<div class="nrow stack"><b>${esc(m.code || "—")}</b><span class="i">Cancelled ${dshort(m.date)} ${C.fmtT(m.time)} · ${esc(C.provName(m.provider) || "")} · MRN ${esc(m.mrn)}${m.exempt === "kpva" ? " · Kaiser/VA: no fee" : ""}</span>
       <span class="acts"><button class="btn line sm" data-act="missSet" data-k="${esc(m.key)}" data-v="late">Late cancel</button><button class="btn mute sm" data-act="missSet" data-k="${esc(m.key)}" data-v="notlate">Not late</button></span></div>`;
-    const sRow = x => `<div class="nrow"><b>Closed ${exDates(x.e)}</b><span class="i">${esc(x.e.note || "Clinic closure")}: ${x.list.slice(0, 6).map(a => `${esc(a.code || "—")} ${dshort(a.date)} ${C.fmtT(a.time)}${a.hold ? " hold" : ""}`).join(", ")}${x.list.length > 6 ? ` and ${x.list.length - 6} more` : ""}. Move or cancel in NextGen.</span>
-      <button class="btn line sm" data-act="schedDay" data-d="${x.list[0].date}">Open the week</button></div>`;
+    const sRow = x => `<div class="nrow stack"><b>Closed ${exDates(x.e)}</b><span class="i">${esc(x.e.note || "Clinic closure")}: ${x.list.slice(0, 6).map(a => `${esc(a.code || "—")} ${dshort(a.date)} ${C.fmtT(a.time)}${a.hold ? " hold" : ""}`).join(", ")}${x.list.length > 6 ? ` and ${x.list.length - 6} more` : ""}. Move or cancel in NextGen.</span>
+      <span class="acts"><button class="btn line sm" data-act="schedDay" data-d="${x.list[0].date}">Open the week</button></span></div>`;
     return `<section class="card list"><div class="lh"><h2>Action items</h2><span>${plural(I.n, "to do", "to do")}</span></div>
       ${I.proto.map(pRow).join("")}${I.review.map(rRow).join("")}${I.shut.map(sRow).join("")}
       ${I.review.length ? `<p class="note">Cancelled within ${plural(+S.cfg.LateCancelDays || 1, "day")} of the visit: say whether it was a late cancel. A visit cancelled on its own day is always one.</p>` : ""}</section>`;
@@ -484,8 +484,9 @@
       return `<div class="nrow startck"><b>${esc(s.code || "—")}</b>
         <span class="i"><span class="ktab st"></span>Treatment start ${when} ${C.fmtT(s.a.time)} · ${esc(C.provName(s.a.provider) || "")} · MRN ${m}${s.kept ? " · kept" : ""}</span>
         <div class="ck">${prof}${cm}</div></div>`; }).join("");
-    const open = L.filter(s => s.open).length;
-    return `<section class="card list"><div class="lh"><h2>Treatment starts</h2><span>${open ? `${plural(open, "start")} with something to do` : "All done"}</span></div>${rows}
+    /* open items: boxes still to tick that can be ticked now (Case Management waits for the day; a no-show has nothing to do) */
+    const open = L.filter(s => s.open).reduce((n, s) => n + Math.max(1, (s.profDone ? 0 : 1) + (s.cmDone || s.noshow || s.date > todayS() ? 0 : 1)), 0);
+    return `<section class="card list"><div class="lh"><h2>Treatment starts</h2><span class="pill${open ? " open" : ""}">${open ? plural(open, "open item") : "All done"}</span></div>${rows}
       ${S.stOn ? "" : `<p class="note warn">Ticking Case Management needs the newer table. Use <b>Update the workbook</b> in Settings.</p>`}</section>`;
   }
   function gapsHTML(max) {
@@ -1248,7 +1249,7 @@
     const n = C.needs(p, S.x), L = C.loud(n), first = L[0], tv = S.list.find(v => v.a.mrn === p.mrn), on = pvSect(), m = esc(p.mrn);
     const meta = [p.status || "No status", p.freq || "no frequency", p.loc, p.start != null ? `started ${C.fmtD(p.start)}` : "", p.reqPost ? "requires post-check" : ""].filter(Boolean).join(" · ");
     const A = y => `data-act="${y.act[1]}" data-m="${m}"`;
-    const also = L.slice(1, 5).map(y => `<div class="row"><span class="f ${y.bad ? "bad" : "flag"} needline">${esc(y.t)}</span>${y.act ? `<button class="btn ghost sm" ${A(y)}>${esc(y.act[0])}</button>` : ""}</div>`).join("");
+    const also = L.slice(1, 6).map(y => `<div class="row"><span class="f ${y.bad ? "bad" : "flag"} needline">${esc(y.t)}</span>${y.act ? `<button class="btn ghost sm" ${A(y)}>${esc(y.act[0])}</button>` : ""}</div>`).join("");
     const quiet = n.filter(y => y.quiet).map(y => `<span class="tag">${esc(y.t)}</span>`).join("");
     const sect = { sched: pvSched, proto: pvProto, ben: pvBen, fin: pvFin };
     const back = { patients: "Patients", schedule: "Schedule", today: "Today" }[S.pvFrom] || "the list";
@@ -1256,12 +1257,28 @@
       <div class="pview">
       ${tv && ["in", "tx"].includes(tv.ph) ? `<div class="pvtoday"><span><b>Here today</b> · ${S.plan && tv.st.chair ? `${esc(chairTxt(tv.st.chair))} · ` : ""}${tv.ph === "tx" ? `In treatment since ${C.fmtT(tv.st.seat)}` : `Checked in ${C.fmtT(tv.st.arr)}`}</span><button class="btn ghost sm" data-act="toToday" data-k="${esc(tv.key)}">Open visit</button></div>`
         : tv ? `<div class="pvtoday quiet"><span><b>Today</b> ${C.fmtT(tv.a.time)}, ${esc(PH_WORD[tv.ph] || "")}</span><button class="btn ghost sm" data-act="toToday" data-k="${esc(tv.key)}">Today’s visit</button></div>` : ""}
-      <p class="lead ${first ? (first.bad ? "late" : "soon") : ""}">${esc(first ? first.t : "Nothing needed right now")}</p>${quiet ? `<div class="tags">${quiet}</div>` : ""}
-      ${first && first.act ? `<button class="btn primary" ${A(first)}>${esc(first.act[0])}</button>` : ""}
-      ${also ? `<div class="section needs"><div class="h"><h2>Also needs</h2><span>${L.length - 1} more</span></div>${also}</div>` : ""}
-      <div class="pvgrid"><nav class="pvnav" aria-label="Sections">${PV_SECT.map(([k, l]) => `<button data-act="pvShow" data-v="${k}" aria-current="${on === k}">${l}</button>`).join("")}</nav>
-        <div class="pvs card" data-sect="${on}">${sect[on](p)}</div></div></div>`;
+      <div class="pvwrap">
+        <section class="card pvneed" aria-label="Needs"><div class="h"><h2>Needs</h2><span>${L.length ? plural(L.length, "item") : "none"}</span></div>
+          <p class="lead ${first ? (first.bad ? "late" : "soon") : ""}">${esc(first ? first.t : "Nothing needed right now")}</p>${quiet ? `<div class="tags">${quiet}</div>` : ""}
+          ${first && first.act ? `<button class="btn primary" ${A(first)}>${esc(first.act[0])}</button>` : ""}
+          ${also ? `<div class="needs">${also}</div>` : ""}</section>
+        <div class="pvmain"><nav class="pvtabs" aria-label="Sections">${PV_SECT.map(([k, l]) => `<button data-act="pvShow" data-v="${k}" aria-current="${on === k}">${l}</button>`).join("")}</nav>
+          <div class="pvs card" data-sect="${on}">${sect[on](p)}</div></div>
+        ${pvNotes(p)}</div></div>`;
   }
+  /* Clinic notes: what's on the Master Patient Tracker, and a note box that opens only when asked. A note is added to the
+     end of Clinic Notes with today's date and the name picked at the start. */
+  function pvNotes(p) {
+    const m = esc(p.mrn), open = S.noteOpen === p.mrn, has = !!mptHead()("clinicnotes");
+    const lines = String(p.notes || "").split(/\r?\n/).map(s => s.trim()).filter(Boolean);
+    return `<section class="card pvnotes" aria-label="Clinic notes"><div class="h"><h2>Clinic notes</h2><span>${lines.length ? plural(lines.length, "line") : "none yet"}</span></div>
+      ${lines.length ? `<div class="nlist">${lines.map(l => `<p>${esc(l)}</p>`).join("")}</div>` : ""}
+      ${!has ? `<p class="note">The Master Patient Tracker has no Clinic Notes column, so notes can’t be added here.</p>`
+        : open ? `<div class="noteadd"><label class="fld">New note<textarea id="pvNoteTxt" rows="3" maxlength="600" placeholder="What the next person should know">${esc(S.noteDraft || "")}</textarea><span class="hint">Added to Clinic Notes with today’s date${S.name ? ` and ${esc(S.name)}` : ""}.</span></label>
+          <div class="actions"><button class="btn primary sm inl" data-act="noteSave" data-m="${m}">Save note</button><button class="btn ghost sm" data-act="noteCancel">Cancel</button></div></div>`
+        : `<button class="btn ghost sm line" data-act="noteOpen" data-m="${m}">Add a note</button>`}</section>`;
+  }
+  const noteLine = t => `${C.fmtD(todayS())}, ${C.dateOf(todayS()).getFullYear()}: ${t}${S.name ? `, ${S.name}` : ""}`;
   /* Schedule: what's booked (start and index visits marked, post checks, anything off the template), holds, recent visits, the
      printouts and the patient's availability */
   function pvSched(p) {
@@ -1331,8 +1348,7 @@
         ${p.pcn ? `<dt>PCN</dt><dd>${esc(p.pcn)}${p.task ? `, ${esc(p.task)}` : ""}</dd>` : ""}</dl></div>
       <div class="section"><div class="h"><h2>BIDF</h2></div><dl class="facts"><dt>2026 BIDF</dt><dd${!p.bidf && C.isActive(p) ? ' class="flag"' : ""}>${esc(p.bidf || "Not recorded")}</dd><dt>Printed at the desk</dt><dd>${pf?.bidfPrinted != null ? C.fmtD(pf.bidfPrinted) : "—"}</dd></dl>
         <p class="note">The BIDF is completed by the benefits team and printed from NextGen.</p></div>
-      <div class="actions"><button class="btn ghost sm line" data-act="profile" data-m="${m}">Edit coverage and benefits</button><button class="btn mute sm" data-act="edit" data-m="${m}">Edit tracker fields</button></div>
-      ${p.notes ? `<p class="note">Clinic notes: ${esc(p.notes)}</p>` : ""}`;
+      <div class="actions"><button class="btn ghost sm line" data-act="profile" data-m="${m}">Edit coverage and benefits</button><button class="btn mute sm" data-act="edit" data-m="${m}">Edit tracker fields</button></div>`;
   }
   const pvFin = p => payHTML(p);
   const startVisit = p => C.futureOf(S.A, p.mrn, todayS() - 1).find(a => /start/i.test(a.event)) || (/induction/i.test(p.status) ? C.futureOf(S.A, p.mrn, todayS() - 1)[0] : null) || null;
@@ -2473,6 +2489,23 @@
     pOpen: e => openPv(e.dataset.m),
     pvClose: () => { const m = S.pv; S.pv = null; render(); const b = document.querySelector(`[data-act="pOpen"][data-m="${CSS.escape(m || "")}"]`); if (b) b.focus(); },
     pvShow: e => { S.pvSect = e.dataset.v; LS.set("ivkPtSect", S.pvSect); render(); },
+    noteOpen: e => { S.noteOpen = e.dataset.m; S.noteDraft = ""; render(); const t = $("#pvNoteTxt"); if (t) t.focus(); },
+    noteCancel: () => { S.noteOpen = null; S.noteDraft = ""; render(); },
+    async noteSave(e) {
+      const p = S.PM.get(e.dataset.m), t = C.txt($("#pvNoteTxt")?.value).replace(/\s*\n\s*/g, " "); if (!p) return;
+      if (!t) return toast("Type the note first.", true);
+      const nc = mptHead()("clinicnotes"); if (!nc) return toast("The Master Patient Tracker has no Clinic Notes column.", true);
+      const line = noteLine(t);
+      const r = await write("Saving the note…", async () => {
+        /* the cell as it is now (someone may have typed in it since the last read), else what was read */
+        const fresh = await Store.readRow("mpt", p.mrn).catch(() => null), ci = fresh ? fresh.head.map(C.norm).indexOf(C.norm(nc)) : -1;
+        const cur = C.txt(ci >= 0 ? fresh.values[ci] : p.notes);
+        const w = await Store.saveRow("mpt", p.mrn, { [nc]: cur ? `${cur}\n${line}` : line });
+        if (S.raw.tables?.own?.tblIvkLog) { try { await Store.appendLog([`n${Date.now().toString(36)}`, "note", p.code, "", t, S.name, new Date().toISOString(), "saved"]); } catch (x) { console.error(x); } }
+        return w;
+      }, w => w?.skipped?.length ? `Clinic Notes wasn’t changed (a formula or no such column).` : `Note added to ${p.code}’s Clinic Notes.`);
+      if (r && !r.skipped?.length) { S.noteOpen = null; S.noteDraft = ""; p.notes = C.txt(p.notes) ? `${p.notes}\n${line}` : line; render(); refresh(true); }
+    },
     pSort: e => { const k = e.dataset.v, s = S.sort || { k: "need", dir: -1 }; S.sort = s.k === k ? { k, dir: -s.dir } : { k, dir: k === "need" || k === "conf" || k === "thru" ? -1 : 1 }; render(); },
     avChip: e => { S.avChip = e.dataset.v; render(); },
     dmPaused: () => { S.dm = Object.assign({}, S.dm, { paused: !S.dm?.paused }); render(); },
@@ -3099,7 +3132,7 @@
     else if (/^mAmt_/.test(t.id) || t.id === "mAmtSave" || t.id === "mXfer" || t.id === "mCard" || t.id === "mConsent") { keepPay(); render(); }
     else if (S.modal === "xfer" && ["xfTo", "xfDate"].includes(t.id)) { keepXfer(); render(); }
   });
-  document.addEventListener("input", e => { if (e.target.id === "ptSearch") { S.q = e.target.value; const pos = e.target.selectionStart; render(); const s = $("#ptSearch"); if (s) { s.focus(); s.setSelectionRange(pos, pos); } } });
+  document.addEventListener("input", e => { if (e.target.id === "pvNoteTxt") { S.noteDraft = e.target.value; return; } if (e.target.id === "ptSearch") { S.q = e.target.value; const pos = e.target.selectionStart; render(); const s = $("#ptSearch"); if (s) { s.focus(); s.setSelectionRange(pos, pos); } } });
   /* a start and its post check shade together while either is hovered or focused (Schedule and the Access week) */
   const pairOf = el => el && el.closest ? el.closest("[data-pc],[data-pck]") : null;
   const shade = (el, on) => { const k = el.dataset.pc || el.dataset.pck; if (!k) return;
