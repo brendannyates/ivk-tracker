@@ -1,4 +1,4 @@
-/* Dev Update notices, shared by the MHS add-ins. dev-updates.json (newest first) lists what changed:
+/* Dev Update notices, shared by the MHS add-ins. Docks in the toolbar when the page has a .du-slot; otherwise floats top right (draggable). dev-updates.json (newest first) lists what changed:
    { "updates": [ { "id": "2026-10-29-a", "date": "2026-10-29", "bullets": ["..."] } ] }
    Unseen updates from the last 30 days show as one rounded notice under a bell in the top right; the bell keeps the history.
    Seen ids are kept per computer (localStorage) and also passed between the task pane and its full-screen dialog, because the
@@ -30,7 +30,7 @@
   function build() {
     const el = document.createElement("div");
     el.className = "devupd";
-    el.innerHTML = `<button type="button" class="du-bell" aria-haspopup="dialog" aria-expanded="false">${BELL}<span class="du-dot" hidden></span></button>
+    el.innerHTML = `<button type="button" class="du-bell" data-tip="Dev updates" aria-haspopup="dialog" aria-expanded="false">${BELL}<span class="du-dot" hidden></span></button>
       <div class="du-card" role="status" aria-live="polite" hidden></div>
       <div class="du-panel" role="dialog" aria-label="Dev updates" hidden></div>`;
     document.body.appendChild(el);
@@ -101,19 +101,36 @@
     return null;
   }
   function avoid() {
-    P.raf = 0; if (!S.el || S.el.hidden || P.drag) return;
-    const h = home(), b = blocker(h.x, h.y);
-    if (!b) { P.nudge = null; return apply(h.x, h.y); }
-    const box = (b.closest(".modal,.card,.du-avoid,section,.foot,.tools,.top,.rail") || b).getBoundingClientRect();
-    const fits = x => x >= EDGE && x <= innerWidth - SIZE - EDGE;
-    const opts = [box.left - SIZE - GAP, box.right + GAP].filter(fits).sort((a, c) => Math.abs(a - h.x) - Math.abs(c - h.x));
-    P.nudge = opts.length ? { x: opts[0], y: h.y } : null;
-    apply(P.nudge ? P.nudge.x : h.x, h.y);
+    P.raf = 0; if (!S.el || P.drag) return;
+    /* docked: the add-in's toolbar has a .du-slot (right of light/dark); the bell sits there and doesn't float or drag */
+    const slot = document.querySelector(".du-slot");
+    if (slot) {
+      if (S.el.parentNode !== slot) slot.appendChild(S.el);
+      S.el.classList.add("du-docked"); S.el.classList.remove("du-left", "du-up");
+      S.el.style.left = S.el.style.top = S.el.style.right = "";
+      return;
+    }
+    if (S.el.classList.contains("du-docked")) { S.el.classList.remove("du-docked"); document.body.appendChild(S.el); }
+    if (S.el.hidden) return;
+    const h = home(), fits = x => x >= EDGE && x <= innerWidth - SIZE - EDGE;
+    let at = { x: h.x, y: h.y };
+    for (let i = 0; i < 4; i++) {   // a step can land on the next card's button: step again, a few times at most
+      const b = blocker(at.x, at.y); if (!b) break;
+      const box = (b.closest(".modal,.card,.du-avoid,section,.foot,.tools,.top,.rail") || b).getBoundingClientRect();
+      const opts = [box.left - SIZE - GAP, box.right + GAP].filter(fits).sort((a, c) => Math.abs(a - at.x) - Math.abs(c - at.x));
+      /* no room beside it (a full-width bar): step below it instead */
+      const below = box.bottom + GAP;
+      if (opts.length) at = { x: opts[0], y: at.y };
+      else if (below <= innerHeight - SIZE - EDGE) at = { x: at.x, y: below };
+      else break;
+    }
+    P.nudge = at.x === h.x && at.y === h.y ? null : at;
+    apply(at.x, at.y);
   }
   const soon = () => { if (!P.raf) P.raf = requestAnimationFrame(avoid); };
   function dragOn(el, bell) {
     bell.addEventListener("pointerdown", e => {
-      if (e.button !== 0) return;
+      if (e.button !== 0 || el.classList.contains("du-docked")) return;
       const r = el.getBoundingClientRect();
       P.drag = { id: e.pointerId, sx: e.clientX, sy: e.clientY, x: r.left, y: r.top, moved: false };
       try { bell.setPointerCapture(e.pointerId); } catch { /* synthetic pointer */ }

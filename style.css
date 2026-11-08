@@ -490,8 +490,7 @@ button.avrow:hover{background:var(--surface-3)}button.avrow + button.avrow{box-s
 .payr .pick{margin-top:0}
 .pcb.so{background:var(--warn-soft);color:var(--warn)}
 
-/* room for the Dev Updates bell, top right */
-.top{padding-right:52px}
+/* the tools sit flush right; the Dev Update bell steps to their left when it lands on them (dev-updates.js) */
 
 /* v2: Today in two columns that wrap (rows and sections, then the visit card, sticky) */
 .today{display:flex;flex-wrap:wrap;gap:24px;align-items:flex-start}
@@ -569,7 +568,7 @@ html.ivk-busy,html.ivk-busy *{cursor:progress!important}
 /* Today: time and date top left, tools top right, the title on the right under the date line */
 .top.tclock{align-items:flex-start;margin-bottom:4px}
 .top.tclock .clock{text-align:left}
-.ttl{text-align:right;margin:0 0 22px;padding-right:52px}
+.ttl{text-align:right;margin:0 0 22px}
 .ttl .sub{margin-top:6px}
 /* name picker: the hero, then the names, and a scroll (not a clipped centre) when the list is long */
 .boot{display:flex;overflow:auto}
@@ -578,3 +577,39 @@ html.ivk-busy,html.ivk-busy *{cursor:progress!important}
 .whohero h1{margin:0}
 .boot.who .wholist{margin-top:22px}
 @media (max-width:760px){.ttl{padding-right:0}}
+/* Schedule blocks: LASFIR top left, MRN right; provider with the time on the right underneath */
+.blk .br{display:flex;align-items:baseline;gap:4px;min-width:0}
+.blk .br .pm,.blk .br .bt{margin-left:auto;padding-left:6px;white-space:nowrap}
+.blk .br.sm{color:var(--muted);font-size:11.5px;margin-top:1px}
+.blk .br .bp{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+/* narrow pane: the top bar holds Today, Schedule, Patients and Full screen only (the rest is in full screen) */
+@media (max-width:760px){
+  .rail .brand,.rail .item.who,.rail .item[data-v]:not([data-v=today]):not([data-v=schedule]):not([data-v=patients]){display:none}
+  .rail .item.fs{margin-left:auto}
+}
+@media (max-width:760px){.rail .item.fs span{display:none}.rail .item.fs svg{color:inherit}}
+/* toolbar hover labels: what the press does (the theme says the mode it switches to) */
+.tools{align-items:center}
+.tools .ibtn{position:relative}
+.tools .ibtn[data-tip]:hover::after,.tools .ibtn[data-tip]:focus-visible::after{content:attr(data-tip);position:absolute;top:calc(100% + 6px);right:0;white-space:nowrap;padding:5px 9px;border-radius:8px;background:var(--ink);color:var(--surface);font-size:12px;font-weight:500;line-height:1.2;pointer-events:none;z-index:60}
+/* light / dark: "sun / moon"; the right one is the one to press, the left is where you are. They swap places on a change. */
+.ibtn.theme{width:auto;padding:0 8px;display:flex;align-items:center;gap:3px}
+.ibtn.theme svg{width:16px;height:16px}
+.ibtn.theme .tsl{font-size:14px;color:var(--faint,var(--muted));line-height:1}
+.ibtn.theme .tcur{opacity:.45}
+.ibtn.theme .tgo{color:var(--ink)}
+.ibtn.theme .tcur,.ibtn.theme .tgo{display:grid;place-items:center}
+.ibtn.theme[aria-pressed="true"]{color:var(--muted)}
+.ibtn.theme.swap .tcur{animation:ivkswapL .38s cubic-bezier(.3,.7,.3,1)}
+.ibtn.theme.swap .tgo{animation:ivkswapR .38s cubic-bezier(.3,.7,.3,1)}
+@keyframes ivkswapL{from{transform:translateX(26px) rotate(-90deg);opacity:1}}
+@keyframes ivkswapR{from{transform:translateX(-26px) rotate(90deg);opacity:.45}}
+/* Settings › start email preview */
+.mailmeta{display:flex;flex-direction:column;gap:4px;margin:14px 0 10px;font-size:13.5px}
+.mailmeta span{display:inline-block;min-width:60px;color:var(--muted)}
+.mailprev{display:block;width:100%;height:min(60vh,560px);border:0;border-radius:12px;background:#fff;box-shadow:inset 0 0 0 1px var(--surface-2)}
+/* Access › no-shows and late cancels: the group header above its 30 / 60 / 90 day columns, each count in its own cell */
+.tt.ns th.grp{text-align:center;border-bottom:1px solid var(--surface-2);padding-bottom:6px}
+.tt.ns th.n3,.tt.ns td.n3{text-align:center;min-width:58px;padding-left:10px;padding-right:10px;font-variant-numeric:tabular-nums}
+.tt.ns th.n3{font-weight:500;color:var(--muted);font-size:12px;white-space:nowrap}
+.tt.ns .g1{border-left:1px solid var(--surface-2)}
