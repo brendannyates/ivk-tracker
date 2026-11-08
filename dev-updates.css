@@ -17,3 +17,8 @@
 .du-panel h3{margin:0;font-size:13px;font-weight:600;color:var(--muted,#66706B)}
 .devupd [hidden]{display:none!important}
 .devupd :focus-visible{outline:2px solid var(--accent,#1E6B59);outline-offset:3px}
+/* the bell can be dragged; the notice and history open towards the middle of the window */
+.du-bell{touch-action:none}
+.devupd.du-drag .du-bell{cursor:grabbing;box-shadow:0 8px 28px -8px rgba(16,24,20,.35)}
+.devupd.du-left .du-card,.devupd.du-left .du-panel{right:auto;left:0}
+.devupd.du-up .du-card,.devupd.du-up .du-panel{top:auto;bottom:52px}

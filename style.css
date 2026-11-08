@@ -558,3 +558,23 @@ button.avrow:hover{background:var(--surface-3)}button.avrow + button.avrow{box-s
 .dmpl .row .i,.mlist .row .i{color:var(--muted)}
 .mlist{margin-top:10px}
 .stat b .bad,.stat span .bad{color:var(--danger)}
+
+/* rail: the clinic is the brand (the pane title already says IVK Tracker); full screen sits under the name */
+.item.fs{justify-content:flex-start;gap:10px}
+.item.fs svg{flex:none;color:var(--muted)}
+/* writing or reading the workbook: busy cursor, the dot turns into a spinner and the bar runs at the top of the page */
+html.ivk-busy,html.ivk-busy *{cursor:progress!important}
+.conn.busy{color:var(--ink)}
+.conn.busy .cdot{width:10px;height:10px;background:none;border:2px solid var(--surface-2);border-top-color:var(--accent);animation:ivkspin .9s linear infinite}
+/* Today: time and date top left, tools top right, the title on the right under the date line */
+.top.tclock{align-items:flex-start;margin-bottom:4px}
+.top.tclock .clock{text-align:left}
+.ttl{text-align:right;margin:0 0 22px;padding-right:52px}
+.ttl .sub{margin-top:6px}
+/* name picker: the hero, then the names, and a scroll (not a clipped centre) when the list is long */
+.boot{display:flex;overflow:auto}
+.bootin{margin:auto}
+.whohero{display:flex;flex-direction:column;align-items:center}
+.whohero h1{margin:0}
+.boot.who .wholist{margin-top:22px}
+@media (max-width:760px){.ttl{padding-right:0}}

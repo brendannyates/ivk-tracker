@@ -31,7 +31,7 @@
   /* ---------- who's at the desk ----------
      People register on the workbook (tblIvkUsers). This computer remembers, per workbook, who picked today and who has used it here
      before (localStorage "ivkWho:<workbook key>"); nothing is carried from one workbook to another. The first open each day asks
-     "Who's at the desk?" from that workbook's list only, with nobody picked. The pane decides; full screen takes the pane's pick. */
+     "Enter your name" from that workbook's list only, with nobody picked. The pane decides; full screen takes the pane's pick. */
   const dayIso = () => C.isoOf(todayS());
   const whoKey = () => S.wb ? `ivkWho:${S.wb}` : "";
   const whoRead = () => C.whoRec(whoKey() ? LS.get(whoKey(), "") : "");
@@ -367,17 +367,18 @@
        refresh and dark mode at the top right). While a refresh reads the workbook the page dims and can't be pressed. */
     $("#app").innerHTML = `<div class="app">
       <nav class="rail" aria-label="IVK Tracker">
-        <div class="brand">IVK Tracker<small>${S.cfg.Clinic ? `${esc(S.cfg.Clinic)} · ` : ""}IV ketamine</small></div>
+        <div class="brand">${S.cfg.Clinic ? `${esc(S.cfg.Clinic)}<small>IV ketamine</small>` : `IV ketamine<small>Patient tracker</small>`}</div>
         ${NAV.map(item).join("")}
         <div class="spacer"></div>
         ${S.name ? `<button class="item who" data-act="switchUser" title="Switch user">${esc(S.name)}<small>Switch user</small></button>` : ""}
+        <button class="item fs" data-act="full"${!FULL && pop.dlg ? ' title="Full screen is open"' : ""}>${ICON.full}${FULL ? "Exit full screen" : "Full screen"}</button>
         ${item(["settings", "Settings"])}
-        ${FULL ? `<button class="item" data-act="full">Exit full screen</button>` : ""}
-        <div class="conn${S.err ? " off" : ""}"><span class="cdot"></span>${S.err ? "Not connected" : S.busy ? esc(S.busy) : FULL ? "Saving through the task pane" : esc(C.txt(S.raw.wbName).replace(/\.xls[xmb]?$/i, "") || "Connected to the workbook")}</div>
+        <div class="conn${S.err ? " off" : ""}${S.busy || S.reading ? " busy" : ""}" title="${esc(C.txt(S.raw.wbName))}"><span class="cdot"></span>${S.err ? "Not connected" : S.busy ? esc(S.busy) : S.reading ? "Reading the workbook…" : FULL ? "Saving through the task pane" : "Connected to the workbook"}</div>
       </nav>
-      <main class="page" id="main">${S.reading ? `<div class="pbar" aria-hidden="true"><span></span></div>` : ""}${S.err ? `<div class="msg bad">${esc(S.err)}</div>` : ""}<div class="pagein"${S.reading ? " inert" : ""}>${body}</div></main></div>
+      <main class="page" id="main">${S.reading || S.busy ? `<div class="pbar" aria-hidden="true"><span></span></div>` : ""}${S.err ? `<div class="msg bad">${esc(S.err)}</div>` : ""}<div class="pagein"${S.reading ? " inert" : ""}>${body}</div></main></div>
       ${S.modal ? `<div class="scrim" data-act="scrim"><div class="modal" role="dialog" aria-modal="true" aria-labelledby="mh">${MODALS[S.modal]()}</div></div>` : ""}`;
     const p2 = $(".page"); if (p2) p2.scrollTop = top;
+    document.documentElement.classList.toggle("ivk-busy", !!(S.busy || S.reading));
     if (S.modal) { const f = $(".modal [autofocus]") || $(".modal button.primary"); if (f && !$(".modal").contains(document.activeElement)) f.focus(); }
   }
   let toastT = null;
@@ -393,16 +394,19 @@
     sun: `<svg viewBox="0 0 24 24" width="18" height="18" aria-hidden="true" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>`
   };
   const tools = () => { const dark = S.theme === "dark", busy = !!S.reading;
-    const full = FULL ? "" : `<button class="ibtn" data-act="full" title="${pop.dlg ? "Full screen is open" : "Full screen"}" aria-label="${pop.dlg ? "Full screen is open" : "Full screen"}">${ICON.full}</button>`;
-    return `<div class="tools">${busy ? `<span class="busyl">Reading the workbook…</span>` : ""}${full}<button class="ibtn${busy ? " spin" : ""}" data-act="reload" title="Refresh: read the workbook again" aria-label="Refresh from the workbook"${busy ? " disabled" : ""}>${ICON.refresh}</button>
+    const fl = FULL ? "Exit full screen" : pop.dlg ? "Full screen is open" : "Full screen";
+    const full = `<button class="ibtn" data-act="full" title="${fl}" aria-label="${fl}">${ICON.full}</button>`;
+    return `<div class="tools"><button class="ibtn${busy ? " spin" : ""}" data-act="reload" title="Refresh: read the workbook again" aria-label="Refresh from the workbook"${busy ? " disabled" : ""}>${ICON.refresh}</button>${full}
       <button class="ibtn" data-act="theme" title="${dark ? "Light mode" : "Dark mode"}" aria-label="${dark ? "Switch to light mode" : "Switch to dark mode"}" aria-pressed="${dark}">${dark ? ICON.sun : ICON.moon}</button></div>`; };
-  const head = (title, sub, clock) => `<div class="top"><div><h1>${title}</h1>${sub ? `<p class="sub">${sub}</p>` : ""}</div><div class="topr">${tools()}${clock ? `<div class="clock"><div class="t">${hm()}</div><div class="d">${esc(C.fmtDay(todayS()))}</div></div>` : ""}</div></div>`;
+  const head = (title, sub, clock) => clock
+    ? `<div class="top tclock"><div class="clock"><div class="t">${hm()}</div><div class="d">${esc(C.fmtDay(todayS()))}</div></div><div class="topr">${tools()}</div></div><div class="ttl"><h1>${title}</h1>${sub ? `<p class="sub">${sub}</p>` : ""}</div>`
+    : `<div class="top"><div><h1>${title}</h1>${sub ? `<p class="sub">${sub}</p>` : ""}</div><div class="topr">${tools()}</div></div>`;
   const TABLE_WHAT = { tblIvkUsers: "the list of people who use this workbook", tblIvkPlans: "index plans", tblIvkHolds: "holds", tblIvkOther: "the providers’ other visits", tblIvkFlags: "post-check flags", tblIvkPatient: "payment flags, Oakland, availability and the waitlist order", tblIvkPay: "payments and balance reminders", tblIvkExceptions: "provider time off and coverage", tblIvkProfile: "patient profiles (who pays, Sohar benefits)", tblIvkTransfers: "transfers to another clinic", tblIvkElsewhere: "visits at the other clinics (transfer and Oakland hand-offs)", tblIvkSooner: "the cancellation waitlist", tblIvkOffers: "openings offered to waitlisted patients", tblIvkStarts: "the treatment start checklist", tblIvkMissed: "no-shows and late cancels", tblIvkReplies: "answers from Teams cards" };
-  /* "Who's at the desk?": this workbook's list only, the people who've used this computer here first, nobody picked */
+  /* "Enter your name": this workbook's list only, the people who've used this computer here first, nobody picked */
   function pickHTML() {
     const L = C.pickOrder(S.users, whoRead().used), cancel = S.picking && S.name;
-    return `<div class="boot who"><div class="bootin"><h1>Who’s at the desk?</h1>
-      <p class="muted">${L.length ? "Pick your name for today. Teams posts and the log say who did what." : "Nobody has added their name to this workbook yet."}</p>
+    return `<div class="boot who"><div class="bootin"><div class="whohero"><h1>Enter your name</h1>
+      <p class="muted">${L.length ? "Pick yours below, or add it if you’re new. Teams posts and the log say who did what." : "Nobody has added their name to this workbook yet. Add yours to start."}</p></div>
       ${L.length ? `<div class="wholist" role="group" aria-label="People on this workbook">${L.map(u => `<button class="btn ghost whob" data-act="pickUser" data-v="${esc(u.name)}">${esc(u.name)}${u.here ? `<span class="tag">On this computer</span>` : ""}</button>`).join("")}</div>` : ""}
       <details class="fold whonew"${L.length ? "" : " open"}><summary>${L.length ? "I’m not on the list" : "Add your name"}</summary>
         <label class="fld">Your name, as Teams posts show it<input id="whoNew" autocomplete="off" spellcheck="false" maxlength="30"><span class="hint">Usually your first name. Add a last initial if someone here shares it.</span></label>

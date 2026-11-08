@@ -34,7 +34,9 @@
       <div class="du-card" role="status" aria-live="polite" hidden></div>
       <div class="du-panel" role="dialog" aria-label="Dev updates" hidden></div>`;
     document.body.appendChild(el);
-    el.querySelector(".du-bell").onclick = () => toggle(!S.open);
+    const bell = el.querySelector(".du-bell");
+    bell.onclick = () => { if (P.justDragged) { P.justDragged = false; return; } toggle(!S.open); };
+    dragOn(el, bell);
     el.addEventListener("click", e => {
       const b = e.target.closest("[data-du]"); if (!b) return;
       if (b.dataset.du === "dismiss") markSeen(unseen().map(u => u.id));
@@ -55,6 +57,7 @@
     if (!S.el) return;
     const n = unseen(), bell = S.el.querySelector(".du-bell"), card = S.el.querySelector(".du-card"), panel = S.el.querySelector(".du-panel");
     S.el.hidden = !S.items.length;
+    if (!S.el.hidden) soon();
     bell.querySelector(".du-dot").hidden = !n.length;
     bell.setAttribute("aria-label", n.length ? `Dev updates, ${n.length} new` : "Dev updates");
     bell.setAttribute("aria-expanded", String(S.open));
@@ -66,11 +69,82 @@
       ${S.items.map(u => `<section><h3>Dev Update: ${fmt(u.date)}</h3>${list(u)}</section>`).join("")}` : "";
   }
 
+  /* The bell can be dragged anywhere and stays there (per computer, anchored to the nearest corner so it holds its place when
+     the window is resized or goes full screen). When a new screen or menu puts a button under it, it steps aside to the left
+     or right of that card, whichever is closer, GAP px off, and goes back once the way is clear. A press without moving opens it. */
+  const SIZE = 44, EDGE = 4, GAP = 6, DEF = { r: 16, t: 14 };
+  const P = { saved: null, nudge: null, drag: null, justDragged: false, raf: 0 };
+  const posKey = () => `${S.key}_bell`;
+  function loadPos() { try { const p = JSON.parse(localStorage.getItem(posKey()) || "null"); if (p && isFinite(p.dx) && isFinite(p.dy)) P.saved = p; } catch { /* none */ } }
+  function savePos() { try { localStorage.setItem(posKey(), JSON.stringify(P.saved)); } catch { /* this session only */ } }
+  const clampX = x => Math.min(Math.max(EDGE, x), innerWidth - SIZE - EDGE), clampY = y => Math.min(Math.max(EDGE, y), innerHeight - SIZE - EDGE);
+  /* where the bell lives before any stepping aside: the saved spot, else the default top right */
+  function home() {
+    const p = P.saved;
+    if (!p) return { x: innerWidth - SIZE - DEF.r, y: DEF.t };
+    return { x: clampX(p.h === "l" ? p.dx : innerWidth - SIZE - p.dx), y: clampY(p.v === "t" ? p.dy : innerHeight - SIZE - p.dy) };
+  }
+  function apply(x, y) {
+    const el = S.el; if (!el) return;
+    el.style.left = `${x}px`; el.style.top = `${y}px`; el.style.right = "auto";
+    el.classList.toggle("du-left", x + SIZE / 2 < innerWidth / 2);   // notice and history open towards the middle
+    el.classList.toggle("du-up", y + SIZE / 2 > innerHeight / 2);
+  }
+  const INTERACTIVE = "button,a[href],input,select,textarea,summary,label,[data-act],[role=button],[tabindex]:not([tabindex=\"-1\"])";
+  function blocker(x, y) {
+    const pts = [[x + 6, y + 6], [x + SIZE - 6, y + 6], [x + 6, y + SIZE - 6], [x + SIZE - 6, y + SIZE - 6], [x + SIZE / 2, y + SIZE / 2]];
+    for (const [px, py] of pts) {
+      const hit = document.elementsFromPoint(px, py).find(n => !S.el.contains(n));
+      const b = hit && hit.closest(INTERACTIVE);
+      if (b && !b.matches(".scrim,[data-act=scrim]")) return b;
+    }
+    return null;
+  }
+  function avoid() {
+    P.raf = 0; if (!S.el || S.el.hidden || P.drag) return;
+    const h = home(), b = blocker(h.x, h.y);
+    if (!b) { P.nudge = null; return apply(h.x, h.y); }
+    const box = (b.closest(".modal,.card,.du-avoid,section,.foot,.tools,.top,.rail") || b).getBoundingClientRect();
+    const fits = x => x >= EDGE && x <= innerWidth - SIZE - EDGE;
+    const opts = [box.left - SIZE - GAP, box.right + GAP].filter(fits).sort((a, c) => Math.abs(a - h.x) - Math.abs(c - h.x));
+    P.nudge = opts.length ? { x: opts[0], y: h.y } : null;
+    apply(P.nudge ? P.nudge.x : h.x, h.y);
+  }
+  const soon = () => { if (!P.raf) P.raf = requestAnimationFrame(avoid); };
+  function dragOn(el, bell) {
+    bell.addEventListener("pointerdown", e => {
+      if (e.button !== 0) return;
+      const r = el.getBoundingClientRect();
+      P.drag = { id: e.pointerId, sx: e.clientX, sy: e.clientY, x: r.left, y: r.top, moved: false };
+      try { bell.setPointerCapture(e.pointerId); } catch { /* synthetic pointer */ }
+    });
+    bell.addEventListener("pointermove", e => {
+      const d = P.drag; if (!d || d.id !== e.pointerId) return;
+      const dx = e.clientX - d.sx, dy = e.clientY - d.sy;
+      if (!d.moved && Math.hypot(dx, dy) < 6) return;
+      if (!d.moved) { d.moved = true; el.classList.add("du-drag"); if (S.open) toggle(false); }
+      apply(clampX(d.x + dx), clampY(d.y + dy));
+    });
+    const end = e => {
+      const d = P.drag; if (!d || d.id !== e.pointerId) return;
+      P.drag = null; el.classList.remove("du-drag");
+      if (!d.moved) return;
+      P.justDragged = true; setTimeout(() => { P.justDragged = false; }, 400);
+      const r = el.getBoundingClientRect(), left = r.left + SIZE / 2 < innerWidth / 2, top = r.top + SIZE / 2 < innerHeight / 2;
+      P.saved = { h: left ? "l" : "r", dx: Math.round(left ? r.left : innerWidth - SIZE - r.left), v: top ? "t" : "b", dy: Math.round(top ? r.top : innerHeight - SIZE - r.top) };
+      P.nudge = null; savePos(); soon();
+    };
+    bell.addEventListener("pointerup", end); bell.addEventListener("pointercancel", end);
+    /* re-check after every screen change (the add-in re-renders its page), and on resize */
+    new MutationObserver(ms => { if (ms.some(m => !el.contains(m.target))) soon(); }).observe(document.body, { childList: true, subtree: true, attributes: true, attributeFilter: ["class", "hidden", "open"] });
+    addEventListener("resize", soon);
+  }
+
   window.DevUpdates = {
     /* app names this add-in's storage key; send(msg) passes seen ids to the other window (pane or full screen), if there is one */
     init({ app, feed, send } = {}) {
       S.key = `${app || "mhs"}_devseen`; if (feed) S.feed = feed; S.send = send || null;
-      load(); S.el = S.el || build(); render();
+      load(); loadPos(); S.el = S.el || build(); render(); soon();
       return fetch(S.feed, { cache: "no-cache" }).then(r => r.ok ? r.json() : { updates: [] })
         .then(d => { S.items = (d.updates || []).filter(u => u && u.id && Array.isArray(u.bullets)).sort((a, b) => String(b.date).localeCompare(String(a.date))); render(); })
         .catch(() => { /* no feed: the bell stays hidden */ });
