@@ -1121,15 +1121,16 @@
      Kaiser/VA or a clinical reason) folded away below */
   function missHTML() {
     const T = todayS(), P = C.missWindows(S.ML, T), L = S.ML.filter(m => m.kind !== "review").sort((x, y) => y.date - x.date);
-    const n3 = a => a.map(n => n ? String(n) : "0").join(" · ");
-    const pRow = x => `<tr><td>${esc(x.code || "—")}${mrnTag(x.mrn)}${x.exempt === "kpva" ? "<small>Kaiser/VA: no fee</small>" : ""}</td><td${x.ns[2] ? "" : ' class="muted"'}>${n3(x.ns)}</td><td${x.lc[2] ? "" : ' class="muted"'}>${n3(x.lc)}</td>
+    /* one cell per window, so the 30, 60 and 90 day counts stand apart under their own header */
+    const n3 = a => a.map((n, i) => `<td class="n3${i ? "" : " g1"}${n ? "" : " muted"}">${n || 0}</td>`).join("");
+    const pRow = x => `<tr><td>${esc(x.code || "—")}${mrnTag(x.mrn)}${x.exempt === "kpva" ? "<small>Kaiser/VA: no fee</small>" : ""}</td>${n3(x.ns)}${n3(x.lc)}
       <td><button class="btn ghost sm" data-act="openPt" data-m="${esc(x.mrn)}">Open</button></td></tr>`;
     const ex = m => m.exempt === "kpva" ? "Kaiser/VA: no fee" : m.exempt === "clinical" ? `Exempt: ${esc(m.reason)}` : "No exemption";
     const show = S.missAll ? L : L.slice(0, 8);
     const eRow = m => `<div class="row"><span class="p">${esc(m.code || "—")}${mrnTag(m.mrn)}</span><span class="i">${m.kind === "noshow" ? "No-show" : "Late cancel"} ${dshort(m.date)}${m.time != null ? ` ${C.fmtT(m.time)}` : ""} · ${ex(m)}</span>
       ${m.exempt === "kpva" ? "<span></span>" : `<button class="btn ghost sm" data-act="missEx" data-k="${esc(m.key)}">${m.exempt === "clinical" ? "Edit" : "Clinical reason"}</button>`}</div>`;
     return `<section class="card dmt"><div class="lh"><h2>No-shows and late cancels</h2><span>${P.length ? `${plural(P.length, "patient")} in the last 90 days` : "none in the last 90 days"}</span></div>
-      ${P.length ? `<div class="tscroll"><table class="tt dm"><thead><tr><th>Patient</th><th>No-shows<small>30 · 60 · 90 days</small></th><th>Late cancels<small>30 · 60 · 90 days</small></th><th></th></tr></thead><tbody>${P.map(pRow).join("")}</tbody></table></div>`
+      ${P.length ? `<div class="tscroll"><table class="tt dm ns"><thead><tr><th rowspan="2">Patient</th><th colspan="3" class="grp g1">No-shows</th><th colspan="3" class="grp g1">Late cancels</th><th rowspan="2"></th></tr><tr><th class="n3 g1">30 days</th><th class="n3">60 days</th><th class="n3">90 days</th><th class="n3 g1">30 days</th><th class="n3">60 days</th><th class="n3">90 days</th></tr></thead><tbody>${P.map(pRow).join("")}</tbody></table></div>`
         : `<p class="note">No no-shows or late cancels on the appointment list in the last 90 days. Upload a NextGen report that starts further back to count them.</p>`}
       <p class="note">Counts go back from today, and only as far as the uploaded appointment list does. A visit cancelled on its own day is always a late cancel.</p>
       ${L.length ? `<details class="fold"${S.missAll ? " open" : ""}><summary>Each one, with exemptions (${L.length})</summary><div class="mlist">${show.map(eRow).join("")}</div>${L.length > 8 ? `<div class="actions"><button class="btn mute sm" data-act="missMore">${S.missAll ? "Show fewer" : `Show all ${L.length}`}</button></div>` : ""}</details>` : ""}
@@ -1745,7 +1746,7 @@
     startPreview: () => { const m = S.m, c = S.cfg, subj = C.fill(String(m.subject || ""), { clinic: c.Clinic, patient: "SAMJOR" });
       return `<h2 id="mh">Start email preview</h2><p class="sub muted">A sample patient (SAMJOR, MRN 000000) and sample visits. The real email fills in the patient's own name, schedule and first visit.</p>
         <div class="mailmeta"><div><span>Subject</span><b>${esc(subj) || "(no subject)"}</b></div>${C.txt(c.StartCc) ? `<div><span>CC</span>${esc(c.StartCc)}</div>` : ""}${C.txt(c.StartBcc) ? `<div><span>BCC</span>${esc(c.StartBcc)}</div>` : ""}</div>
-        <iframe class="mailprev" title="Start email preview" sandbox srcdoc="${esc(startPreviewDoc(m))}"></iframe>
+        <iframe class="mailprev" title="Start email preview" sandbox="allow-same-origin" srcdoc="${esc(startPreviewDoc(m))}"></iframe>
         <div class="foot"><button class="btn primary inl" data-act="close" autofocus>Close</button></div>`; },
     checkin() {
       const v = visitBy(S.m.key), m = S.m, c = C.code(v), aOk = teamsReady("arrival"), pOk = teamsReady("protocol");

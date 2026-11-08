@@ -608,3 +608,8 @@ html.ivk-busy,html.ivk-busy *{cursor:progress!important}
 .mailmeta{display:flex;flex-direction:column;gap:4px;margin:14px 0 10px;font-size:13.5px}
 .mailmeta span{display:inline-block;min-width:60px;color:var(--muted)}
 .mailprev{display:block;width:100%;height:min(60vh,560px);border:0;border-radius:12px;background:#fff;box-shadow:inset 0 0 0 1px var(--surface-2)}
+/* Access › no-shows and late cancels: the group header above its 30 / 60 / 90 day columns, each count in its own cell */
+.tt.ns th.grp{text-align:center;border-bottom:1px solid var(--surface-2);padding-bottom:6px}
+.tt.ns th.n3,.tt.ns td.n3{text-align:center;min-width:58px;padding-left:10px;padding-right:10px;font-variant-numeric:tabular-nums}
+.tt.ns th.n3{font-weight:500;color:var(--muted);font-size:12px;white-space:nowrap}
+.tt.ns .g1{border-left:1px solid var(--surface-2)}

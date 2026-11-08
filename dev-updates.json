@@ -1,6 +1,19 @@
 {
   "updates": [
     {
+      "id": "2026-11-07-toolbar-bell",
+      "date": "2026-11-07",
+      "bullets": [
+        "Changed: Refresh, full screen and light/dark sit at the far right, with this bell right after them. Hover over any of them to see what it does.",
+        "New: Light/dark shows sun / moon. Press the one on the right to switch; they swap places when the mode changes.",
+        "Changed: In a narrow pane, the top bar shows Today, Schedule, Patients and Full screen. Everything else is in full screen.",
+        "Changed: On Schedule, each visit shows the patient and MRN on top, and the provider with the time underneath.",
+        "Changed: On Access, No-shows and Late cancels each sit over their own 30, 60 and 90 day columns.",
+        "New: Settings has Preview the start email, so you can see it with a sample patient before saving.",
+        "Changed: Settings › You no longer says who is at the desk. Teams posts use the name picked each day."
+      ]
+    },
+    {
       "id": "2026-11-07-pane-header-bell",
       "date": "2026-11-07",
       "bullets": [
