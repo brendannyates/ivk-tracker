@@ -1,6 +1,18 @@
 {
   "updates": [
     {
+      "id": "2026-11-07-pane-header-bell",
+      "date": "2026-11-07",
+      "bullets": [
+        "Changed: On Today, the time and date sit at the top left and the title on the right. Refresh, full screen and light/dark mode are at the top right, with full screen in the middle.",
+        "New: Full screen is also in the left menu, under your name.",
+        "Changed: The name screen now says \"Enter your name\", because anyone can be using the tracker, not just the front desk.",
+        "New: Drag this bell anywhere and it stays put. If a screen puts a button under it, it steps aside to the nearer side.",
+        "New: While a change is saving to the workbook, the cursor shows it's busy, a bar runs across the top, and the status at the bottom left spins.",
+        "Changed: The left menu shows the clinic name only. The bottom left shows whether the tracker is connected; hover over it for the workbook name."
+      ]
+    },
+    {
       "id": "2026-11-05-teams-tags-replies",
       "date": "2026-11-05",
       "bullets": [

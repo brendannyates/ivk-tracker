@@ -230,10 +230,10 @@ patient's name and date of birth.
   Primary Location (Edit) and Transfer to offer the report's locations as NextGen names them. The patient view's Schedule page shows
   each visit's location, their appointments here (kept and booked) and any booked at other clinics.
 
-## Who's at the desk, the clinic, admin
+## Who's using it, the clinic, admin
 
-- **People** register on the workbook (tblIvkUsers). The first time the tracker opens each day on a computer, it asks **Who's at the
-  desk?** from that workbook's list only, nobody picked; the people who've used that computer on that workbook are listed first ("On
+- **People** register on the workbook (tblIvkUsers). The first time the tracker opens each day on a computer, it asks **Enter your name** (anyone can be using it: desk, RN or
+  provider) from that workbook's list only, nobody picked; the people who've used that computer on that workbook are listed first ("On
   this computer"). "I'm not on the list" adds a name. The pick lasts the day (Switch user in the rail or Settings › You). This computer
   remembers picks per workbook (localStorage `ivkWho:<workbook key>`, from the file URL or the workbook's `ivkWbId` setting), so a
   name never carries from one clinic's workbook to another. Full screen uses the pane's pick.
@@ -270,7 +270,7 @@ Index planner gets the newer tables from Update the workbook):
 | tblIvkElsewhere | IVK visits at the other clinics from a wider report: MRN, LASFIR, date, time, provider, event, status, location |
 | tblIvkProfile | Per patient: insurance or self pay and the payer for the provider visit and the infusion, the latest Sohar benefits, BIDF printed |
 | tblIvkPay | Payments due at each visit (collected / missed), later payments and waivers, balance reminders, the copay check at check-in (consent) |
-| tblIvkUsers | The people who use this workbook (the "Who's at the desk?" list) and their own settings (an optional email signature); no patient |
+| tblIvkUsers | The people who use this workbook (the "Enter your name" list) and their own settings (an optional email signature); no patient |
 
 The provider templates are on two visible tabs: **IVK Template** (the grids) and **Slot Types** (tblIvkSlotTypes).
 
