@@ -118,6 +118,8 @@
     /* patient profiles: who pays the provider visit and the infusion, the latest Sohar benefits. Anyone on the appointment list in
        the next 4 weeks without one (not on the tracker, or no profile row) is prompted, treatment starts first. */
     S.PF = C.profileRows(r.tblIvkProfile); S.profOn = !!r.tables?.own?.tblIvkProfile;
+    /* eligibility pulls on the hidden Eligibility Checks tab, by MRN (digits), newest first */
+    S.EL = new Map(); for (const e of C.eligRows(r.eligChecks)) { if (!S.EL.has(e.mrn)) S.EL.set(e.mrn, []); S.EL.get(e.mrn).push(e); }
     S.gaps = C.profileGaps(S.A, S.PM, S.PF, T, 28);
     S.x.noProfile = new Set();   // patients on the tracker have their profile in its columns
     /* every treatment start: a profile once it's booked, Case Management in NextGen on the day */
@@ -177,6 +179,7 @@
     saveTypes: (t, g) => X.saveTypes(t, g), replaceOther: r => X.replaceOther(r), replaceElse: r => X.replaceElse(r), saveSooner: (m, p) => X.saveSooner(m, p), saveProfile: (m, p) => X.saveProfile(m, p), upsertMany: (t, i) => X.upsertMany(t, i), saveXfer: (m, p) => X.saveXfer(m, p), addMpt: f => X.addMpt(f), saveStart: (k, p) => X.saveStart(k, p), saveMissed: (k, p) => X.saveMissed(k, p), addMissed: r => X.addMissed(r), saveOffer: (k, p) => X.saveOffer(k, p), addOffers: r => X.addOffers(r),
     /* the users list, and who's at the desk (full screen's pick is the pane's) */
     saveUser: (n, s, rm) => X.saveUser(n, s, rm), setWho: async n => { setWho(n); return true; },
+    saveEligibility: (r, i, at) => X.saveEligibility(r, i, at),
     /* the pane reads first so the tab gets every hold anyone has placed, not just this screen's copy */
     fillPlanner: async () => { await refresh(true); return X.fillPlanner(S.A, S.holds, S.raw.apptUpdated); }
   };
@@ -296,7 +299,7 @@
       const raw = await X.load(S.raw ? null : bootStep); raw.plan = X.getDoc(MAP_KEY) || null;
       const sig = hash(JSON.stringify(raw));
       S.live = true; S.err = "";
-      if (force || sig !== S.sig) { const first = !S.raw; S.sig = sig; S.raw = raw; derive(); loadWho(); if (first) bootDone(); toChild({ k: "snap", raw, who: S.name }); if (!S.modal && !typing()) render(); if (first) { carryCastro(); maybeAutoFull(); } }
+      if (force || sig !== S.sig) { const first = !S.raw; S.sig = sig; S.raw = raw; derive(); loadWho(); if (first) bootDone(); toChild({ k: "snap", raw, who: S.name }); if (!S.modal && !typing()) render(); if (first) { carryCastro(); maybeAutoFull(); autoElig(); } }
       if (C.repliesDue(S.replies).length && !applying) setTimeout(applyReplies, 0);
     } catch (e) { console.error(e); S.err = "Couldn’t read the workbook. Check you’re still signed in; the tracker tries again in a few seconds."; render(); }
   }
@@ -1342,6 +1345,7 @@
       <div class="section"><div class="h"><h2>Sohar benefits</h2><span${sh.date != null && T - sh.date > 90 ? ' class="flagt"' : ""}>${sh.date != null ? `verified ${C.fmtD(sh.date)}` : "none entered"}</span></div>
         ${sh.payer || sh.status ? `<dl class="facts">${v("Payer", sh.payer)}${v("Plan", sh.plan)}${v("Network", sh.network)}${sh.covStart != null || sh.covEnd != null ? `<dt>Coverage</dt><dd>${sh.covStart != null ? C.fmtD(sh.covStart) : "—"} to ${sh.covEnd != null ? C.fmtD(sh.covEnd) : "—"}</dd>` : ""}
           ${v("Copay", sh.copay)}${v("Coinsurance", sh.coins)}${v("Deductible", both(sh.ded && `${sh.ded} total`, sh.dedRem && `${sh.dedRem} left`))}${v("OOP max", both(sh.oop && `${sh.oop} total`, sh.oopRem && `${sh.oopRem} left`))}${v("Status", sh.status)}${v("Sohar ref", sh.ref)}</dl>` : `<p class="note">Enter the latest Sohar verification on the profile, or fill it from the Sohar Eligibility add-in’s benefits file.</p>`}</div>
+      ${eligHTML(p)}
       <div class="section"><div class="h"><h2>Authorization</h2><span>${esc(p.authNo || "")}</span></div><dl class="facts">
         <dt>Auth number</dt><dd>${esc(p.authNo || "—")}</dd><dt>Starts</dt><dd>${p.authStart != null ? C.fmtD(p.authStart) : "—"}</dd><dt>Ends</dt>${auth}
         <dt>Visits left</dt><dd${p.encLeft != null && p.encLeft <= +S.cfg.EncountersWarn ? ` class="${p.encLeft <= 0 ? "bad" : "flag"}"` : ""}>${p.encLeft != null ? `${p.encLeft}${p.encAuth != null ? ` of ${p.encAuth}` : ""}` : esc(p.encLeftTxt || p.encAuthTxt || "Not tracked")}</dd>
@@ -1349,6 +1353,25 @@
       <div class="section"><div class="h"><h2>BIDF</h2></div><dl class="facts"><dt>2026 BIDF</dt><dd${!p.bidf && C.isActive(p) ? ' class="flag"' : ""}>${esc(p.bidf || "Not recorded")}</dd><dt>Printed at the desk</dt><dd>${pf?.bidfPrinted != null ? C.fmtD(pf.bidfPrinted) : "—"}</dd></dl>
         <p class="note">The BIDF is completed by the benefits team and printed from NextGen.</p></div>
       <div class="actions"><button class="btn ghost sm line" data-act="profile" data-m="${m}">Edit coverage and benefits</button><button class="btn mute sm" data-act="edit" data-m="${m}">Edit tracker fields</button></div>`;
+  }
+  /* Eligibility: every pull for this MRN on the hidden Eligibility Checks tab, newest first, each with its Sohar link and the
+     related pulls. Shown as the feed says it. For IVK the feed's projected patient responsibility is, for non-Kaiser/VA patients,
+     the 99214 visit estimate plus the $400 (infusions 1-6) or $450 (7+) self-pay medication; Kaiser/VA IVK has none. */
+  function eligHTML(p) {
+    const L = S.EL.get(C.feedMrn(p.mrn)) || [], ext = (u, t, l) => `<a href="${esc(u)}" target="_blank" rel="noopener"${l ? ` aria-label="${esc(l)}"` : ""}>${t}</a>`;
+    /* related ids are linked as verifications: the feed doesn't say which of them are discoveries */
+    const idLink = id => { const u = C.soharVerLink(id); return u ? ext(u, esc(id.slice(0, 8)), `Sohar ${id}`) : esc(id); };
+    const when = e => { if (e.date == null) return "No date"; const d = new Date(e.at), m = d.getHours() * 60 + d.getMinutes(); return `${dshort(e.date)}${m ? `, ${C.fmtT(m)}` : ""}`; };
+    const item = e => { const u = C.soharLink(e.link), st = esc(e.status || "No status");
+      const f = [[e.payer, e.plan].filter(Boolean).join(", "), e.copay && `Copay ${e.copay}`, e.dedRem && `Deductible left ${e.dedRem}`, e.oopRem && `OOP left ${e.oopRem}`,
+        e.ppr && `Projected patient responsibility ${e.ppr}`].filter(Boolean);
+      return `<li><span class="t">${when(e)} · ${esc(e.kind || "Pull")} · ${u ? ext(u, st, `${e.status || "No status"}, open in Sohar`) : st}</span>
+        ${f.length ? `<span class="m">${f.map(esc).join(" · ")}</span>` : ""}${e.estNote ? `<span class="m">${esc(e.estNote)}</span>` : ""}
+        ${e.related.length ? `<span class="m">Related: ${e.related.map(idLink).join(", ")}</span>` : ""}</li>`; };
+    const ok = N.flowUrl(eligRoute().url) && S.profOn;
+    return `<div class="section"><div class="h"><h2>Eligibility</h2><span>${L.length ? plural(L.length, "pull") : "none"}</span></div>
+      ${L.length ? `<ul class="elist">${L.map(item).join("")}</ul>` : `<p class="note">No eligibility pulls yet.</p>`}
+      ${ok ? `<div class="actions"><button class="btn ghost sm line" data-act="eligPull"${S.eligBusy ? " disabled" : ""}>Pull eligibility</button></div>` : ""}</div>`;
   }
   const pvFin = p => payHTML(p);
   const startVisit = p => C.futureOf(S.A, p.mrn, todayS() - 1).find(a => /start/i.test(a.event)) || (/induction/i.test(p.status) ? C.futureOf(S.A, p.mrn, todayS() - 1)[0] : null) || null;
@@ -1559,6 +1582,8 @@
           <li>Select OK to run it, then export with the x icon beside the bar graph <img src="assets/export-icon.png" alt="Export icon" height="16">.</li>
           <li>Choose that file here. It replaces MRN to Location on the Appt List tab; the Name and Lookup Key formulas are left alone.</li>
           <li>The Index Planner tab is then filled with every IVK visit and hold, as plain values.</li></ol></details></section>
+
+      ${eligCardHTML()}
 
       ${sohCardHTML()}
 
@@ -2715,6 +2740,13 @@
       const bad = Object.entries(r).filter(([, x]) => x.url && !N.flowUrl(x.url)); if (bad.length) return toast("One of the URLs isn’t a Power Automate workflow URL. Copy it again from Teams.", true);
       await write("Saving Teams settings…", async () => { await Store.saveRoutes(r); await Store.saveKeyed("tblIvkConfig", { Enabled: $("#nfyOn").checked ? "TRUE" : "FALSE" }); }, "Teams settings saved.");
     },
+    /* the eligibility feed's URL is a tblIvkRoutes row (Event "eligibility"); Enabled = pull when the workbook opens */
+    async eligSave() {
+      const url = $("#elUrl").value.trim(), on = $("#elOn").checked;
+      if (url && !N.flowUrl(url)) return toast("That isn’t a Power Automate workflow URL. Copy it again from the flow’s trigger.", true);
+      await write("Saving the eligibility feed…", () => Store.saveRoutes({ [ELIG_EV]: { to: "Eligibility feed", url, on } }), "Eligibility feed saved.");
+    },
+    eligPull: () => pullElig(false),
     async testRoute(e) {
       const ev = e.dataset.v, url = $(`#rt_${ev}_url`).value.trim(); if (!N.flowUrl(url)) return toast("Paste the workflow URL first.", true);
       const r = await N.test(ev, { [ev]: { url, on: true } }, S.name);
@@ -2994,14 +3026,60 @@
     const nNew = plan.items.filter(i => i.isNew).length;
     toast(`Sohar benefits for ${plural(plan.items.length, "patient")} saved${nNew ? ` (${nNew} new profile${nNew === 1 ? "" : "s"})` : ""}${left ? `; ${left}` : ""}.`);
   }
-  /* a small CSV reader: quoted fields, doubled quotes, commas and line breaks inside quotes */
-  function csvRows(t) {
-    const out = []; let row = [], cur = "", q = false;
-    for (let i = 0; i < t.length; i++) { const ch = t[i];
-      if (q) { if (ch === '"') { if (t[i + 1] === '"') { cur += '"'; i++; } else q = false; } else cur += ch; }
-      else if (ch === '"') q = true; else if (ch === ",") { row.push(cur); cur = ""; } else if (ch === "\n" || ch === "\r") { if (ch === "\r" && t[i + 1] === "\n") i++; row.push(cur); out.push(row); row = []; cur = ""; } else cur += ch; }
-    if (cur !== "" || row.length) { row.push(cur); out.push(row); }
-    return out;
+  /* the CSV reader is core's (quoted fields, doubled quotes, commas and line breaks inside quotes, a BOM) */
+  const csvRows = t => C.parseCsv(t);
+
+  /* ---------- eligibility feed ----------
+     The URL is a tblIvkRoutes row (Event "eligibility", Enabled = pull on open); the last pull is tblIvkConfig EligPulledAt.
+     A pull: POST {"tracker":"IVK"}, check the answer is the feed, then (and only then) write: the profile's new columns, the
+     hidden Eligibility Checks tab with this tracker's rows, each patient's pick on tblIvkProfile. Errors change nothing. */
+  const ELIG_EV = "eligibility";
+  const eligRoute = () => S.routes[ELIG_EV] || { to: "Eligibility feed", url: "", on: true };
+  /* this tracker's patients: the Master Patient Tracker, the profiles and the appointment list; MRN digits -> MRN key, and codes */
+  function eligTargets() {
+    const mrns = new Map(), codes = new Map();
+    const add = (k, code) => { const d = C.feedMrn(k); if (!d) return; if (!mrns.has(d)) mrns.set(d, k); const key = mrns.get(d); if (code && code !== "(no code)" && !codes.has(key)) codes.set(key, code); };
+    for (const p of S.P) add(p.mrn, p.code); for (const [k, pf] of S.PF) add(k, pf.code); for (const a of S.A) add(a.mrn, a.code);
+    return { mrns, codes };
+  }
+  function eligSay(text, bad) { S.eligMsg = { text, bad: !!bad }; toast(text, !!bad); }
+  async function pullElig(auto) {
+    if (S.eligBusy) return;
+    const rt = eligRoute();
+    if (!N.flowUrl(rt.url)) { if (!auto) eligSay("No eligibility feed URL yet. Add it in Settings › Eligibility feed.", true); return; }
+    if (!S.profOn || (S.raw.missing || []).length) { if (!auto) eligSay("Use Update the workbook in Settings first, then pull again. Nothing changed.", true); return; }
+    S.eligBusy = true; S.busy = "Pulling eligibility…"; render();
+    try {
+      const r = await N.pullFeed(rt.url, { tracker: "IVK" });
+      if (!r.ok) return eligSay(r.reason, true);
+      const rows = C.parseFeed(r.text);
+      if (!rows) return eligSay("That wasn’t the eligibility feed: the answer has no Pulled At, MRN, Kind, Sohar Status and Sohar ID columns. Nothing changed. Check the flow returns Eligibility History.csv.", true);
+      const t = eligTargets(), at = new Date().toISOString();
+      const plan = C.planEligibility(rows, { mrns: t.mrns, codes: t.codes, profile: S.raw.tblIvkProfile, now: at });
+      try { await Store.saveEligibility(plan.rows, plan.items, at); }
+      catch (e) { console.error(e); return eligSay(`Couldn’t save the eligibility pull to the workbook: ${whyFailed(e)}`, true); }
+      const nNew = plan.items.filter(i => i.isNew).length;
+      const left = [plan.same && `${plan.same} already up to date`, plan.newer && `${plan.newer} kept (a newer verification was entered by hand)`].filter(Boolean).join(", ");
+      eligSay(`Eligibility pulled: ${plural(plan.rows.length, "check")} for ${plural(plan.patients, "patient")}. ${plural(plan.items.length, "profile")} updated${nNew ? ` (${nNew} new)` : ""}${left ? `; ${left}` : ""}.`);
+    } catch (e) { console.error(e); eligSay("The eligibility pull stopped before saving anything. Try again in a minute.", true); }
+    finally { S.eligBusy = false; S.busy = null; render(); }
+  }
+  /* on open, from the task pane only: once a day per workbook, when the feed is set up and Pull when the workbook opens is on */
+  function autoElig() {
+    if (FULL || S.eligAuto) return; S.eligAuto = true;
+    const rt = eligRoute();
+    if (rt.on && N.flowUrl(rt.url) && C.eligDue(S.saved?.EligPulledAt, todayS())) setTimeout(() => pullElig(true), 0);
+  }
+  /* Settings: the feed's URL, pull on open, and Pull eligibility */
+  function eligCardHTML() {
+    const x = eligRoute(), ok = N.flowUrl(x.url), last = C.txt(S.saved?.EligPulledAt), n = [...S.EL.values()].reduce((s, L) => s + L.length, 0);
+    return `<section class="card set"><h3>Eligibility feed</h3><p>${last ? `Last pulled ${dateOfIso(last)} at ${timeOf(last)}: ${plural(n, "check")} for ${plural(S.EL.size, "patient")}.` : "Not pulled yet."}
+      Each pull gets the 7 AM rotation’s Sohar results for this tracker’s patients, keeps them on a hidden ${esc(X.ELIG_SHEET)} tab and fills their profiles. Who pays, the BIDF and notes are left alone.</p>
+      ${S.eligMsg ? `<p class="note${S.eligMsg.bad ? " warn" : ""}">${esc(S.eligMsg.text)}</p>` : ""}
+      <label class="fld">Eligibility feed URL<input id="elUrl" type="password" value="${esc(x.url)}" autocomplete="off" spellcheck="false"><span class="hint${x.url && !ok ? " warn" : ""}">${x.url && !ok ? "That isn’t a Power Automate workflow URL." : "Kept in the workbook. Treat it like a password."}</span></label>
+      <label class="opt"><input type="checkbox" id="elOn"${x.on ? " checked" : ""}> Pull when the workbook opens<small>Once a day, by the first person to open it</small></label>
+      ${S.profOn ? "" : `<p class="note">Use Update the workbook first: the profile table isn't in this workbook yet.</p>`}
+      <div class="actions"><button class="btn primary inl" data-act="eligPull"${ok && S.profOn && !S.eligBusy ? "" : " disabled"}>Pull eligibility</button><button class="btn ghost sm line" data-act="eligSave">Save feed settings</button></div></section>`;
   }
   function freeChair() { const F = floor(); return (F.chairs.find(c => !c.v) || {}).id || ""; }
 

@@ -1051,6 +1051,110 @@
     return out;
   }
 
+  /* ---------- eligibility feed (Eligibility History.csv from the 7 AM rotation, contract v1) ----------
+     The pull posts {"tracker":"IVK"} to the workflow in tblIvkRoutes (Event "eligibility"); it answers with the file's text.
+     Its rows for this tracker's patients go to the hidden Eligibility Checks tab, and each patient's pick fills tblIvkProfile. */
+  const FEED_COLS = ["Pulled At", "LASFIR", "MRN", "Per Nbr", "Clinic", "Kind", "Sohar Status", "Sohar Payer", "Plan", "Network", "Coverage Level",
+    "Coverage Start", "Coverage End", "Copay", "Coinsurance", "Deductible", "Deductible Remaining", "Deductible Status", "OOP Max", "OOP Remaining", "OOP Status",
+    "Benefit Flag", "Sohar ID", "Sohar Link", "Related Sohar IDs", "Projected Patient Responsibility", "Estimate Note", "Source"];
+  /* a file without these isn't the feed */
+  const FEED_NEED = ["Pulled At", "MRN", "Kind", "Sohar Status", "Sohar ID"];
+  /* added at the end of tblIvkProfile by the first pull (setup's PROFILE_COLS stay as they are) */
+  const PROFILE_FEED_COLS = ["Sohar Link", "Related Sohar IDs", "Projected Patient Responsibility", "Estimate Note", "Deductible Status", "OOP Status", "Benefit Flag"];
+  const FEED_BY = "Eligibility feed";
+
+  /* CSV text -> rows: a BOM, quoted fields, doubled quotes, commas and line breaks inside quotes, CRLF or LF */
+  function parseCsv(text) {
+    const t = String(text ?? "").replace(/^﻿/, ""), out = []; let row = [], cur = "", q = false;
+    for (let i = 0; i < t.length; i++) { const ch = t[i];
+      if (q) { if (ch === '"') { if (t[i + 1] === '"') { cur += '"'; i++; } else q = false; } else cur += ch; }
+      else if (ch === '"') q = true; else if (ch === ",") { row.push(cur); cur = ""; }
+      else if (ch === "\n" || ch === "\r") { if (ch === "\r" && t[i + 1] === "\n") i++; row.push(cur); out.push(row); row = []; cur = ""; } else cur += ch; }
+    if (cur !== "" || row.length) { row.push(cur); out.push(row); }
+    return out;
+  }
+  /* the workflow's answer as text: the CSV itself, or the CSV wrapped by Power Automate (a JSON string, { csv | body | content },
+     or a file's { $content-type, $content } in base64) */
+  function feedText(body) {
+    const s = String(body ?? "").replace(/^﻿/, "");
+    if (!/^\s*[\[{"]/.test(s)) return s;
+    let j; try { j = JSON.parse(s); } catch (e) { return s; }
+    if (typeof j === "string") return j.replace(/^﻿/, "");
+    if (j && typeof j["$content"] === "string") {
+      try { const bin = typeof atob === "function" ? atob(j["$content"]) : Buffer.from(j["$content"], "base64").toString("binary");
+        return new TextDecoder("utf-8").decode(Uint8Array.from(bin, c => c.charCodeAt(0))).replace(/^﻿/, ""); } catch (e) { return ""; }
+    }
+    for (const k of ["csv", "body", "content", "text"]) if (j && typeof j[k] === "string") return j[k].replace(/^﻿/, "");
+    return s;
+  }
+  /* the join key: digits only, leading zeros stripped ("00482913" and 482913 match) */
+  const feedMrn = v => txt(v).replace(/\.0+$/, "").replace(/\D/g, "").replace(/^0+(?=\d)/, "");
+  /* the feed's text -> rows in FEED_COLS order (columns found by header, so a reordered file still lands right), or null when the
+     header (the first non-blank row) lacks the feed's columns */
+  function parseFeed(text) {
+    const rows = parseCsv(feedText(text)), hi = rows.findIndex(r => r.some(v => txt(v)));
+    if (hi < 0) return null;
+    const hn = rows[hi].map(norm); if (FEED_NEED.some(c => !hn.includes(norm(c)))) return null;
+    const at = FEED_COLS.map(c => hn.indexOf(norm(c)));
+    return rows.slice(hi + 1).filter(r => r.some(v => txt(v))).map(r => at.map(i => i < 0 ? "" : txt(r[i])));
+  }
+  /* when a row was pulled, in ms (an ISO timestamp; a bare date counts as that day's midnight) */
+  const feedWhen = v => { const s = txt(v), ms = Date.parse(s); if (s && !isNaN(ms)) return ms; const d = toSerial(s); return d == null ? null : dateOf(d).getTime(); };
+  /* the Eligibility Checks tab's values (header first) -> one object per pull, newest first */
+  function eligRows(values) {
+    const L = byHeader(values).rows.map(x => { const g = k => txt(x.get(norm(k)));
+      const at = feedWhen(g("Pulled At")), related = g("Related Sohar IDs").split(/[;,]\s*/).map(txt).filter(Boolean);
+      return { i: x.i, at, date: at == null ? null : serialOf(new Date(at)), mrn: feedMrn(g("MRN")), code: g("LASFIR"), clinic: g("Clinic"), kind: g("Kind"), status: g("Sohar Status"),
+        payer: g("Sohar Payer"), plan: g("Plan"), network: g("Network"), level: g("Coverage Level"), covStart: g("Coverage Start"), covEnd: g("Coverage End"),
+        copay: g("Copay"), coins: g("Coinsurance"), ded: g("Deductible"), dedRem: g("Deductible Remaining"), dedStatus: g("Deductible Status"),
+        oop: g("OOP Max"), oopRem: g("OOP Remaining"), oopStatus: g("OOP Status"), flag: g("Benefit Flag"), id: g("Sohar ID"), link: g("Sohar Link"), related,
+        ppr: g("Projected Patient Responsibility"), estNote: g("Estimate Note"), source: g("Source") }; }).filter(r => r.mrn);
+    return L.sort((a, b) => (b.at ?? -Infinity) - (a.at ?? -Infinity));   // stable: the same time keeps the file's order
+  }
+  /* the pull that counts for a patient: the newest eligible verification, else the newest pull of any kind */
+  const isEligibleVer = r => /^verification$/i.test(txt(r.kind)) && /^complete\.eligible/i.test(txt(r.status));
+  function pickElig(L) {
+    const s = (L || []).slice().sort((a, b) => (b.at ?? -Infinity) - (a.at ?? -Infinity));
+    return s.find(isEligibleVer) || s[0] || null;
+  }
+  /* Sohar links only ever point at Sohar */
+  const soharLink = v => /^https:\/\/app\.soharhealth\.com\/[\w\-\/]+$/i.test(txt(v)) ? txt(v) : "";
+  /* a related id is linked as a verification: the feed doesn't say whether each one is a verification or a discovery */
+  const soharVerLink = id => /^[\w-]+$/.test(txt(id)) ? `https://app.soharhealth.com/verifications/${txt(id)}` : "";
+
+  /* The pull against this tracker. rows: parseFeed's. o = { mrns: Map digits -> the tracker's MRN key (Master Patient Tracker,
+     profiles, appointment list), codes: Map MRN key -> code, profile: tblIvkProfile values (header first), now (iso) }.
+     Out: { rows (this tracker's, newest first, for the Eligibility Checks tab), items: [{ mrn, code, patch, isNew }], same, newer,
+     patients, total }. Staff-owned columns (who pays, BIDF, note) are never in a patch. A profile whose Sohar date is newer than
+     anything in the feed for that patient (typed or imported by hand) is left alone. */
+  function planEligibility(rows, o) {
+    const mrns = o.mrns || new Map(), codes = o.codes || new Map(), out = { rows: [], items: [], same: 0, newer: 0, patients: 0, total: (rows || []).length };
+    const mi = FEED_COLS.indexOf("MRN"), mine = (rows || []).filter(r => mrns.has(feedMrn(r[mi])));
+    const recs = eligRows([FEED_COLS, ...mine]);
+    out.rows = recs.map(r => mine[r.i]);
+    const by = new Map(); for (const r of recs) { const k = mrns.get(r.mrn); if (!by.has(k)) by.set(k, []); by.get(k).push(r); }
+    out.patients = by.size;
+    const prof = new Map(); byHeader(o.profile).rows.forEach(x => { const k = mrnKey(x.get("mrn")); if (k && !prof.has(k)) prof.set(k, x.get); });
+    const day = v => { const d = toSerial(v); return d == null ? txt(v) : isoOf(d); };
+    for (const [mrn, L] of by) {
+      const p = pickElig(L), g = prof.get(mrn);
+      const had = g ? toSerial(g("sohardate")) : null, newest = L[0].date;
+      if (had != null && newest != null && had > newest && txt(g("by")) !== FEED_BY) { out.newer++; continue; }
+      const patch = { SoharPayer: p.payer, Plan: p.plan, Network: p.network, CovStart: day(p.covStart), CovEnd: day(p.covEnd), Copay: p.copay, Coinsurance: p.coins,
+        Deductible: p.ded, DedRemaining: p.dedRem, OopMax: p.oop, OopRemaining: p.oopRem, SoharStatus: p.status, SoharDate: p.date == null ? "" : isoOf(p.date), SoharRef: p.id,
+        "Sohar Link": p.link, "Related Sohar IDs": p.related.join("; "), "Projected Patient Responsibility": p.ppr, "Estimate Note": p.estNote,
+        "Deductible Status": p.dedStatus, "OOP Status": p.oopStatus, "Benefit Flag": p.flag };
+      if (g && Object.entries(patch).every(([k, v]) => txt(g(norm(k))) === txt(v))) { out.same++; continue; }
+      const code = codes.get(mrn) || (g ? txt(g("patient")) : "") || (/^[A-Z]{4,8}$/.test(p.code) ? p.code : "");
+      Object.assign(patch, { By: FEED_BY, Updated: o.now || "" }); if (!g && code) patch.Patient = code;
+      out.items.push({ mrn, code, patch, isNew: !g });
+    }
+    out.items.sort((a, b) => a.code.localeCompare(b.code));
+    return out;
+  }
+  /* pull on open at most once a day: the last pull (tblIvkConfig EligPulledAt, iso) was before today */
+  const eligDue = (lastIso, today) => { const ms = Date.parse(txt(lastIso)); return isNaN(ms) || serialOf(new Date(ms)) < today; };
+
   /* ---------- access: demand by protocol ---------- */
   /* What the IVK schedule has to hold, from each patient's protocol (the tracker's Frequency), against how they're booked.
      o = { patients, appts, holds, today, cfg, weeks, paused (include Paused patients), sched ("all" | "exclude" unscheduled | "only"
@@ -1517,7 +1621,7 @@
 
   return { DEFAULTS, VISIT_COLS, TEMPLATES, norm, clinicFromName, USER_COLS, userKey, userRows, pickOrder, cleanName, wbKeyOf, whoRec, whoToday, whoPick, AUTO_SHOW, autoFullOf, autoAny, tplImages, withMap, ADMIN_MIN, adminOk, CLINIC_WIDE, lockedCfg, sigFromFile, withSignature, txt, num, serialOf, dateOf, isoOf, fromIso, toSerial, toMin, fmtT, fmtD, fmtDay, weekday, weekStart,
     PT_COLS, ptRows, AV_LEVELS, avName, availGrid, availStr, canCome, prefCells, awayList, awayStr, awayOn, PAY_COLS, REMIND_METHODS, CONSENT_METHODS, consentMethod, consentOf, money, amt, payRows, dueOf, payOf, ledger, toConfirm,
-    PARTS, partKey, dueParts, visitAnswered, PROFILE_COLS, COVER_MODES, modeOf, modeParts, isSelf, SOHAR_KEYS, profileRows, coverage, profileGaps, parseSohar, planSoharImport, demand,
+    PARTS, partKey, dueParts, visitAnswered, PROFILE_COLS, COVER_MODES, modeOf, modeParts, isSelf, SOHAR_KEYS, profileRows, coverage, profileGaps, parseSohar, planSoharImport, FEED_COLS, FEED_BY, PROFILE_FEED_COLS, parseCsv, feedText, feedMrn, parseFeed, eligRows, isEligibleVer, pickElig, soharLink, soharVerLink, planEligibility, eligDue, demand,
     fullPlan, eligibleStarts, memoX, indexState, indexShort, nextStart, XFER_COLS, xferRows, xferState, elsewhere, visitCounts, SOONER_COLS, soonerRows, soonerKey, soonerMatch, soonerLast, soonerKind, parseWants, wantsCell, OFFER_COLS, offerKey, offerRows, offerState, openSlots, freedTimes, ELSE_COLS, elseRows, sameLoc, isOurs, bookedAt, prefCols, indexN: cfg => Math.max(1, Math.round(+cfg.IndexPerWeek * +cfg.IndexWeeks)),
     treatments, txNo, isOak, oakState, WAIT_ON, waitlist, waitMove, provFull, fullName, firstName, scheduleOf, START_TPL, longWhen,
     lasfir, provName, mrnKey, pickRow, eventShort, freqDays, byHeader, patients, appts, isCancelled, visitKey, visitRows, phase, isActive, futureOf, asks,
