@@ -1076,6 +1076,20 @@
     if (cur !== "" || row.length) { row.push(cur); out.push(row); }
     return out;
   }
+  // The Sohar webhook's table rows ({ csv, rows } from the Eligibility feed flow) appended to the history CSV as text, so the
+  // parser below reads one file. A Sohar ID the history already has is skipped (the rotation's row carries the estimate); among
+  // webhook duplicates the newest Pulled At wins; Excel's blank first table row (no Sohar ID) is dropped.
+  const FEED_MERGE_COLS = ["Pulled At","LASFIR","MRN","Per Nbr","Clinic","Kind","Sohar Status","Sohar Payer","Plan","Network","Coverage Level","Coverage Start","Coverage End","Copay","Coinsurance","Deductible","Deductible Remaining","Deductible Status","OOP Max","OOP Remaining","OOP Status","Benefit Flag","Sohar ID","Sohar Link","Related Sohar IDs","Projected Patient Responsibility","Estimate Note","Source"];
+  function feedMergeRows(csvText, rows){
+    const aoa = parseCsv(String(csvText ?? '').replace(/^﻿/, ''));
+    const hdr = aoa.length && aoa[0].some(v => String(v ?? '').trim()) ? aoa[0].map(v => String(v ?? '').trim()) : FEED_MERGE_COLS.slice();
+    const idCol = hdr.indexOf('Sohar ID'), have = new Set(aoa.slice(1).map(r => String((r || [])[idCol] ?? '').trim()).filter(Boolean));
+    const when = o => Date.parse(o && o['Pulled At']) || 0, best = new Map();
+    for (const o of rows || []) { const id = String((o && o['Sohar ID']) ?? '').trim(); if (!id || have.has(id)) continue; const b = best.get(id); if (!b || when(o) >= when(b)) best.set(id, o); }
+    const q = v => '"' + String(v ?? '').replace(/"/g, '""') + '"';
+    const body = aoa.length ? aoa.slice(1) : [];
+    return [hdr, ...body, ...[...best.values()].map(o => hdr.map(h => String(o[h] ?? '').trim()))].map(r => r.map(q).join(',')).join('\r\n');
+  }
   /* the workflow's answer as text: the CSV itself, or the CSV wrapped by Power Automate (a JSON string, { csv | body | content },
      or a file's { $content-type, $content } in base64) */
   function feedText(body) {
@@ -1083,6 +1097,7 @@
     if (!/^\s*[\[{"]/.test(s)) return s;
     let j; try { j = JSON.parse(s); } catch (e) { return s; }
     if (typeof j === "string") return j.replace(/^﻿/, "");
+    if (j && Array.isArray(j.rows)) return feedMergeRows(typeof j.csv === "string" ? j.csv : "", j.rows);
     if (j && typeof j["$content"] === "string") {
       try { const bin = typeof atob === "function" ? atob(j["$content"]) : Buffer.from(j["$content"], "base64").toString("binary");
         return new TextDecoder("utf-8").decode(Uint8Array.from(bin, c => c.charCodeAt(0))).replace(/^﻿/, ""); } catch (e) { return ""; }
