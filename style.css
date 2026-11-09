@@ -140,6 +140,12 @@ details.fold>summary span{font-weight:400;font-size:13px;color:var(--muted)}
 .step.late .m{color:var(--danger)}.step.soon .m{color:var(--warn)}
 .step .w{font-size:12.5px;color:var(--muted);padding-top:2px;white-space:nowrap}
 .step.next .t{color:var(--faint)}
+/* the patient view's eligibility pulls, newest first */
+.elist{list-style:none;margin:10px 0 0;padding:0}
+.elist li{padding:9px 0;border-top:1px solid var(--surface-2);font-variant-numeric:tabular-nums}
+.elist .t{display:block;font-weight:500;font-size:14px}
+.elist .m{display:block;font-size:12.5px;color:var(--muted);margin-top:2px;overflow-wrap:anywhere}
+.elist a{font-weight:600}
 .note{margin-top:10px;font-size:12.5px;color:var(--muted)}
 .note.warn{color:var(--warn)}
 

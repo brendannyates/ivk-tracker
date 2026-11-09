@@ -71,6 +71,21 @@
   }
   const newId = () => Date.now().toString(36) + Math.random().toString(36).slice(2, 6);
 
+  /* The eligibility feed: a Power Automate flow (When an HTTP request is received ... Response) that answers a POST of
+     { tracker: "IVK" } with the text of Eligibility History.csv (raw, or JSON wrapping it: core.feedText unwraps it). Sent as
+     text/plain so it's a simple CORS request with no preflight; the flow's Response action sets Access-Control-Allow-Origin.
+     Same URL check as the Teams posts. Out: { ok, text } or { ok: false, reason } in plain words. */
+  async function pullFeed(url, body, fetchFn) {
+    const u = flowUrl(url); if (!u) return { ok: false, reason: "No eligibility feed URL yet. Add it in Settings › Eligibility feed." };
+    const F = fetchFn || fetch; let r;
+    try { r = await F(u, { method: "POST", headers: { "Content-Type": "text/plain;charset=UTF-8" }, body: JSON.stringify(body) }); }
+    catch (e) { return { ok: false, reason: "The eligibility feed couldn’t be reached. Nothing changed; check the connection and try again." }; }
+    let t = ""; try { t = await r.text(); } catch (e) { /* no body */ }
+    if (r.ok) return { ok: true, status: r.status, text: t };
+    const hint = HTTP_HINT[r.status] || (/disabled/i.test(t) ? "the workflow is turned off" : "");
+    return { ok: false, status: r.status, reason: `The eligibility feed answered ${r.status}${hint ? `: ${hint}` : ""}. Nothing changed.` };
+  }
+
   /* routes: { arrival: { to, url, on }, protocol: {...} } from tblIvkRoutes; enabled: tblIvkConfig Enabled.
      d = { event, text, facts: [[title, value]], patient, chair, sentBy, clinic, mentions, reply }; log(row) appends to tblIvkLog.
      A card that takes an answer gets a ref (the payload's ref; the workflow waits for the answer and writes it to tblIvkReplies
@@ -104,5 +119,5 @@
     return post(url, Object.assign(card(msg), { event: "test", message: msg, patient: "", sentBy: sentBy || "", sentAt: now.toISOString(), source: "IVK Tracker" }), fetchFn);
   }
 
-  return { EVENTS, flowUrl, truthy, card, takesReply, post, send, test, HTTP_HINT };
+  return { EVENTS, flowUrl, truthy, card, takesReply, post, send, test, pullFeed, HTTP_HINT };
 });

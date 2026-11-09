@@ -46,6 +46,11 @@
   const TPL_SHEET = "IVK Template", TYPES_SHEET = "Slot Types", TYPES_TABLE = "tblIvkSlotTypes";
   const CH = 250;   // rows per write: big single syncs fail in Excel on the web
   const VISIT_READ = 400;   // the newest visit rows read on each refresh (today's are always among them)
+  /* the eligibility feed's rows for this tracker's patients (core.FEED_COLS, header in row 1), replaced whole on each pull */
+  const ELIG_SHEET = "Eligibility Checks";
+  /* The anchors below are where setup() puts each table. The first eligibility pull appends core.PROFILE_FEED_COLS to tblIvkProfile
+     and, because tblIvkTransfers sits one column to its right, inserts whole sheet columns first, which moves every table after it
+     to the right (by name nothing changes). A new table added here later should anchor past the last used column, not a fixed letter. */
   const SPEC = [
     { name: "tblIvkVisits", anchor: "A", columns: C.VISIT_COLS, rows: [C.VISIT_COLS.map(() => "")] },
     { name: "tblIvkConfig", anchor: "Q", columns: ["Key", "Value"], rows: Object.entries(C.DEFAULTS).map(([k, v]) => [k, String(v)]) },
@@ -115,6 +120,8 @@
       tick(1, out);
       out.apptUpdated = null; out.freqs = []; out.planner = null;
       if (!ipSheet.isNullObject) { const r = ipSheet.getRange(IP_RANGE); r.load("values"); await ctx.sync(); out.planner = r.values; }
+      /* the eligibility pulls on the hidden Eligibility Checks tab (null until the first pull) */
+      out.eligChecks = await usedFromA1(ctx, ELIG_SHEET, colL(C.FEED_COLS.length - 1));
       /* the provider templates and their slot types (null when the tabs aren't there yet) */
       out.template = await usedFromA1(ctx, TPL_SHEET, "P");
       if (tm.own[TYPES_TABLE]) { const r = readTable(ctx, TYPES_TABLE); await ctx.sync(); out.slotTypes = r.values; } else out.slotTypes = await usedFromA1(ctx, TYPES_SHEET, "G");
@@ -640,6 +647,48 @@
       return { changed, added: add.length };
     });
   }
+  /* columns missing from a table, added at its end as text (nothing renamed or moved inside it). When the cells to its right
+     aren't empty (the next table on the data sheet), whole sheet columns are inserted there first. */
+  async function ensureCols(table, names) {
+    return Excel.run(async ctx => {
+      const { t, cols } = await openTable(ctx, table), add = names.filter(n => !cols.includes(C.norm(n)));
+      if (!add.length) return { added: [] };
+      const r = t.getRange(); r.load("columnIndex,columnCount,rowIndex,rowCount"); await ctx.sync();
+      const ws = t.worksheet, right = ws.getRangeByIndexes(r.rowIndex, r.columnIndex + r.columnCount, r.rowCount, add.length); right.load("values"); await ctx.sync();
+      if (right.values.some(row => row.some(v => v !== "" && v != null))) { right.getEntireColumn().insert(Excel.InsertShiftDirection.right); await ctx.sync(); }
+      for (const n of add) t.columns.add(null, null, n);
+      await ctx.sync();
+      for (const n of add) { const b = t.columns.getItem(n).getDataBodyRange(); b.load("rowCount"); await ctx.sync(); b.numberFormat = Array.from({ length: b.rowCount }, () => ["@"]); }
+      await ctx.sync();
+      return { added: add };
+    });
+  }
+  /* the hidden Eligibility Checks tab: made (hidden) when missing, its contents replaced by head + rows, all as text */
+  async function replaceElig(head, rows) {
+    return Excel.run(async ctx => {
+      let ws = ctx.workbook.worksheets.getItemOrNullObject(ELIG_SHEET); ws.load("isNullObject"); await ctx.sync();
+      if (ws.isNullObject) { ws = ctx.workbook.worksheets.add(ELIG_SHEET); ws.visibility = Excel.SheetVisibility.hidden; await ctx.sync(); }
+      ws.load("protection/protected"); await ctx.sync();
+      if (ws.protection.protected) throw new Error(`The ${ELIG_SHEET} tab is protected, so the add-in can't save to it. Unprotect it, then pull again`);
+      const u = ws.getUsedRangeOrNullObject(); u.load("isNullObject"); await ctx.sync();
+      if (!u.isNullObject) { u.clear(Excel.ClearApplyTo.contents); await ctx.sync(); }
+      const W = head.length, all = [head, ...rows].map(r => Array.from({ length: W }, (_, i) => String(r[i] ?? "")));
+      for (let s = 0; s < all.length; s += CH) {
+        const part = all.slice(s, s + CH), g = ws.getRangeByIndexes(s, 0, part.length, W);
+        g.numberFormat = part.map(r => r.map(() => "@")); g.values = part; await ctx.sync();
+      }
+      return { n: rows.length };
+    });
+  }
+  /* One eligibility pull, after the feed was read and checked: the profile's new columns, the Eligibility Checks tab, each
+     patient's pick on tblIvkProfile, and when it ran (tblIvkConfig EligPulledAt) */
+  async function saveEligibility(rows, items, at) {
+    const cols = await ensureCols("tblIvkProfile", C.PROFILE_FEED_COLS);
+    await replaceElig(C.FEED_COLS, rows);
+    const up = items.length ? await upsertMany("tblIvkProfile", items.map(i => ({ mrn: i.mrn, patch: i.patch }))) : { changed: 0, added: 0 };
+    await saveKeyed("tblIvkConfig", { EligPulledAt: at });
+    return Object.assign({ rows: rows.length, newCols: cols.added }, up);
+  }
   /* Holds: [{ MRN, Patient, Date (iso), Time, Provider, Treatment }]. The table is read again first: if someone else has just held one
      of these times, or this patient already has holds waiting, nothing is written and the error says which. */
   async function placeHolds(rows, by) {
@@ -710,7 +759,7 @@
     });
   }
 
-  return { DATA_SHEET, SHEETS, PLANNER, TPL_SHEET, TYPES_SHEET, SPEC, load, setup, saveVisit, confirmProtocol, replaceAppts, saveKeyed, saveRoutes, appendLog, addReply, setReply, openRow,
+  return { DATA_SHEET, ELIG_SHEET, SHEETS, PLANNER, TPL_SHEET, TYPES_SHEET, SPEC, load, ensureCols, replaceElig, saveEligibility, setup, saveVisit, confirmProtocol, replaceAppts, saveKeyed, saveRoutes, appendLog, addReply, setReply, openRow,
     setupTemplate, addGrid, setCells, saveTypes, replaceOther, replaceElse, saveSooner, savePlan, saveFlag, placeHolds, setHolds, fillPlanner, getDoc, setDoc, refreshDoc,
     readRow, saveRow, savePt, addPays, saveRanks, saveException, saveProfile, upsertMany, saveXfer, addMpt, saveStart, saveMissed, addMissed, saveUser, saveOffer, addOffers };
 });
