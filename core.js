@@ -417,7 +417,7 @@
   }
   function arrivalText(v, chair, tpl) {
     return fill(tpl || TEMPLATES.arrival, { patient: code(v), time: fmtT(v.a.time), provider: provName(v.a.provider) || "the provider",
-      chair: chair ? ` Chair ${chair}.` : " Waiting for a chair." });
+      chair: chair ? ` Chair ${chair}.` : "" });
   }
   /* which ask: confirm + book (the team's usual message), or just one of them */
   function askText(p, ask, tpls, freq) {

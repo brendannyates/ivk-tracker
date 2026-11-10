@@ -132,7 +132,7 @@ test("needs: red only for what blocks the next infusion, sorted red, amber, quie
 test("arrival message", () => {
   const L = C.today(world()), v = L.find(y => y.a.code === "TESANN");
   assert.equal(C.arrivalText(v, "2"), "TESANN is here for their 1:30 PM IVK visit with Dr. Rivera. Chair 2.");
-  assert.equal(C.arrivalText(v, ""), "TESANN is here for their 1:30 PM IVK visit with Dr. Rivera. Waiting for a chair.");
+  assert.equal(C.arrivalText(v, ""), "TESANN is here for their 1:30 PM IVK visit with Dr. Rivera.");
   assert.equal(C.fill(C.TEMPLATES.seated, { patient: "TESANN", chair: "3" }), "TESANN is in Chair 3.");
 });
 
