@@ -278,9 +278,13 @@ The chair map is a document setting (`ivkBayPlan`), the same file format as ESK 
 
 ## Teams
 
-Each chat gets a workflow made from Teams' **Send webhook alerts to a chat** template (who can trigger it: Anyone). The add-in
-posts an Adaptive Card to it, the same way ESK Tracker does (`notify.js`). A workflow URL works like a password: paste it only into
-Settings › Teams, never into chat, email or a document.
+Each chat gets a posting flow built from blank in Power Automate (trigger: When a Teams webhook request is received, who can
+trigger it: Anyone; a flow made from the Teams template stamps "used a Workflow template" under every card). The add-in posts a
+plain Adaptive Card in the ESK Tracker's layout (`notify.js`): the message in bold, then a line per fact, no buttons. When the
+arrival and the ask go to the same chat, check-in sends one card that tags the RN and the provider. Each visit's card collapses
+to one line 2 hours after check-in: the payload carries the collapsed card and the minutes to wait, and the flow waits and updates
+the card. Build sheet: OneDrive, Add-In Manifests › IVK Tracker › "IVK Tracker - Teams cards build sheet.html". A flow URL works
+like a password: paste it only into Settings › Teams, never into chat, email or a document.
 
 ## Install
 
