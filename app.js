@@ -196,13 +196,11 @@
     catch (e) { console.error(e); toast(`Couldn’t save to the workbook (${label.replace(/…$/, "").toLowerCase()}): ${whyFailed(e)}`, true); return null; }
     finally { S.busy = null; render(); }
   }
-  /* o = { mentions, reply, row }: row = the tblIvkReplies fields for a card that takes an answer (no table yet: no buttons) */
+  /* o = { mentions, lines, events, collapse } (notify.js send). Cards are plain: no buttons. */
   async function teams(ev, text, facts, code, chair, o) {
     o = o || {};
-    const before = o.row && S.raw.tables?.own?.tblIvkReplies ? ref => Store.addReply(Object.assign({ Ref: ref, SentBy: S.name, SentAt: new Date().toISOString() }, o.row)) : null;
-    const r = await N.send({ event: ev, text, facts, patient: code, chair, sentBy: S.name, clinic: S.cfg.Clinic, mentions: o.mentions, reply: before ? o.reply : null },
-      S.routes, S.cfg.Enabled, row => Store.appendLog(row), undefined, before);
-    return r;
+    return N.send({ event: ev, events: o.events, text, facts, lines: o.lines, patient: code, chair, sentBy: S.name, clinic: S.cfg.Clinic, mentions: o.mentions, collapse: o.collapse },
+      S.routes, S.cfg.Enabled, row => Store.appendLog(row));
   }
   /* who a post tags: the RN on arrivals, the visit's provider on asks (Settings › Teams › Who gets tagged) */
   const arrivalTags = () => S.tags.arrival ? [S.tags.arrival] : [];
@@ -2100,20 +2098,31 @@
     if (!sig) return toast("No signature found in that file.", true);
     await saveSig(sig);
   }
-  /* the arrival and chair cards tag the RN; with a chair map they carry a chair picker, so the RN can move the patient from Teams */
+  /* the one line a visit's card collapses to in Teams, COLLAPSE_MIN (notify.js) after check-in */
+  const collapseOf = v => { const arr = v.st.arr != null ? v.st.arr : nowMin();
+    return { text: `${C.code(v)} · ${C.fmtT(v.a.time)} IVK with ${C.provName(v.a.provider) || "the provider"} · checked in ${C.fmtT(arr)}`, min: N.collapseIn(arr, nowMin()) }; };
+  /* the ask's lines under the message: the protocol on file, the one asked about (when it differs), why it's asked */
+  const askFacts = (p, freq, a) => [["Protocol on file", p.freq || "none"], freq && freq !== p.freq ? ["Asking about", freq] : ["", ""], ["Why", ((a && a.why) || []).join("; ")]];
+  /* the arrival and chair cards tag the RN. The first line already says the time, the provider and the chair, so that's the card. */
   async function sendArrival(v, chair, seatedOnly) {
     const c = C.code(v), text = seatedOnly ? C.fill(S.tpl.seated, { patient: c, chair }) : C.arrivalText(v, chair, S.tpl.arrival);
-    const pick = S.plan && S.chairs.length ? { reply: { kind: "chair", chair, chairs: S.chairs }, row: { Kind: "chair", Key: v.key, MRN: v.a.mrn, Patient: c, Value: chair } } : {};
-    return teams("arrival", text, [["Visit", C.fmtT(v.a.time)], ["Provider", C.provName(v.a.provider)], ["Chair", chair ? chairTxt(chair) : ""], ["Desk", S.name]], c, chair,
-      Object.assign({ mentions: arrivalTags() }, pick));
+    return teams("arrival", text, [], c, chair, { mentions: arrivalTags(), collapse: collapseOf(v) });
   }
-  /* the ask tags the provider; when it asks for the protocol, the card has "Confirm <protocol>" and a dropdown for another */
-  async function sendAsk(p, text, freq, key, proto) {
-    const v = key ? visitBy(key) : null, a = v ? v.ask : C.asks(p, S.x, null), t = askTag(v, a), f = freq || p.freq || "";
-    const o = { mentions: t.tag ? [t.tag] : [] };
-    if (proto) Object.assign(o, { reply: { kind: "protocol", freq: f, freqs: S.freqs }, row: { Kind: "protocol", Key: key || "", MRN: p.mrn, Patient: p.code, Value: f } });
-    const r = await teams("protocol", text, [["Patient", p.code], ["Protocol on file", p.freq || "none"], freq && freq !== p.freq ? ["Asking about", freq] : ["", ""], ["Why", (a.why || []).join("; ")], ["Desk", S.name]], p.code, "", o);
+  /* the ask tags the provider */
+  async function sendAsk(p, text, freq, key) {
+    const v = key ? visitBy(key) : null, a = v ? v.ask : C.asks(p, S.x, null), t = askTag(v, a);
+    const collapse = v ? collapseOf(v) : { text: `${p.code} · scheduling ask sent ${hm()}`, min: N.COLLAPSE_MIN };
+    const r = await teams("protocol", text, askFacts(p, freq, a), p.code, "", { mentions: t.tag ? [t.tag] : [], collapse });
     if (r.ok && key) { const v = visitBy(key); if (v) await Store.saveVisit(key, visitBase(v), Object.assign({ Asked: hm() }, stamp())); }
+    return r;
+  }
+  /* check-in with both boxes ticked and both routes in the same chat: one card. The arrival line tags the RN, the ask line under it
+     tags the provider, then the protocol lines. Logged as both an arrival and an ask, so the visit shows both as sent. */
+  async function sendCheckin(v, chair) {
+    const p = v.p, a = v.ask, t = askTag(v, a);
+    const r = await teams("arrival", C.arrivalText(v, chair, S.tpl.arrival), askFacts(p, "", a), C.code(v), chair, {
+      mentions: arrivalTags(), lines: [{ text: C.askText(p, a, S.tpl, p.freq), mentions: t.tag ? [t.tag] : [] }], events: ["arrival", "protocol"], collapse: collapseOf(v) });
+    if (r.ok) { const w = visitBy(v.key); if (w) await Store.saveVisit(v.key, visitBase(w), Object.assign({ Asked: hm() }, stamp())); }
     return r;
   }
   /* follow along: picking a patient or a visit selects their row on the Master Patient Tracker behind the add-in (Settings turns it off) */
@@ -2615,8 +2624,11 @@
       await savePay(v, m, `${C.code(v)} is checked in`, "in");
       const msgs = [`${C.code(v)} checked in${chair ? ` to ${chairTxt(chair)}` : ""}.`];
       if (S.payOn && !(m.card && m.consent)) msgs.push(`Copay check not confirmed (${consentMiss(m)}).`);
-      if (rn) { const r = await sendArrival(v, chair); msgs.push(teamsWord(r, routeTo("arrival"))); }
-      if (ask && v.p) { const r = await sendAsk(v.p, C.askText(v.p, v.ask, S.tpl, v.p.freq), v.p.freq, v.key, v.ask.proto); msgs.push(r.ok ? `Asked ${routeTo("protocol")}.` : r.reason); }
+      if (rn && ask && v.p && N.sameChat(S.routes)) { const r = await sendCheckin(v, chair); msgs.push(r.ok ? `${teamsWord(r, routeTo("arrival"))} The ask is on the same card.` : r.reason); }
+      else {
+        if (rn) { const r = await sendArrival(v, chair); msgs.push(teamsWord(r, routeTo("arrival"))); }
+        if (ask && v.p) { const r = await sendAsk(v.p, C.askText(v.p, v.ask, S.tpl, v.p.freq), v.p.freq, v.key); msgs.push(r.ok ? `Asked ${routeTo("protocol")}.` : r.reason); }
+      }
       toast(msgs.join(" "), msgs.some(x => /answered|couldn’t|No Teams|off|not confirmed/i.test(x)));
     },
     /* the chair picked at the start of treatment (it starts now), or a move to another chair (the start time stays) */
@@ -2643,7 +2655,7 @@
       const p = S.PM.get(S.m.mrn), text = $("#mText").value.trim(), freq = $("#mFreq").value; if (!p || !text) return;
       S.busy = "Posting to Teams…"; render();
       let r;
-      try { r = await sendAsk(p, text, freq, S.m.key, !!(S.m.ask && S.m.ask.proto) || (!!freq && freq !== p.freq)); }
+      try { r = await sendAsk(p, text, freq, S.m.key); }
       catch (e) { console.error(e); r = { ok: true, saveErr: e.message || String(e) }; }
       finally { S.busy = null; }
       if (r.ok) closeModal(); else render();

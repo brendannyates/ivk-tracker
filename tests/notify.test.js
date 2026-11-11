@@ -21,7 +21,10 @@ test("send posts the Adaptive Card the Teams template expects, and logs it", asy
   assert.equal(f.calls[0].url, URL1);
   const body = JSON.parse(f.calls[0].o.body), card = body.attachments[0].content;
   assert.equal(body.type, "message"); assert.equal(card.type, "AdaptiveCard"); assert.equal(card.body[0].text.startsWith("TESANN is here"), true);
-  assert.deepEqual(card.body[1].facts, [{ title: "Chair", value: "Chair 2" }], "blank facts are dropped");
+  assert.equal(card.body[0].weight, "Bolder", "the message is the bold first line");
+  assert.equal(card.body.length, 2, "blank facts are dropped");
+  assert.deepEqual(card.body[1], { type: "TextBlock", text: "Chair: Chair 2", wrap: true, spacing: "Medium", separator: true }, "a fact is its own line, no FactSet");
+  assert.equal(card.actions, undefined, "no buttons"); assert.equal(body.collapsed, undefined, "no collapse asked for, none sent");
   assert.equal(body.patient, "TESANN"); assert.equal(body.source, "IVK Tracker");
   assert.equal(logged.length, 1); assert.deepEqual(logged[0].slice(1, 4), ["arrival", "TESANN", "2"]); assert.equal(logged[0][7], "accepted 202");
 });
@@ -56,30 +59,34 @@ test("mentions tag at the start of the text, with a msteams entity per person", 
   const p = N.card("TESANN is here.", [], { mentions: [{ name: "Sam Nurse", id: "snurse@example.org" }, { name: "", id: "x@example.org" }] }), c = p.attachments[0].content;
   assert.equal(c.body[0].text, "<at>Sam Nurse</at> TESANN is here.");
   assert.deepEqual(c.msteams.entities, [{ type: "mention", text: "<at>Sam Nurse</at>", mentioned: { id: "snurse@example.org", name: "Sam Nurse" } }]);
-  assert.equal(N.takesReply(p), false); assert.equal(N.card("x").attachments[0].content.msteams, undefined);
+  assert.equal(N.card("x").attachments[0].content.msteams, undefined);
 });
 
-test("reply cards: chair picker; Confirm <protocol> plus a dropdown", () => {
-  const ch = N.card("TESANN is here.", [], { reply: { kind: "chair", chair: "2", chairs: ["1", "2", "3"] } }).attachments[0].content;
-  assert.deepEqual(ch.body[1].choices.map(x => x.value), ["1", "2", "3"]); assert.equal(ch.body[1].value, "2"); assert.equal(ch.body[1].id, "chair");
-  assert.deepEqual(ch.actions, [{ type: "Action.Submit", title: "Update chair", data: { act: "chair" } }]);
-  assert.equal(N.card("x", [], { reply: { kind: "chair", chairs: [] } }).attachments[0].content.actions, undefined, "no chairs, no picker");
-  const pr = N.card("Confirm?", [], { reply: { kind: "protocol", freq: "1x per week", freqs: ["1x per week", "every 2 weeks"] } }).attachments[0].content;
-  assert.deepEqual(pr.actions.map(a => [a.title, a.data]), [["Confirm 1x per week", { act: "confirm", freq: "1x per week" }], ["Confirm this one", { act: "pick" }]]);
-  assert.equal(pr.body[1].id, "pick"); assert.equal(pr.body[1].value, "1x per week");
-  const none = N.card("Confirm?", [], { reply: { kind: "protocol", freq: "", freqs: ["every 2 weeks"] } }).attachments[0].content;
-  assert.deepEqual(none.actions.map(a => a.title), ["Confirm"]);
+test("combined check-in card: the RN on the arrival line, the provider on the ask line, protocol lines under them", () => {
+  const rn = { name: "Sam Nurse", id: "snurse@example.org" }, md = { name: "Ana Rivera", id: "arivera@example.org" };
+  const c = N.card("TESANN is here for their 9:30 AM IVK visit with Dr. Rivera.", [["Protocol on file", "every 2 weeks"], ["", ""], ["Why", ""]],
+    { mentions: [rn], lines: [{ text: "Can we please send TESANN to the desk at discharge for scheduling?", mentions: [md] }] }).attachments[0].content;
+  assert.deepEqual(c.body.map(b => b.text), ["<at>Sam Nurse</at> TESANN is here for their 9:30 AM IVK visit with Dr. Rivera.",
+    "<at>Ana Rivera</at> Can we please send TESANN to the desk at discharge for scheduling?", "Protocol on file: every 2 weeks"]);
+  assert.deepEqual(c.msteams.entities.map(e => e.mentioned.id), ["snurse@example.org", "arivera@example.org"]);
+  const twice = N.card("x", [], { mentions: [rn], lines: [{ text: "y", mentions: [rn] }] }).attachments[0].content;
+  assert.equal(twice.msteams.entities.length, 1, "one entity per person");
 });
 
-test("a reply card gets a ref, its row is written first; no row means no buttons", async () => {
-  const f = fake(202), rows = [], logged = [];
-  const d = { event: "protocol", text: "Confirm?", patient: "TESANN", mentions: [{ name: "Ana Rivera", id: "arivera@example.org" }], reply: { kind: "protocol", freq: "1x per week", freqs: ["1x per week"] } };
-  const r = await N.send(d, routes, "TRUE", row => logged.push(row), f, async ref => rows.push(ref));
+test("a combined card is one post, logged as both events, and carries its collapsed line", async () => {
+  const f = fake(202), logged = [];
+  const r = await N.send({ event: "arrival", events: ["arrival", "protocol"], text: "TESANN is here.", lines: [{ text: "Can we please send TESANN to the desk?" }], patient: "TESANN",
+    collapse: { text: "TESANN · 9:30 AM IVK with Dr. Rivera · checked in 9:24 AM", min: 120 } }, routes, "TRUE", row => logged.push(row), f);
   const b = JSON.parse(f.calls[0].o.body);
-  assert.equal(rows.length, 1); assert.equal(r.ref, rows[0]); assert.equal(b.ref, rows[0]); assert.equal(logged[0][0], rows[0]); assert.match(logged[0][7], /\(answer /);
-  assert.equal(b.attachments[0].content.actions.length, 2); assert.equal(b.attachments[0].content.body[0].text.startsWith("<at>Ana Rivera</at>"), true);
-  const f2 = fake(202), r2 = await N.send(d, routes, "TRUE", null, f2, async () => { throw new Error("no table"); }), b2 = JSON.parse(f2.calls[0].o.body);
-  assert.equal(r2.ok, true); assert.equal(b2.ref, ""); assert.equal(b2.attachments[0].content.actions, undefined); assert.equal(b2.attachments[0].content.msteams.entities.length, 1, "still tagged");
-  const f3 = fake(202); await N.send({ event: "arrival", text: "x" }, routes, "TRUE", null, f3, async () => { throw new Error("not called"); });
-  assert.equal(JSON.parse(f3.calls[0].o.body).ref, "", "a plain card has no ref");
+  assert.equal(r.ok, true); assert.equal(f.calls.length, 1);
+  assert.deepEqual(logged.map(l => l[1]), ["arrival", "protocol"]); assert.equal(logged[0][4], "TESANN is here. Can we please send TESANN to the desk?");
+  assert.equal(b.collapseMin, 120); assert.deepEqual(b.collapsed.body, [{ type: "TextBlock", text: "TESANN · 9:30 AM IVK with Dr. Rivera · checked in 9:24 AM", wrap: true, isSubtle: true }]);
+});
+
+test("collapse timing counts from check-in; same chat means same URL with both routes on", () => {
+  assert.equal(N.COLLAPSE_MIN, 120);
+  assert.equal(N.collapseIn(540, 540), 120); assert.equal(N.collapseIn(540, 600), 60); assert.equal(N.collapseIn(540, 800), 1, "never less than a minute");
+  assert.equal(N.collapseIn(null, 600), 120);
+  assert.equal(N.sameChat({ arrival: { url: URL2, on: true }, protocol: { url: " " + URL2, on: "TRUE" } }), true);
+  assert.equal(N.sameChat(routes), false); assert.equal(N.sameChat({ arrival: { url: URL2, on: true }, protocol: { url: URL2, on: false } }), false);
 });

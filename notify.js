@@ -1,11 +1,14 @@
-/* notify.js: Teams posts for the IVK Tracker, built on the ESK Tracker's notify.js (same workflow template, card and post).
-   Each chat has its own Teams workflow made from the "Send webhook alerts to a chat" template (who can trigger: Anyone).
-   Its URL sits in tblIvkRoutes, one row per event:
+/* notify.js: Teams posts for the IVK Tracker, in the ESK Tracker's card layout.
+   Each chat has its own "IVK Tracker - post to <chat>" flow, built from blank in Power Automate (a flow made from the Teams
+   "Send webhook alerts to a chat" template stamps "<name> used a Workflow template" under every card). Trigger: When a Teams
+   webhook request is received, who can trigger: Anyone. Its URL sits in tblIvkRoutes, one row per event:
      arrival   -> the RN's chat: a patient is here (the RN takes vitals and doesn't use the tracker)
      protocol  -> the Castro IVK group chat: confirm the protocol, send to the desk at discharge for scheduling
-   The add-in decides when to send and what to say; the workflow posts the card it is given (and, for a card with buttons, waits
-   for the answer and writes it to tblIvkReplies under the payload's ref). Nothing here touches the
-   workbook: the caller passes the routes it read and a log function. Workflow URLs are secrets (the sig= part). */
+   When both routes are the same chat, check-in sends one card that carries both (app.js sendCheckin).
+   Cards are plain (no buttons). A card for a visit also carries a one-line collapsed version and how many minutes to wait: the flow
+   posts the card, waits, and swaps it for the collapsed line, COLLAPSE_MIN after check-in. The add-in decides what to say and when
+   to collapse; the flow only posts, waits and updates. Nothing here touches the workbook: the caller passes the routes it read and
+   a log function. Flow URLs are secrets (the sig= part). */
 (function (root, factory) {
   if (typeof module === "object" && module.exports) module.exports = factory();
   else root.IvkNotify = factory();
@@ -20,39 +23,36 @@
   }
   const truthy = v => v === true || /^(true|yes|y|1)$/i.test(String(v == null ? "" : v).trim());
 
-  /* What the Teams workflow template expects: { type: 'message', attachments: [ Adaptive Card ] }.
-     o.mentions = [{ name, id: email }]: each is tagged at the start of the text (<at>name</at> plus a msteams mention entity).
-     o.reply = a card that takes an answer in Teams (the workflow posts it with "wait for a response"):
-       { kind: "chair", chair, chairs: ["1", ...] }        a chair picker and "Update chair"
-       { kind: "protocol", freq, freqs: [...] }            "Confirm <freq>", or pick another from the list and "Confirm this one"
-     Submit data carries act; the inputs add chair / pick. No patient details go in the data: the workflow sends back the payload's ref. */
+  /* minutes after check-in that a visit's card collapses to one line in Teams */
+  const COLLAPSE_MIN = 120;
+
+  /* What the flow expects: { type: 'message', attachments: [ Adaptive Card ] }. The layout is the ESK Tracker's: the message is the
+     bold first line, then each further line under a separator. No FactSet, no footer, no buttons.
+     o.mentions = [{ name, id: email }]: tagged at the start of the first line (<at>name</at> plus a msteams mention entity).
+     o.lines = [{ text, mentions }]: more lines, each with its own tags (the combined check-in card: the RN on the first line, the
+     provider on the ask). facts = [[title, value]]: one "Title: value" line each; blank values are left out. */
   const esc = s => String(s).replace(/[<>]/g, "");
+  const tagged = (text, men) => { const lead = men.map(m => `<at>${esc(m.name)}</at>`).join(" "); return lead ? `${lead} ${text}` : text; };
+  const okMen = list => (list || []).filter(m => m && m.name && m.id);
+  const line = t => ({ type: "TextBlock", text: t, wrap: true, spacing: "Medium", separator: true });
   function card(text, facts, o) {
-    const men = ((o && o.mentions) || []).filter(m => m && m.name && m.id);
-    const lead = men.map(m => `<at>${esc(m.name)}</at>`).join(" ");
-    const body = [{ type: "TextBlock", text: lead ? `${lead} ${text}` : text, wrap: true }];
-    const f = (facts || []).filter(x => x[1]).map(x => ({ title: x[0], value: String(x[1]) }));
-    if (f.length) body.push({ type: "FactSet", facts: f });
-    const content = { $schema: "http://adaptivecards.io/schemas/adaptive-card.json", type: "AdaptiveCard", version: "1.4", body };
-    const r = o && o.reply;
-    if (r && r.kind === "chair" && r.chairs && r.chairs.length) {
-      body.push({ type: "Input.ChoiceSet", id: "chair", label: "Chair", style: "compact", value: String(r.chair || ""), choices: r.chairs.map(c => ({ title: `Chair ${c}`, value: String(c) })) });
-      content.actions = [{ type: "Action.Submit", title: "Update chair", data: { act: "chair" } }];
-    } else if (r && r.kind === "protocol") {
-      const list = (r.freqs || []).filter(Boolean);
-      content.actions = [];
-      if (r.freq) content.actions.push({ type: "Action.Submit", title: `Confirm ${r.freq}`, data: { act: "confirm", freq: r.freq } });
-      if (list.length) {
-        body.push({ type: "Input.ChoiceSet", id: "pick", label: r.freq ? "Or a different protocol" : "Protocol", style: "compact", value: list.includes(r.freq) ? r.freq : list[0], choices: list.map(x => ({ title: x, value: x })) });
-        content.actions.push({ type: "Action.Submit", title: r.freq ? "Confirm this one" : "Confirm", data: { act: "pick" } });
-      }
-      if (!content.actions.length) delete content.actions;
+    const men = okMen(o && o.mentions), all = men.slice();
+    const body = [{ type: "TextBlock", text: tagged(text, men), wrap: true, weight: "Bolder" }];
+    for (const l of (o && o.lines) || []) {
+      if (!l || !l.text) continue;
+      const lm = okMen(l.mentions); all.push(...lm); body.push(line(tagged(l.text, lm)));
     }
-    if (men.length) content.msteams = { entities: men.map(m => ({ type: "mention", text: `<at>${esc(m.name)}</at>`, mentioned: { id: m.id, name: m.name } })) };
+    for (const x of (facts || []).filter(x => x && x[1])) body.push(line(x[0] ? `${x[0]}: ${x[1]}` : String(x[1])));
+    const content = { $schema: "http://adaptivecards.io/schemas/adaptive-card.json", type: "AdaptiveCard", version: "1.4", body };
+    const seen = new Set(), ents = all.filter(m => !seen.has(m.id) && seen.add(m.id));
+    if (ents.length) content.msteams = { entities: ents.map(m => ({ type: "mention", text: `<at>${esc(m.name)}</at>`, mentioned: { id: m.id, name: m.name } })) };
     return { type: "message", attachments: [{ contentType: "application/vnd.microsoft.card.adaptive", contentUrl: null, content }] };
   }
-  /* a card only waits for an answer when it has something to press */
-  const takesReply = p => !!(p && p.attachments && p.attachments[0] && p.attachments[0].content.actions && p.attachments[0].content.actions.length);
+  /* the collapsed card: one muted line, no tags */
+  const collapsedCard = text => ({ $schema: "http://adaptivecards.io/schemas/adaptive-card.json", type: "AdaptiveCard", version: "1.4",
+    body: [{ type: "TextBlock", text: String(text), wrap: true, isSubtle: true }] });
+  /* minutes from now until the card should collapse: COLLAPSE_MIN after check-in (arr, minutes since midnight), at least 1 */
+  const collapseIn = (arr, now) => arr == null || now == null ? COLLAPSE_MIN : Math.max(1, COLLAPSE_MIN - (now - arr));
 
   /* Real JSON with CORS: the trigger answers the preflight, so the add-in reads its answer (202 = accepted). Only a 2xx counts as
      sent. There is no no-cors retry: it could post a second card when the first got through, and its text body isn't read by the
@@ -87,30 +87,31 @@
   }
 
   /* routes: { arrival: { to, url, on }, protocol: {...} } from tblIvkRoutes; enabled: tblIvkConfig Enabled.
-     d = { event, text, facts: [[title, value]], patient, chair, sentBy, clinic, mentions, reply }; log(row) appends to tblIvkLog.
-     A card that takes an answer gets a ref (the payload's ref; the workflow waits for the answer and writes it to tblIvkReplies
-     under that ref). beforePost(ref) writes the tblIvkReplies row first, so the answer always has a row to land in; if it throws,
-     the card goes without buttons. */
-  async function send(d, routes, enabled, log, fetchFn, beforePost) {
+     d = { event, events, text, facts, lines, patient, chair, sentBy, clinic, mentions, collapse }; log(row) appends to tblIvkLog.
+     d.event picks the route; d.events (default [d.event]) are the events logged, one row each, so a combined check-in card counts as
+     both the arrival and the ask. d.collapse = { text, min }: the flow swaps the card for that line after min minutes. */
+  async function send(d, routes, enabled, log, fetchFn) {
     if (!truthy(enabled)) return { ok: false, reason: "Teams posts are off for this workbook (Settings › Teams)." };
     const r = routes && routes[d.event];
     if (!r || !truthy(r.on)) return { ok: false, reason: `${EVENTS[d.event] || d.event} posts are turned off (Settings › Teams).` };
     const url = flowUrl(r.url);
     if (!url) return { ok: false, reason: `No Teams workflow for ${EVENTS[d.event] || d.event} yet. Add it in Settings › Teams.` };
-    let c = card(d.text, d.facts, { mentions: d.mentions, reply: d.reply }), ref = "";
-    if (takesReply(c)) {
-      ref = newId();
-      try { if (beforePost) await beforePost(ref); else throw new Error("no reply table"); }
-      catch (e) { console.warn("Teams reply row", e); ref = ""; c = card(d.text, d.facts, { mentions: d.mentions }); }
-    }
-    const now = new Date(), payload = Object.assign(c, { event: d.event, ref, message: d.text.replace(/\*\*/g, ""),
+    const c = card(d.text, d.facts, { mentions: d.mentions, lines: d.lines });
+    const msg = [d.text].concat((d.lines || []).filter(l => l && l.text).map(l => l.text)).join(" ").replace(/\*\*/g, "");
+    const now = new Date(), payload = Object.assign(c, { event: d.event, message: msg,
       patient: d.patient || "", chair: String(d.chair || ""), clinic: d.clinic || "", sentBy: d.sentBy || "", sentAt: now.toISOString(), source: "IVK Tracker" });
+    if (d.collapse && d.collapse.text) Object.assign(payload, { collapsed: collapsedCard(d.collapse.text), collapseMin: Math.max(1, Math.round(+d.collapse.min || COLLAPSE_MIN)) });
     const res = await post(url, payload, fetchFn);
-    const result = (res.ok ? `accepted ${res.status}` : `failed: ${res.reason}`) + (ref ? ` (answer ${ref})` : "");
-    try { if (log) await log([ref || newId(), d.event, d.patient || "", String(d.chair || ""), payload.message, d.sentBy || "", payload.sentAt, result]); }
-    catch (e) { console.warn("Teams log", e); }
-    return Object.assign({ message: payload.message, to: r.to, ref }, res);
+    const result = res.ok ? `accepted ${res.status}` : `failed: ${res.reason}`;
+    for (const ev of d.events && d.events.length ? d.events : [d.event]) {
+      try { if (log) await log([newId(), ev, d.patient || "", String(d.chair || ""), payload.message, d.sentBy || "", payload.sentAt, result]); }
+      catch (e) { console.warn("Teams log", e); }
+    }
+    return Object.assign({ message: payload.message, to: r.to }, res);
   }
+  /* both events go to the same chat (same flow URL, both on): check-in sends one card */
+  const sameChat = routes => { const a = routes && routes.arrival, p = routes && routes.protocol;
+    return !!(a && p && truthy(a.on) && truthy(p.on) && flowUrl(a.url) && flowUrl(a.url) === flowUrl(p.url)); };
   /* Settings › Teams › Send test: one card with no patient, nothing logged */
   async function test(event, routes, sentBy, fetchFn) {
     const r = routes && routes[event], url = flowUrl(r && r.url);
@@ -119,5 +120,5 @@
     return post(url, Object.assign(card(msg), { event: "test", message: msg, patient: "", sentBy: sentBy || "", sentAt: now.toISOString(), source: "IVK Tracker" }), fetchFn);
   }
 
-  return { EVENTS, flowUrl, truthy, card, takesReply, post, send, test, pullFeed, HTTP_HINT };
+  return { EVENTS, COLLAPSE_MIN, flowUrl, truthy, card, collapsedCard, collapseIn, sameChat, post, send, test, pullFeed, HTTP_HINT };
 });
