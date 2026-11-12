@@ -209,3 +209,11 @@ test("approved not scheduled: Approved on the Consults tab and not started; Not 
   assert.deepEqual(W.map(x => x.c.mrn), ["990401", "990402"], "DELDEE started; GAMGIL isn't approved; EPSEVE is closed");
   assert.equal(W.find(x => x.c.mrn === "990402").booked.date, T + 3, "BETBO's start is booked, the stage lags");
 });
+
+test("Access weeks: a start held in the Index planner (treatment 1) counts as a start until NextGen has it", () => {
+  const A = C.appts([AP_H, ap("990501", "ONEPAT", T + 8, 540, "IV Ketamine Start")]);
+  const H = [{ id: "h1", mrn: "990502", date: T + 9, time: 540, n: 1, status: "held" }, { id: "h2", mrn: "990502", date: T + 12, time: 540, n: 2, status: "held" },
+    { id: "h3", mrn: "990501", date: T + 8, time: 540, n: 1, status: "held" }, { id: "h4", mrn: "990503", date: T + 9, time: 600, n: 1, status: "released" }];
+  const B = C.weekBookings({ appts: A, others: [], holds: H, listAt: null, today: T, weeks: 3, cfg });
+  assert.deepEqual(B.weeks.map(w => [w.starts, w.held]), [[0, 0], [2, 1], [0, 0]], "the held start counts; treatment 2, the one NextGen has and the released one don't");
+});

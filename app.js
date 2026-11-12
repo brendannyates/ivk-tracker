@@ -368,7 +368,7 @@
        refresh and dark mode at the top right). While a refresh reads the workbook the page dims and can't be pressed. */
     $("#app").innerHTML = `<div class="app">
       <nav class="rail" aria-label="IVK Tracker">
-        <div class="brand">${S.cfg.Clinic ? `${esc(S.cfg.Clinic)}<small>IV ketamine</small>` : `IV ketamine<small>Patient tracker</small>`}</div>
+        <div class="brand"><span class="bn">${S.cfg.Clinic ? `${esc(S.cfg.Clinic)}<small>IV ketamine</small>` : `IV ketamine<small>Patient tracker</small>`}</span>${FULL ? `<span class="du-home"></span>` : ""}</div>
         ${NAV.map(item).join("")}
         <div class="spacer"></div>
         ${S.name ? `<button class="item who" data-act="switchUser" title="Switch user">${esc(S.name)}<small>Switch user</small></button>` : ""}
@@ -1071,11 +1071,16 @@
   /* What the schedule has to hold at everyone's current protocol, against how they're booked and what the templates offer, week by
      week; and when index patients stepping down to once a week (after treatment 6) open access. */
   const n1 = v => { const r = Math.round(v * 10) / 10; return Number.isInteger(r) ? String(r) : r.toFixed(1); };
+  const dmBase = () => ({ patients: S.P, appts: S.A, holds: S.holds, listAt: S.raw.apptUpdated, today: todayS(), cfg: S.cfg, weeks: 12 });
+  /* the week table, the tiles and the report: every active patient (not paused), whatever the By protocol filter shows */
+  const dmAll = () => memo("dmAll", () => C.demand(Object.assign({ paused: false, sched: "all", X: S.grids.length ? ipOpts().X : null }, dmBase())));
+  /* consults and starts by week (the report's IVK consults, the list's starts and held starts); the Consults tab's approved, not started */
+  const wkBk = () => memo("wkBk", () => C.weekBookings({ appts: S.A, others: S.others, holds: S.holds, listAt: S.raw.apptUpdated, today: todayS(), weeks: 12, cfg: S.cfg }));
+  const apprW = () => memo("apprW", () => C.approvedWaiting(S.CS, S.A, todayS()));
   function demandHTML() {
     const o = S.dm || (S.dm = { paused: false, sched: "only" }), c = S.cfg, T = todayS(), hasT = S.grids.length > 0;
-    const base = { patients: S.P, appts: S.A, holds: S.holds, listAt: S.raw.apptUpdated, today: T, cfg: c, weeks: 12 };
-    /* the week table and the tiles: every active patient (not paused), whatever the By protocol filter shows */
-    const D = memo("dmAll", () => C.demand(Object.assign({ paused: false, sched: "all", X: hasT ? ipOpts().X : null }, base)));
+    const base = dmBase();
+    const D = dmAll();
     /* By protocol: the filter (unscheduled only, everyone, scheduled only) and paused */
     const DP = memo(`dm|${o.paused}|${o.sched}`, () => C.demand(Object.assign({ paused: o.paused, sched: o.sched, X: null }, base)));
     const W = D.weeks, sumW = (k, n) => W.slice(0, n).reduce((a, w) => a + w[k], 0), r0 = v => String(Math.round(v)), pct = v => v == null ? "—" : `${Math.round(v * 100)}%`;
@@ -1088,8 +1093,7 @@
     const tile = (l, v, s, cls) => `<div class="stat${cls ? ` ${cls}` : ""}"><small>${l}</small><b>${v}</b>${s ? `<span>${s}</span>` : ""}</div>`;
     const p4 = D.proj4, open4 = sumW("open", 4);
     /* consults and starts by week (the report's IVK consults, the list's starts); the Consults tab's approved patients not started */
-    const BK = memo("wkBk", () => C.weekBookings({ appts: S.A, others: S.others, today: T, weeks: W.length, cfg: c }));
-    const AW = memo("apprW", () => C.approvedWaiting(S.CS, S.A, T)), awB = AW.filter(x => x.booked).length;
+    const BK = wkBk(), AW = apprW(), awB = AW.filter(x => x.booked).length;
     const stats = `<div class="stats">${tile("Scheduled out 4 weeks", pct(w4?.thruPct), w4 ? `${w4.thruN} of ${w4.den} booked the week of ${C.fmtD(w4.start)} or later` : "")}
       ${tile("Projected need, next 4 weeks", r0(p4), "visits still to book if everyone keeps their cadence")}
       ${hasT ? tile("Open slots, next 4 weeks", String(open4), open4 >= p4 ? `${r0(open4 - p4)} left after the projected need` : `${r0(p4 - open4)} short of the projected need`, open4 < p4 ? "warn" : "") : tile("Open slots", "—", "no template yet")}
@@ -1098,15 +1102,16 @@
       ${tile("Consults scheduled", BK.any ? String(BK.ahead) : "—", BK.any ? `IVK consults from today, ${BK.ahead4} in the next 4 weeks` : "no IVK consults on the report yet")}</div>`;
     /* week by week: average need at current protocols, booked against the template, share scheduled through, projected need; the
        IVK consults and treatment starts booked that week as pills under the week */
-    const pill = (n, cls, one, many) => n ? `<span class="wpill ${cls}">${n} ${n === 1 ? one : many}</span>` : "";
-    const wRow = w => { const sw = shutWeek(w.start), b = BK.weeks[w.w] || {}, pl = pill(b.consults, "co", "consult", "consults") + pill(b.starts, "st", "start", "starts");
+    /* both pills on every week, a zero one muted, so a week with none reads as none rather than missing */
+    const pill = (n, cls, one, many, tip) => `<span class="wpill ${cls}${n ? "" : " z"}"${tip ? ` title="${esc(tip)}"` : ""}>${n || 0} ${n === 1 ? one : many}</span>`;
+    const wRow = w => { const sw = shutWeek(w.start), b = BK.weeks[w.w] || {}, pl = (BK.any ? pill(b.consults, "co", "consult", "consults") : "") + pill(b.starts, "st", "start", "starts", b.held ? `${b.held} held in the Index planner, not in NextGen yet` : "");
       return `<tr><td>${w.w === 0 ? "This week" : C.fmtD(w.start)}${sw ? `<small>Closed ${esc(sw)}</small>` : ""}${pl ? `<span class="wpills">${pl}</span>` : ""}</td><td>${n1(w.expect)}</td>
         <td>${w.listed}${hasT ? ` / ${w.slots}` : ""}${hasT && w.slots ? `<small>${pct(w.listed / w.slots)} of the template</small>` : ""}</td>
         <td>${pct(w.thruPct)}<small>${w.thruN} of ${w.den}</small></td><td${w.projNeed ? ' class="flag"' : ""}>${w.projNeed || "—"}</td></tr>`; };
     const weeks = `<section class="card dmt"><div class="lh"><h2>Week by week</h2><span>Sunday to Saturday, every active patient</span></div><div class="tscroll"><table class="tt dm">
       <thead><tr><th>Week of</th><th>Avg Need</th><th>Booked${hasT ? " / slots" : ""}</th><th>Scheduled Through</th><th>Projected Need</th></tr></thead>
       <tbody>${W.map(wRow).join("")}</tbody></table></div>
-      <p class="note"><b>Avg Need</b>: each active patient’s protocol over the week (index ${c.IndexPerWeek} a week to treatment ${D.N}, then ${esc(c.AfterIndex)}; PRN and blank need none). <b>Booked</b>: IVK visits and holds on the list${hasT ? ", out of the template’s IVK slots that week" : ""}. <b>Scheduled Through</b>: active patients with a protocol (not PRN, not paused) booked that week or later. <b>Projected Need</b>: the visits still to book if each patient keeps their cadence past their last booked visit (index patients ${esc(c.AfterIndex)} after treatment ${D.N}). The pills under each week: <b>consults</b>, IVK consults at ${esc(c.Clinic || "this clinic")} on the uploaded report; <b>starts</b>, treatment starts on the list (the whole week, cancelled and no-shows aside).</p></section>`;
+      <p class="note"><b>Avg Need</b>: each active patient’s protocol over the week (index ${c.IndexPerWeek} a week to treatment ${D.N}, then ${esc(c.AfterIndex)}; PRN and blank need none). <b>Booked</b>: IVK visits and holds on the list${hasT ? ", out of the template’s IVK slots that week" : ""}. <b>Scheduled Through</b>: active patients with a protocol (not PRN, not paused) booked that week or later. <b>Projected Need</b>: the visits still to book if each patient keeps their cadence past their last booked visit (index patients ${esc(c.AfterIndex)} after treatment ${D.N}). The pills under each week: <b>consults</b>, IVK consults at ${esc(c.Clinic || "this clinic")} on the uploaded report; <b>starts</b>, treatment starts on the list and starts held in the Index planner (the whole week, cancelled and no-shows aside). The consults pill shows once IVK consults are on the report.</p></section>`;
     /* by protocol: one line each; press it for the patients on it */
     const G = DP.groups, open = S.dmOpen, sum4 = a => a.slice(0, 4).reduce((x, y) => x + y, 0);
     const pRow = r => `<div class="row"><span class="p">${esc(r.code)}${mrnTag(r.mrn)}</span>
@@ -1123,6 +1128,72 @@
     const steps = `<section class="card dmt"><div class="lh"><h2>Projected Access Post-Index</h2><span>${T2.length ? plural(T2.length, "patient") + " in index" : "nobody in index"}</span></div>
       ${T2.length ? `<p class="note">${firstFree ? `Access starts opening ${firstFree.w === 0 ? "this week" : `the week of ${C.fmtD(firstFree.start)}`}; by the week of ${C.fmtD(W[W.length - 1].start)}, about ${r0(W[W.length - 1].freed)} visits a week are free from index step-downs.` : ""}</p><ul class="steps">${T2.map(tRow).join("")}</ul>` : `<p class="note">Index patients (Induction) show here with the week they step down.</p>`}</section>`;
     return `${setupBanner()}${head("Access", sub, false)}${accessChips()}${stats}${weeks}<div class="cols"><div class="stack">${byProto}${missHTML()}</div><div class="stack">${steps}</div></div>`;
+  }
+  /* ---------- the Access report (Excel and print): the Demand page's breakdowns and the consult pipeline ---------- */
+  /* Sections of { title, head, rows, note }. A cell is text or a number, { d: serial } a date, { p: 0..1 } a share. Patients by
+     LASFIR code and MRN: the file is PHI, kept only where PHI is allowed. */
+  const STATE_TXT = { act: "To book", wait: "Waiting", done: "Scheduled", cm: "Started: update Case Management", started: "Started", closed: "Not proceeding" };
+  function accessReport() {
+    const c = S.cfg, T = todayS(), hasT = S.grids.length > 0, D = dmAll(), W = D.weeks, BK = wkBk(), AW = apprW();
+    const dt = v => v == null ? "" : { d: v }, pc = v => v == null ? "" : { p: v }, r1 = v => Math.round(v * 10) / 10, sum4 = a => a.slice(0, 4).reduce((x, y) => x + y, 0);
+    const w4 = W[4] || W[W.length - 1], open4 = W.slice(0, 4).reduce((a, w) => a + w.open, 0), awSet = new Set(AW.map(x => x.c.mrn));
+    const startOf = mrn => C.futureOf(S.A, mrn, T - 1).find(a => /start/i.test(a.event)) || null;
+    const hasCs = !!S.raw.tables?.consults;
+    const summary = { title: "Summary", head: ["Measure", "Value", "Detail"], rows: [
+      ["Scheduled out 4 weeks", pc(w4?.thruPct), w4 ? `${w4.thruN} of ${w4.den} booked the week of ${C.fmtD(w4.start)} or later` : ""],
+      ["Projected need, next 4 weeks", Math.round(D.proj4), "visits still to book if everyone keeps their cadence"],
+      ["Open slots, next 4 weeks", hasT ? open4 : "", hasT ? "" : "no template yet"],
+      ["Avg need a week", Math.round(D.perWeek), `${plural(W[0] ? W[0].den : 0, "active patient")} at their protocols`],
+      ["Approved not scheduled", hasCs ? AW.length : "", hasCs ? (n => `${n} already ${n === 1 ? "has" : "have"} a start booked`)(AW.filter(x => x.booked).length) : "no Consults tab"],
+      ["Consults scheduled", BK.any ? BK.ahead : "", BK.any ? `${BK.ahead4} in the next 4 weeks` : "no IVK consults on the report yet"]] };
+    const weeks = { title: "Week by week", note: "Sunday to Saturday, every active patient. Booked: IVK visits and holds on the list from today. Consults and starts count the whole week; held starts are in the Index planner, not in NextGen yet.",
+      head: ["Week of", "Avg need", "Booked", "Template slots", "Of the template", "Scheduled through", "Patients booked through", "Projected need", "Consults", "Starts", "Held starts", "Closed"],
+      rows: W.map(w => { const b = BK.weeks[w.w] || {}; return [dt(w.start), r1(w.expect), w.listed, hasT ? w.slots : "", hasT && w.slots ? pc(w.listed / w.slots) : "", pc(w.thruPct), `${w.thruN} of ${w.den}`, w.projNeed, BK.any ? b.consults || 0 : "", b.starts || 0, b.held || 0, shutWeek(w.start)]; }) };
+    const protos = { title: "By protocol", note: "Every active patient (not paused).", head: ["Protocol", "Patients", "Visits a week", "Nothing booked"],
+      rows: D.groups.map(g => [g.freq, g.n, r1(g.perWeek), g.unsched]) };
+    const pts = { title: "Patients by protocol", head: ["Protocol", "Patient", "MRN", "Next visit", "Next is a hold", "Needed, 4 weeks", "Booked, 4 weeks", "Booked through"],
+      rows: D.groups.flatMap(g => g.rows.slice().sort((a, b) => (a.next?.date ?? 1e9) - (b.next?.date ?? 1e9) || a.code.localeCompare(b.code))
+        .map(r => [g.freq, r.code, r.mrn, dt(r.next?.date), r.next?.hold ? "Yes" : "", r1(sum4(r.expect)), sum4(r.booked), dt(r.thru)])) };
+    const miss = { title: "No-shows and late cancels", note: "Counts back from today, only as far as the uploaded appointment list goes.",
+      head: ["Patient", "MRN", "No-shows 30 days", "No-shows 60 days", "No-shows 90 days", "Late cancels 30 days", "Late cancels 60 days", "Late cancels 90 days", "Kaiser/VA"],
+      rows: C.missWindows(S.ML, T).map(x => [x.code || "", x.mrn, ...x.ns, ...x.lc, x.exempt === "kpva" ? "No fee" : ""]) };
+    const post = { title: "Post-index step-downs", head: ["Patient", "MRN", `Treatment ${D.N}`, "Booked or projected", "Then", "Frees visits a week", "From"],
+      rows: D.transitions.map(r => { const proj = !(r.p && C.treatments(r.p, S.A)[D.N - 1]); return [r.code, r.mrn, dt(r.idxEnd), proj ? "Projected" : "Booked", c.AfterIndex, r1(Math.max(0, D.perIdx - r.afterRate)), dt(r.idxEnd + 1)]; }) };
+    const WL = new Map((S.WL?.list || []).map(w => [w.mrn, w])), byStage = new Map();
+    for (const x of S.CS) { const k = x.stage || "(no stage)", g = byStage.get(k) || { n: 0, days: 0, dn: 0 }; g.n++; if (x.days != null) { g.days += x.days; g.dn++; } byStage.set(k, g); }
+    const stages = { title: "Pipeline by stage", head: ["Stage", "Patients", "Avg days in stage"],
+      rows: [...byStage.entries()].sort((a, b) => a[0].localeCompare(b[0], undefined, { numeric: true })).map(([k, g]) => [k, g.n, g.dn ? r1(g.days / g.dn) : ""]) };
+    const pipe = { title: "Consult pipeline", note: "Every row on the Consults tab. Waitlist place and Waiting on as the Waitlist page has them.",
+      head: ["Waitlist place", "Patient", "MRN", "Location", "Referral", "Consult", "Provider", "Stage", "Days in stage", "Approved, not started", "Waiting on", "Start booked", "Start kept", "Where it stands", "Next step"],
+      rows: S.CS.slice().sort((a, b) => (WL.get(a.mrn)?.pos ?? 1e9) - (WL.get(b.mrn)?.pos ?? 1e9) || (a.consult ?? 1e9) - (b.consult ?? 1e9) || String(a.code).localeCompare(String(b.code))).map(x => {
+        const w = WL.get(x.mrn), st = x.mrn ? startOf(x.mrn) : null;
+        return [w ? w.pos : "", x.code || "", x.mrn || "", x.loc, dt(x.ref), dt(x.consult), x.provider || "", x.stage, x.days ?? "", x.mrn && awSet.has(x.mrn) ? "Yes" : "", w ? WAIT_TXT[w.on] : "", dt(st?.date), dt(x.kept), STATE_TXT[x.state] || "", x.flag || ""]; }) };
+    return { title: `${c.Clinic ? `${c.Clinic} ` : ""}IVK Access report`, clinic: c.Clinic || "", asOf: `${C.fmtDay(T)}, ${C.fmtT(nowMin())}`, by: S.name || "",
+      sections: [summary, weeks, protos, pts, miss, post, stages, pipe] };
+  }
+  const repFile = ext => `${S.cfg.Clinic ? `${S.cfg.Clinic} ` : ""}IVK Access report ${C.isoOf(todayS())}.${ext}`;
+  /* one sheet per section: dates as dates, shares as percents, the header row frozen */
+  async function accessXlsx() {
+    if (!(await loadXLSX())) return toast("The spreadsheet writer didn’t load. Check the connection and try again.", true);
+    const R = accessReport(), wb = XLSX.utils.book_new(), shown = v => v && typeof v === "object" ? ("d" in v ? "Mmm 00, 0000" : "100%") : String(v ?? "");
+    for (const sec of R.sections) {
+      const aoa = [sec.head, ...sec.rows.map(r => r.map(v => v && typeof v === "object" ? ("d" in v ? C.dateOf(v.d) : v.p) : v))];
+      if (sec.note) aoa.push([], [sec.note]);
+      const ws = XLSX.utils.aoa_to_sheet(aoa, { cellDates: true });
+      sec.rows.forEach((r, i) => r.forEach((v, j) => { const cl = ws[XLSX.utils.encode_cell({ r: i + 1, c: j })]; if (cl && v && typeof v === "object") cl.z = "d" in v ? "mmm d, yyyy" : "0%"; }));
+      ws["!cols"] = sec.head.map((h, j) => ({ wch: Math.min(40, Math.max(String(h).length, ...sec.rows.map(r => shown(r[j]).length)) + 2) }));
+      XLSX.utils.book_append_sheet(wb, ws, sec.title.slice(0, 31));
+    }
+    XLSX.utils.book_append_sheet(wb, XLSX.utils.aoa_to_sheet([[R.title], [`As of ${R.asOf}${R.by ? `, by ${R.by}` : ""}`], ["Contains patient codes and MRNs: keep it only in MHS OneDrive or SharePoint, not email or personal storage."]]), "About");
+    const out = XLSX.write(wb, { bookType: "xlsx", type: "array" }), a = document.createElement("a");
+    a.href = URL.createObjectURL(new Blob([out], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" })); a.download = repFile("xlsx"); document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+    toast(`${repFile("xlsx")} downloaded. It has MRNs: keep it in MHS OneDrive or SharePoint.`);
+  }
+  /* the print view: the same sections as tables in the forms frame, every cell already worded */
+  function accessPrint() {
+    const R = accessReport(), cell = v => v == null || v === "" ? "" : typeof v === "object" ? ("d" in v ? C.fmtD(v.d) : `${Math.round(v.p * 100)}%`) : String(v);
+    openForms({ parts: { report: true }, report: Object.assign({}, R, { sections: R.sections.map(sec => Object.assign({}, sec, { rows: sec.rows.map(r => r.map(cell)) })) }) });
   }
   /* a closure in the week starting on this Sunday: its note, else its dates */
   const shutWeek = a => { const e = (S.EX || []).find(x => x.closed && x.from <= a + 6 && x.to >= a); return e ? (e.note || exDates(e)) : ""; };
@@ -1152,7 +1223,7 @@
   }
   /* the four Access pages */
   const accessChips = () => { const B = badges(); return `<div class="chips achips" role="group" aria-label="Access">${ACCESS.map(([k, l]) => { const b = B[k];
-    return `<button class="chip" data-act="nav" data-v="${k}" aria-pressed="${S.view === k}">${l}${k === "template" ? `<span class="n">${S.grids.length}</span>` : b && k !== "access" ? `<span class="n">${b.n}</span>` : ""}</button>`; }).join("")}</div>`; };
+    return `<button class="chip" data-act="nav" data-v="${k}" aria-pressed="${S.view === k}">${l}${k === "template" ? `<span class="n">${S.grids.length}</span>` : b && k !== "access" ? `<span class="n">${b.n}</span>` : ""}</button>`; }).join("")}${S.view === "access" || S.view === "consults" ? `<button class="btn ghost sm line axp" data-act="accExport">Export report</button>` : ""}</div>`; };
   /* Time off and coverage: a provider's PTO takes their template out on those days (an exception by date); a covering provider can
      work the absent provider's template (pre-filled) or their own */
   const exLabel = n => { if (n === C.CLOSED) return "The clinic"; const g = S.grids.find(x => x.key === TM.provKey(n)); return g ? TM.nameOf(g) : C.provFull(n) || n; };
@@ -1789,6 +1860,11 @@
     return `<!doctype html><html><body style="margin:0;padding:18px;background:#fff"><div style="font:12pt/1.4 ${FF};color:#000"><div style="text-align:center;padding:0 0 14px;border-bottom:2px solid #F8902A;margin-bottom:16px"><img src="${logo}" width="200" alt="Mindful Health Solutions" style="max-width:60%;height:auto"></div>${paras.replace("{schedule}", () => sched).replace("{map}", () => mapImg)}</div></body></html>`;
   }
   const MODALS = {
+    accExport() {
+      return `<h2 id="mh">Export the Access report</h2><p class="sub">The Demand page’s breakdowns (the tiles, week by week with consults and starts, by protocol and its patients, no-shows and late cancels, post-index step-downs) and the consult pipeline (by stage, then every Consults tab row with its waitlist place).</p>
+        <div class="msg warn">It has patient codes and MRNs. Save the file only to MHS OneDrive or SharePoint, print only to a clinic printer, and don’t email it outside MHS.</div>
+        <div class="foot"><button class="btn mute" data-act="close">Cancel</button><button class="btn ghost" data-act="accPrint">Print or PDF</button><button class="btn primary inl" data-act="accXlsx">Excel file</button></div>`;
+    },
     startPreview: () => { const m = S.m, c = S.cfg, subj = C.fill(String(m.subject || ""), { clinic: c.Clinic, patient: "SAMJOR" });
       return `<h2 id="mh">Start email preview</h2><p class="sub muted">A sample patient (SAMJOR, MRN 000000) and sample visits. The real email fills in the patient's own name, schedule and first visit.</p>
         <div class="mailmeta"><div><span>Subject</span><b>${esc(subj) || "(no subject)"}</b></div>${C.txt(c.StartCc) ? `<div><span>CC</span>${esc(c.StartCc)}</div>` : ""}${C.txt(c.StartBcc) ? `<div><span>BCC</span>${esc(c.StartBcc)}</div>` : ""}</div>
@@ -2172,7 +2248,7 @@
   function openForms(data) {
     closeForms();
     const wrap = document.createElement("div"); wrap.className = "formwrap"; wrap.id = "formwrap";
-    wrap.innerHTML = `<iframe title="Forms" src="forms.html?v=8"></iframe>`; document.body.appendChild(wrap);
+    wrap.innerHTML = `<iframe title="Forms" src="forms.html?v=9"></iframe>`; document.body.appendChild(wrap);
     const fr = wrap.querySelector("iframe");
     const onMsg = ev => { if (ev.source !== fr.contentWindow || ev.origin !== location.origin) return; const d = ev.data || {};
       if (d.forms === "ready") fr.contentWindow.postMessage({ forms: "data", data }, location.origin);
@@ -2433,6 +2509,9 @@
     await write("Saving…", () => Store.savePt(p.mrn, ptPatch(p, { [k]: on ? "TRUE" : "FALSE" })), `${p.code}: ${words[on ? 0 : 1].toLowerCase()}.`);
   }
   const ACT = {
+    accExport: () => openModal("accExport"),
+    accXlsx: () => { closeModal(); accessXlsx(); },
+    accPrint: () => { closeModal(); accessPrint(); },
     nav: e => { S.view = e.dataset.v === "access" && inAccess(S.view) ? "access" : e.dataset.v === "access" ? (S.acLast || "access") : e.dataset.v; if (inAccess(S.view)) S.acLast = S.view; S.pv = null; render(); },
     async reload() { S.reading = true; render(); try { await refresh(true); toast(S.err ? S.err : `Up to date. Read ${plural(S.list.length, "visit")} today and ${plural(S.P.length, "patient")} at ${hm()}.`, !!S.err); } finally { S.reading = false; render(); } },
     theme: () => { S.theme = S.theme === "dark" ? "light" : "dark"; LS.set("ivkTheme", S.theme); document.documentElement.dataset.theme = S.theme; S.themeSwap = true; render(); S.themeSwap = false; },

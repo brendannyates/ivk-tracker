@@ -1449,15 +1449,18 @@
   /* An IVK consult on the wider report (it goes to tblIvkOther, since isIvkVisit leaves consults out). Esketamine doesn't match. */
   const isIvkConsult = ev => /consult/i.test(txt(ev)) && /\b(iv ?ketamine|ivk|ketamine)\b/i.test(txt(ev));
   const liveAppt = a => !isCancelled(a) && !/no ?show/i.test(a.status);
-  /* o = { appts, others, today, weeks, cfg }: per week (Sunday to Saturday, the whole week, this one too) the IVK consults at this
-     clinic (a blank location counts as ours) and the treatment starts on the Appt List, cancelled and no-shows aside; and the
+  /* o = { appts, others, holds, listAt, today, weeks, cfg }: per week (Sunday to Saturday, the whole week, this one too) the IVK
+     consults at this clinic (a blank location counts as ours) and the treatment starts on the Appt List or held (held: how many of
+     those are holds), cancelled and no-shows aside; and the
      consults from today on (ahead), and in the next 4 weeks (ahead4) */
   function weekBookings(o) {
     const w0 = weekStart(o.today), W = o.weeks || 12, cfg = o.cfg || {};
     const CO = (o.others || []).filter(x => x.date != null && isIvkConsult(x.event) && liveAppt(x) && isOurs(x.loc, cfg));
     const ST = (o.appts || []).filter(a => isStartEv(a.event) && liveAppt(a));
+    /* a start held in the Index planner (treatment 1) that NextGen doesn't have yet counts too */
+    const HS = (o.holds || []).filter(h => h.n === 1 && holding(h, o.appts || [], o.listAt));
     const inW = (L, w) => L.filter(x => x.date >= w0 + 7 * w && x.date < w0 + 7 * w + 7).length;
-    return { weeks: Array.from({ length: W }, (_, w) => ({ w, start: w0 + 7 * w, consults: inW(CO, w), starts: inW(ST, w) })),
+    return { weeks: Array.from({ length: W }, (_, w) => ({ w, start: w0 + 7 * w, consults: inW(CO, w), starts: inW(ST, w) + inW(HS, w), held: inW(HS, w) })),
       ahead: CO.filter(x => x.date >= o.today).length, ahead4: CO.filter(x => x.date >= o.today && x.date < w0 + 28).length, any: CO.length > 0 };
   }
   /* Consults tab rows approved (the stage says Approved, not "Not Yet Approved") whose patient hasn't started: no kept start since

@@ -1,6 +1,15 @@
 {
   "updates": [
     {
+      "id": "2026-11-12-access-report",
+      "date": "2026-11-12",
+      "bullets": [
+        "New: Export report on Access (Demand and Waitlist) saves the Access breakdowns and the consult pipeline as an Excel file, or opens them to print or save as a PDF. It has MRNs, so keep it in MHS OneDrive or SharePoint.",
+        "Changed: Week by week shows a starts pill on every week (0 when there are none), counting starts held in the Index planner too. The consults pill shows once IVK consults are on the NextGen report.",
+        "Changed: In full screen, this bell sits next to the clinic name at the top left and stays there."
+      ]
+    },
+    {
       "id": "2026-11-08-patient-wide",
       "date": "2026-11-08",
       "bullets": [
