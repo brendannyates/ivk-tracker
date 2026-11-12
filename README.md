@@ -12,7 +12,8 @@ The hosted files hold no patient data. Patients only ever appear as LASFIR codes
 ## Screens
 
 The rail: Today, Schedule, Access, Patients, Availability, then Settings at the bottom (above Exit full screen in full screen). In
-the task pane, full screen sits at the top right of every page with refresh and dark mode.
+the task pane, full screen sits at the top right of every page with refresh and dark mode. In full screen the Dev updates bell
+sits right of the clinic name at the top left and doesn't move (dev-updates.js, byte-identical across the MHS add-ins).
 
 - **Today**: In treatment, Checked in, Still to come and Checked out, and one visit card with the next step. A visit is
   **Checked in**, then **In treatment**, then **Checked out**; waiting time isn't tracked, so nothing on Today is red. The chair map
@@ -31,15 +32,17 @@ the task pane, full screen sits at the top right of every page with refresh and 
     protocol, Settings, 1x per week; PRN and blank none), **Booked** (IVK visits and holds on the list) out of the template's IVK
     slots, **Scheduled Through** (the share of active patients with a protocol, not PRN or paused, booked that week or later), and
     **Projected Need** (the visits still to book if each patient keeps their cadence past their last booked visit; index patients
-    weekly after treatment 6). Under each week, small pills count the **consults** (IVK consults at this clinic on the wider
-    NextGen report, kept on tblIvkOther with their location) and the treatment **starts** on the list that week, cancelled and
-    no-shows aside. The tiles lead with the share scheduled out 4 weeks; the clinic decides what share it wants before
+    weekly after treatment 6). Under each week, small pills count the treatment **starts** (on the list or held in the Index
+    planner; shown on every week, 0 muted) and, once the wider NextGen report has them, the **consults** (IVK consults at this
+    clinic, kept on tblIvkOther with their location), cancelled and no-shows aside. The tiles lead with the share scheduled out 4 weeks; the clinic decides what share it wants before
     starting new patients. **Approved not scheduled** counts Consults tab rows whose stage says Approved (not "Not Yet Approved")
     and whose patient hasn't started, noting any that already have a start booked; **Consults scheduled** counts IVK consults
     from today on. **By protocol** below keeps the Unscheduled only / Everyone / Scheduled only filter and Include paused.
     **No-shows and late cancels** lists patients by count in the last 30, 60 and 90 days (each one, with its exemption, folded
     away below). **Projected Access Post-Index** lists each index patient with the week they step down and the visits a week
-    that frees.
+    that frees. **Export report** (on Demand and Waitlist) saves all of this plus the consult pipeline (by stage, then every
+    Consults tab row with its waitlist place, waiting on, start booked and next step) as an Excel file, one sheet per section, or
+    opens it to print or save as a PDF (landscape). It has LASFIR codes and MRNs: MHS OneDrive or SharePoint only.
   - **Waitlist** (below), **Index planner** (below) and **Templates** (the provider grids; the providers are toggled at the top
     right of the template card).
 - **Patients**: a table of everyone on the Master Patient Tracker that sorts by any column, ascending or descending (press the
