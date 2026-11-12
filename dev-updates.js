@@ -70,7 +70,12 @@
   function place() {
     const el = S.el, panel = el.querySelector(".du-panel"); if (panel.hidden) return;
     const r = el.querySelector(".du-bell").getBoundingClientRect(), w = Math.min(360, innerWidth - 24);
-    panel.style.left = `${Math.max(12, Math.min(r.left, innerWidth - w - 12))}px`; panel.style.top = `${r.bottom + 8}px`;
+    const x = Math.max(12, Math.min(r.left, innerWidth - w - 12)), y = r.bottom + 8;
+    panel.style.left = `${x}px`; panel.style.top = `${y}px`;
+    /* an ancestor with a transform, filter or backdrop-filter makes "fixed" relative to that ancestor, not the window: measure where
+       it landed and shift it back by the difference */
+    const p = panel.getBoundingClientRect(), dx = x - p.left, dy = y - p.top;
+    if (Math.abs(dx) > 0.5 || Math.abs(dy) > 0.5) { panel.style.left = `${x + dx}px`; panel.style.top = `${y + dy}px`; }
   }
   function avoid() {
     P.raf = 0; if (!S.el) return;
