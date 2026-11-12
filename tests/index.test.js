@@ -135,8 +135,10 @@ test("a hold marked booked stops keeping its time once a later appointment list 
 test("the wider report: IVK visits stay on the Appt List, the rest are other visits with no patient on them", () => {
   assert.ok(C.isIvkVisit("IV Ketamine Follow Up") && C.isIvkVisit("IV Ketamine Treatment Start"));
   assert.ok(!C.isIvkVisit("IV Ketamine Consult") && !C.isIvkVisit("Telepsych") && !C.isIvkVisit("TMS Follow Up"));
-  const o = C.otherRows([C.OTHER_COLS, [C.isoOf(WED), "2:00 PM", RIV, "Telepsych", "Expected"]]);
-  assert.deepEqual(o[0], { date: WED, time: 840, provider: RIV, event: "Telepsych", status: "Expected" });
+  const OLD_OTHER = ["Date", "Time", "Provider", "Event", "Status"];
+  const o = C.otherRows([C.OTHER_COLS, [C.isoOf(WED), "2:00 PM", RIV, "Telepsych", "Expected"]]), o2 = C.otherRows([OLD_OTHER, [C.isoOf(WED), "2:00 PM", RIV, "Telepsych", "Expected"]]);
+  assert.deepEqual(o[0], { date: WED, time: 840, provider: RIV, event: "Telepsych", status: "Expected", loc: "" });
+  assert.equal(o2[0].loc, "", "an older table with no Location column reads as blank (this clinic)");
   assert.equal(C.flagRows([C.FLAG_COLS, ["990201", "AAABBB", "TRUE", "Sam", ""], ["990202", "CCCDDD", "FALSE", "Sam", ""]]).get("990201"), true);
 });
 

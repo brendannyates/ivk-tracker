@@ -183,3 +183,29 @@ test("no-shows and late cancels by patient over 30, 60 and 90 days", () => {
   const W = C.missWindows(L, T);
   assert.deepEqual(W.map(x => [x.code, x.ns, x.lc, x.exempt]), [["AAA", [1, 1, 2], [0, 1, 1], ""], ["BBB", [0, 0, 0], [1, 1, 1], "kpva"]]);
 });
+
+test("Access weeks: IVK consults at this clinic and treatment starts booked each week; cancelled, no-shows and esketamine aside", () => {
+  const A = C.appts([AP_H, ap("990301", "ONEPAT", T + 1, 540, "IV Ketamine Start"), ap("990302", "TWOPAT", T + 8, 540, "IV Ketamine Start"), ap("990303", "THRPAT", T + 8, 600),
+    ["990304", "", T + 9, 540 / 1440, RIV, "IV Ketamine Start", "Cancelled", "Castro Street", "FOUPAT", ""]]);
+  const O = C.otherRows([C.OTHER_COLS, [C.isoOf(T + 1), "10:00 AM", RIV, "IVK Consult", "Expected", "Castro Street"], [C.isoOf(T + 2), "11:00 AM", RIV, "IV Ketamine Consult", "Expected", ""],
+    [C.isoOf(T + 2), "1:00 PM", RIV, "IV Ketamine Consult", "No Show", "Castro Street"], [C.isoOf(T + 3), "1:00 PM", RIV, "Esketamine Consult", "Expected", "Castro Street"],
+    [C.isoOf(T + 8), "1:00 PM", RIV, "IVK Consult", "Expected", "Oakland"], [C.isoOf(T + 15), "1:00 PM", RIV, "TMS Consult", "Expected", "Castro Street"]]);
+  const B = C.weekBookings({ appts: A, others: O, today: T, weeks: 4, cfg: Object.assign({}, cfg, { Clinic: "Castro" }) });
+  assert.deepEqual(B.weeks.map(w => [w.consults, w.starts]), [[2, 1], [0, 1], [0, 0], [0, 0]], "Oakland's consult, the no-show, esketamine and TMS left out");
+  assert.equal(B.ahead, 2); assert.equal(B.ahead4, 2); assert.ok(B.any);
+  assert.ok(!C.weekBookings({ appts: A, others: [], today: T, weeks: 2, cfg }).any, "no consults on the report");
+});
+
+test("approved not scheduled: Approved on the Consults tab and not started; Not Yet Approved, started and closed aside", () => {
+  const H = ["Location", "Referral Date", "Start Date", "Patient", "Patient MRN", "Consult Date", "Provider", "Patient Journey Stage", "Individual PJ Stage", "Days in current Stage", "Kept Start"];
+  const CS = C.consults([H, ["Castro", "", "", "Alp, Ann", "990401", T - 20, RIV, "4. PA Approved - Not Yet Scheduled", "", 5, ""],
+    ["Castro", "", "", "Bet, Bo", "990402", T - 20, RIV, "4. PA Approved - Not Yet Scheduled", "", 5, ""],
+    ["Castro", "", "", "Gam, Gil", "990403", T - 20, RIV, "3. PA Submitted - Not Yet Approved", "", 5, ""],
+    ["Castro", "", "", "Del, Dee", "990404", T - 30, RIV, "4. PA Approved - Not Yet Scheduled", "", 5, ""],
+    ["Castro", "", "", "Eps, Eve", "990405", T - 30, RIV, "7. Not Proceeding", "", 5, ""]], T);
+  const A = C.appts([AP_H, ap("990402", "BETBO", T + 3, 540, "IV Ketamine Start"), ["990404", "", T - 5, 540 / 1440, RIV, "IV Ketamine Start", "Kept", "Castro Street", "DELDEE", ""]]);
+  C.consultStarts(CS, A, new Map(), cfg);
+  const W = C.approvedWaiting(CS, A, T);
+  assert.deepEqual(W.map(x => x.c.mrn), ["990401", "990402"], "DELDEE started; GAMGIL isn't approved; EPSEVE is closed");
+  assert.equal(W.find(x => x.c.mrn === "990402").booked.date, T + 3, "BETBO's start is booked, the stage lags");
+});

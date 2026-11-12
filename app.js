@@ -1087,19 +1087,26 @@
       <button class="chip" data-act="dmPaused" aria-pressed="${o.paused}">Include paused</button></div>`;
     const tile = (l, v, s, cls) => `<div class="stat${cls ? ` ${cls}` : ""}"><small>${l}</small><b>${v}</b>${s ? `<span>${s}</span>` : ""}</div>`;
     const p4 = D.proj4, open4 = sumW("open", 4);
+    /* consults and starts by week (the report's IVK consults, the list's starts); the Consults tab's approved patients not started */
+    const BK = memo("wkBk", () => C.weekBookings({ appts: S.A, others: S.others, today: T, weeks: W.length, cfg: c }));
+    const AW = memo("apprW", () => C.approvedWaiting(S.CS, S.A, T)), awB = AW.filter(x => x.booked).length;
     const stats = `<div class="stats">${tile("Scheduled out 4 weeks", pct(w4?.thruPct), w4 ? `${w4.thruN} of ${w4.den} booked the week of ${C.fmtD(w4.start)} or later` : "")}
       ${tile("Projected need, next 4 weeks", r0(p4), "visits still to book if everyone keeps their cadence")}
       ${hasT ? tile("Open slots, next 4 weeks", String(open4), open4 >= p4 ? `${r0(open4 - p4)} left after the projected need` : `${r0(p4 - open4)} short of the projected need`, open4 < p4 ? "warn" : "") : tile("Open slots", "—", "no template yet")}
-      ${tile("Avg need a week", r0(D.perWeek), `${plural(den, "patient")} at their protocols`)}</div>`;
-    /* week by week: average need at current protocols, booked against the template, share scheduled through, projected need */
-    const wRow = w => { const sw = shutWeek(w.start);
-      return `<tr><td>${w.w === 0 ? "This week" : C.fmtD(w.start)}${sw ? `<small>Closed ${esc(sw)}</small>` : ""}</td><td>${n1(w.expect)}</td>
+      ${tile("Avg need a week", r0(D.perWeek), `${plural(den, "patient")} at their protocols`)}
+      ${S.raw.tables?.consults ? tile("Approved not scheduled", String(AW.length), `approved on the Consults tab, not started${awB ? `; ${awB} already ${awB === 1 ? "has" : "have"} a start booked` : ""}`) : tile("Approved not scheduled", "—", "no Consults tab")}
+      ${tile("Consults scheduled", BK.any ? String(BK.ahead) : "—", BK.any ? `IVK consults from today, ${BK.ahead4} in the next 4 weeks` : "no IVK consults on the report yet")}</div>`;
+    /* week by week: average need at current protocols, booked against the template, share scheduled through, projected need; the
+       IVK consults and treatment starts booked that week as pills under the week */
+    const pill = (n, cls, one, many) => n ? `<span class="wpill ${cls}">${n} ${n === 1 ? one : many}</span>` : "";
+    const wRow = w => { const sw = shutWeek(w.start), b = BK.weeks[w.w] || {}, pl = pill(b.consults, "co", "consult", "consults") + pill(b.starts, "st", "start", "starts");
+      return `<tr><td>${w.w === 0 ? "This week" : C.fmtD(w.start)}${sw ? `<small>Closed ${esc(sw)}</small>` : ""}${pl ? `<span class="wpills">${pl}</span>` : ""}</td><td>${n1(w.expect)}</td>
         <td>${w.listed}${hasT ? ` / ${w.slots}` : ""}${hasT && w.slots ? `<small>${pct(w.listed / w.slots)} of the template</small>` : ""}</td>
         <td>${pct(w.thruPct)}<small>${w.thruN} of ${w.den}</small></td><td${w.projNeed ? ' class="flag"' : ""}>${w.projNeed || "—"}</td></tr>`; };
     const weeks = `<section class="card dmt"><div class="lh"><h2>Week by week</h2><span>Sunday to Saturday, every active patient</span></div><div class="tscroll"><table class="tt dm">
       <thead><tr><th>Week of</th><th>Avg Need</th><th>Booked${hasT ? " / slots" : ""}</th><th>Scheduled Through</th><th>Projected Need</th></tr></thead>
       <tbody>${W.map(wRow).join("")}</tbody></table></div>
-      <p class="note"><b>Avg Need</b>: each active patient’s protocol over the week (index ${c.IndexPerWeek} a week to treatment ${D.N}, then ${esc(c.AfterIndex)}; PRN and blank need none). <b>Booked</b>: IVK visits and holds on the list${hasT ? ", out of the template’s IVK slots that week" : ""}. <b>Scheduled Through</b>: active patients with a protocol (not PRN, not paused) booked that week or later. <b>Projected Need</b>: the visits still to book if each patient keeps their cadence past their last booked visit (index patients ${esc(c.AfterIndex)} after treatment ${D.N}).</p></section>`;
+      <p class="note"><b>Avg Need</b>: each active patient’s protocol over the week (index ${c.IndexPerWeek} a week to treatment ${D.N}, then ${esc(c.AfterIndex)}; PRN and blank need none). <b>Booked</b>: IVK visits and holds on the list${hasT ? ", out of the template’s IVK slots that week" : ""}. <b>Scheduled Through</b>: active patients with a protocol (not PRN, not paused) booked that week or later. <b>Projected Need</b>: the visits still to book if each patient keeps their cadence past their last booked visit (index patients ${esc(c.AfterIndex)} after treatment ${D.N}). The pills under each week: <b>consults</b>, IVK consults at ${esc(c.Clinic || "this clinic")} on the uploaded report; <b>starts</b>, treatment starts on the list (the whole week, cancelled and no-shows aside).</p></section>`;
     /* by protocol: one line each; press it for the patients on it */
     const G = DP.groups, open = S.dmOpen, sum4 = a => a.slice(0, 4).reduce((x, y) => x + y, 0);
     const pRow = r => `<div class="row"><span class="p">${esc(r.code)}${mrnTag(r.mrn)}</span>
@@ -3107,7 +3114,7 @@
     catch (e) { console.error(e); return toast("That file couldn’t be read. Save it from Excel as .xlsx and upload that, or upload the NextGen export unchanged.", true); }
     if (!rows || !rows.length) return toast("This doesn’t look like a NextGen appointment listing (no MRN, Appointment Date and Status columns).", true);
     /* a wider report (the providers' whole schedule) is split: IVK visits for the Appt List tab, the others kept with no patient on them */
-    const ivk = rows.filter(r => C.isIvkVisit(r[5])), other = rows.filter(r => !C.isIvkVisit(r[5])).map(r => [C.isoOf(r[2]), r[3] === "" ? "" : C.fmtT(Math.round(r[3] * 1440)), r[4], r[5], r[6]]);
+    const ivk = rows.filter(r => C.isIvkVisit(r[5])), other = rows.filter(r => !C.isIvkVisit(r[5])).map(r => [C.isoOf(r[2]), r[3] === "" ? "" : C.fmtT(Math.round(r[3] * 1440)), r[4], r[5], r[6], r[7]]);
     if (!ivk.length) return toast("This report has no IV ketamine visits. Check the NextGen report's filters.", true);
     /* a report with the neighbouring clinics in it: each location is this clinic's (the Locations setting, else the ones naming the
        clinic) or another clinic's. A report with one location is all this clinic's unless Locations says otherwise. */

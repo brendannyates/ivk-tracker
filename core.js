@@ -515,10 +515,11 @@
   const dayNum = s => { const i = ["mo", "tu", "we", "th", "fr"].indexOf(norm(s).slice(0, 2)); return i < 0 ? null : i + 1; };
   const sameProv = (a, b) => TM.provKey(a) === TM.provKey(b);
   /* tblIvkOther: the providers' other NextGen visits (telehealth, TMS follow-ups, consults) from the wider report, with no patient
-     on them: Date | Time | Provider | Event | Status. They take the template cell they start in, so a flex post check booked for a
-     tele visit can't be an index post check. */
-  const OTHER_COLS = ["Date", "Time", "Provider", "Event", "Status"];
-  const otherRows = values => byHeader(values).rows.map(x => ({ date: toSerial(x.get("date")), time: toMin(x.get("time")), provider: txt(x.get("provider")), event: txt(x.get("event")), status: txt(x.get("status")) }))
+     on them: Date | Time | Provider | Event | Status | Location. They take the template cell they start in, so a flex post check
+     booked for a tele visit can't be an index post check. Location (added later, blank on older uploads) keeps other clinics' IVK
+     consults out of the Access counts. */
+  const OTHER_COLS = ["Date", "Time", "Provider", "Event", "Status", "Location"];
+  const otherRows = values => byHeader(values).rows.map(x => ({ date: toSerial(x.get("date")), time: toMin(x.get("time")), provider: txt(x.get("provider")), event: txt(x.get("event")), status: txt(x.get("status")), loc: txt(x.get("location")) }))
     .filter(o => o.date != null && o.time != null);
   /* tblIvkExceptions: a provider's time off (PTO) on their template, by date. Id | Provider | From | To | Coverage | UseTemplate |
      Note | Status | By | Updated. On those days the provider's template slots aren't offered. With Coverage, the covering provider
@@ -1444,6 +1445,27 @@
     return { done, idx, task: done >= at && !(pt && pt.oakTasked != null), tasked: pt?.oakTasked ?? null, back: done >= idx && after.length > 0, after, booked: L.length };
   }
 
+  /* ---------- Access: consults and starts booked each week ---------- */
+  /* An IVK consult on the wider report (it goes to tblIvkOther, since isIvkVisit leaves consults out). Esketamine doesn't match. */
+  const isIvkConsult = ev => /consult/i.test(txt(ev)) && /\b(iv ?ketamine|ivk|ketamine)\b/i.test(txt(ev));
+  const liveAppt = a => !isCancelled(a) && !/no ?show/i.test(a.status);
+  /* o = { appts, others, today, weeks, cfg }: per week (Sunday to Saturday, the whole week, this one too) the IVK consults at this
+     clinic (a blank location counts as ours) and the treatment starts on the Appt List, cancelled and no-shows aside; and the
+     consults from today on (ahead), and in the next 4 weeks (ahead4) */
+  function weekBookings(o) {
+    const w0 = weekStart(o.today), W = o.weeks || 12, cfg = o.cfg || {};
+    const CO = (o.others || []).filter(x => x.date != null && isIvkConsult(x.event) && liveAppt(x) && isOurs(x.loc, cfg));
+    const ST = (o.appts || []).filter(a => isStartEv(a.event) && liveAppt(a));
+    const inW = (L, w) => L.filter(x => x.date >= w0 + 7 * w && x.date < w0 + 7 * w + 7).length;
+    return { weeks: Array.from({ length: W }, (_, w) => ({ w, start: w0 + 7 * w, consults: inW(CO, w), starts: inW(ST, w) })),
+      ahead: CO.filter(x => x.date >= o.today).length, ahead4: CO.filter(x => x.date >= o.today && x.date < w0 + 28).length, any: CO.length > 0 };
+  }
+  /* Consults tab rows approved (the stage says Approved, not "Not Yet Approved") whose patient hasn't started: no kept start since
+     the consult (consultStarts sets kept), not at stage 6, not closed. booked: a start already on the list, the stage lagging. */
+  const isApproved = s => /\bapproved\b/i.test(txt(s)) && !/not (yet )?approved|denied/i.test(txt(s));
+  const approvedWaiting = (CS, A, today) => (CS || []).filter(c => c.mrn && c.state !== "closed" && c.kept == null && isApproved(c.stage) && !isStartedStage(c.stage))
+    .map(c => ({ c, booked: futureOf(A, c.mrn, today - 1).find(a => isStartEv(a.event)) || null }));
+
   /* ---------- waitlist ---------- */
   /* Everyone on the Consults tab still waiting for a treatment start, in line by consult date (or the order set by hand, WaitRank).
      Waiting on: ready (approved, can start), referral (keeps their place until it comes), auth (an appeal can push their start back,
@@ -1626,7 +1648,7 @@
     treatments, txNo, isOak, oakState, WAIT_ON, waitlist, waitMove, provFull, fullName, firstName, scheduleOf, START_TPL, longWhen,
     lasfir, provName, mrnKey, pickRow, eventShort, freqDays, byHeader, patients, appts, isCancelled, visitKey, visitRows, phase, isActive, futureOf, asks,
     lastSeen, tagKey, parseTag, tagStr, tagsOf, askProvider, REPLY_COLS, replyRows, replyAction, repliesDue,
-    today, code, chairState, chairStatus, askDue, chairList, chairCount, needs, loud, consults, isStartedStage, keptStartOf, START_COLS, startKey, startRows, consultStarts, startList, fill, protoWords, arrivalText, askText,
+    today, code, chairState, chairStatus, askDue, chairList, chairCount, needs, loud, consults, isStartedStage, isIvkConsult, weekBookings, isApproved, approvedWaiting, keptStartOf, START_COLS, startKey, startRows, consultStarts, startList, fill, protoWords, arrivalText, askText,
     parseReport, shrink, week, DAYS5, dayNum, sameProv, OTHER_COLS, otherRows, isIvkVisit, FLAG_COLS, flagRows, PLAN_COLS, planRows, HOLD_COLS, holdRows,
     onList, holding, holdState, holdConfirm, EX_COLS, CLOSED, exRows, exFor, closureOn, closureClashes, withExceptions, exClashes, MISS_COLS, missRows, isKpVa, missList, lateKeys, newCancels, missImpact, missByPatient, missWindows, stepDue, daySlots, postCheckSlots, availOf, availText, fits, planIndex, altSlots, capacity, plannerLayout, plannerGrid };
 });
