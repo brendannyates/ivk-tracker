@@ -8,7 +8,7 @@
      tblIvkLog        AB1  Id | Event | Patient | Chair | Message | SentBy | SentAt | Result
      tblIvkPlans      AQ1  MRN | Patient | Start | PerWeek | Weeks | Avail | Note | By | Updated
      tblIvkHolds      BA1  Id | MRN | Patient | Date | Time | Provider | Treatment | Status | PlacedBy | PlacedAt | DoneBy | DoneAt
-     tblIvkOther      BN1  Date | Time | Provider | Event | Status   (the providers' non-IVK visits from the wider report; no patient)
+     tblIvkOther      BN1  Date | Time | Provider | Event | Status | Location   (the providers' non-IVK visits from the wider report; no patient)
      tblIvkFlags      BT1  MRN | Patient | RequiresPostCheck | By | Updated
      tblIvkPatient    BZ1  MRN | Patient | CardOnFile | OkToCollect | Oakland | OakTasked | Avail | AvailEffective | AvailExpires | AvailNote | Away |
                           WaitRank | WaitingOn | Appeal | WaitNote | By | Updated   (per patient: payment flags, Oakland, availability, waitlist)
@@ -557,7 +557,8 @@
   }
   /* one of the add-in's tables replaced whole, as text: the wider report's non-IVK visits (tblIvkOther: Date iso, Time, Provider,
      Event, Status) and the IVK visits at other clinics (tblIvkElsewhere) */
-  const replaceOther = rows => replaceRows("tblIvkOther", C.OTHER_COLS.length, rows);
+  /* an older tblIvkOther has no Location column: it goes on the end first */
+  const replaceOther = async rows => { await ensureCols("tblIvkOther", ["Location"]); return replaceRows("tblIvkOther", C.OTHER_COLS.length, rows); };
   const replaceElse = rows => replaceRows("tblIvkElsewhere", C.ELSE_COLS.length, rows);
   async function replaceRows(name, W, rows) {
     return Excel.run(async ctx => {

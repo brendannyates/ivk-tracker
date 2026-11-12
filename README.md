@@ -31,8 +31,12 @@ the task pane, full screen sits at the top right of every page with refresh and 
     protocol, Settings, 1x per week; PRN and blank none), **Booked** (IVK visits and holds on the list) out of the template's IVK
     slots, **Scheduled Through** (the share of active patients with a protocol, not PRN or paused, booked that week or later), and
     **Projected Need** (the visits still to book if each patient keeps their cadence past their last booked visit; index patients
-    weekly after treatment 6). The tiles lead with the share scheduled out 4 weeks; the clinic decides what share it wants before
-    starting new patients. **By protocol** below keeps the Unscheduled only / Everyone / Scheduled only filter and Include paused.
+    weekly after treatment 6). Under each week, small pills count the **consults** (IVK consults at this clinic on the wider
+    NextGen report, kept on tblIvkOther with their location) and the treatment **starts** on the list that week, cancelled and
+    no-shows aside. The tiles lead with the share scheduled out 4 weeks; the clinic decides what share it wants before
+    starting new patients. **Approved not scheduled** counts Consults tab rows whose stage says Approved (not "Not Yet Approved")
+    and whose patient hasn't started, noting any that already have a start booked; **Consults scheduled** counts IVK consults
+    from today on. **By protocol** below keeps the Unscheduled only / Everyone / Scheduled only filter and Include paused.
     **No-shows and late cancels** lists patients by count in the last 30, 60 and 90 days (each one, with its exemption, folded
     away below). **Projected Access Post-Index** lists each index patient with the week they step down and the visits a week
     that frees.
