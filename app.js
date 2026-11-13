@@ -1138,17 +1138,19 @@
     const den = W[0] ? W[0].den : 0, w4 = W[4] || W[W.length - 1];
     const sub = `${plural(den, "active patient")} with a protocol (PRN and paused aside). ${r0(D.perWeek)} visits a week at their protocols.`;
     const seg = (k, l) => `<button data-act="dmSched" data-v="${k}" aria-pressed="${o.sched === k}">${l}</button>`;
-    /* every tile can be pressed: the 4-week numbers jump to Week by week; Open slots under 10 flips over to list them */
+    /* the tiles can be pressed: the 4-week numbers jump to Week by week. Open slots flips over to list them only when 5 or fewer are
+       left; otherwise it is a plain tile */
     const tile = (l, v, s, cls, act, extra) => `<button type="button" class="stat tap${cls ? ` ${cls}` : ""}" data-act="${act || "dmJump"}"${extra || ""}><small>${l}</small><b>${v}</b>${s ? `<span>${s}</span>` : ""}</button>`;
-    const p4 = D.proj4, open4 = sumW("open", 4), flip = hasT && open4 > 0 && open4 < 10;
+    const p4 = D.proj4, open4 = sumW("open", 4), flip = hasT && open4 > 0 && open4 <= 5;
     if (!flip) S.dmFlip = false;
     /* consults and starts by week (the report's IVK consults, the list's starts); the Consults tab's approved patients not started */
     const BK = wkBk(), AW = apprW(), awB = AW.filter(x => x.booked).length;
     const stats = `<div class="stats">${tile("Scheduled out 4 weeks", pct(w4?.thruPct), w4 ? `${w4.thruN} of ${w4.den} booked the week of ${C.fmtD(w4.start)} or later` : "")}
       ${tile("Projected need, next 4 weeks", r0(p4), "visits still to book if everyone keeps their cadence")}
       ${!hasT ? tile("Open slots", "—", "no template yet", "", "nav", ' data-v="template"')
-        : S.dmFlip ? `<button type="button" class="stat tap back${S.dmFlipAnim ? " flipin" : ""}" data-act="dmFlip" aria-pressed="true"><small>Open slots, next 4 weeks</small><ul class="slist">${openSlots(T, C.weekStart(T) + 28).map(x => `<li><b>${esc(when(x))}</b> ${esc(provLabel(x.provider))}</li>`).join("")}</ul></button>`
-        : tile("Open slots, next 4 weeks", String(open4), (open4 >= p4 ? `${r0(open4 - p4)} left after the projected need` : `${r0(p4 - open4)} short of the projected need`) + (flip ? ". Press to list them" : ""), `${open4 < p4 ? "warn" : ""}${S.dmFlipAnim ? " flipin" : ""}`, flip ? "dmFlip" : "dmJump", flip ? ' aria-pressed="false"' : "")}
+        : S.dmFlip ? (L => `<button type="button" class="stat tap back${S.dmFlipAnim ? " flipin" : ""}" data-act="dmFlip" aria-pressed="true"><small>Open slots, next 4 weeks</small><ul class="slist">${L.slice(0, 4).map(x => `<li>${esc(dshort(x.date))}, ${esc(C.fmtT(x.time))}${S.X.providers > 1 ? ` · ${esc(provLabel(x.provider))}` : ""}</li>`).join("")}</ul>${L.length > 4 ? `<span>and ${L.length - 4} more</span>` : ""}</button>`)(openSlots(T, C.weekStart(T) + 28))
+        : flip ? tile("Open slots, next 4 weeks", String(open4), `${open4 >= p4 ? `${r0(open4 - p4)} left after the projected need` : `${r0(p4 - open4)} short of the projected need`}. Press to list them`, `${open4 < p4 ? "warn" : ""}${S.dmFlipAnim ? " flipin" : ""}`, "dmFlip", ' aria-pressed="false"')
+        : `<div class="stat${open4 < p4 ? " warn" : ""}"><small>Open slots, next 4 weeks</small><b>${open4}</b><span>${open4 >= p4 ? `${r0(open4 - p4)} left after the projected need` : `${r0(p4 - open4)} short of the projected need`}</span></div>`}
       ${tile("Avg need a week", r0(D.perWeek), `${plural(den, "patient")} at their protocols`)}
       ${S.raw.tables?.consults ? tile("Approved not scheduled", String(AW.length), `approved on the Consults tab, not started${awB ? `; ${awB} already ${awB === 1 ? "has" : "have"} a start booked` : ""}`, "", "nav", ' data-v="index"') : tile("Approved not scheduled", "—", "no Consults tab", "", "nav", ' data-v="consults"')}
       ${tile("Consults scheduled", BK.any ? String(BK.ahead) : "—", BK.any ? `IVK consults still expected from today, ${BK.ahead4} in the next 4 weeks` : "no IVK consults on the report yet", "", "csJump")}</div>`;
@@ -1272,6 +1274,83 @@
   function accessPrint() {
     const R = accessReport(), cell = v => v == null || v === "" ? "" : typeof v === "object" ? ("d" in v ? C.fmtD(v.d) : `${Math.round(v.p * 100)}%`) : String(v);
     openForms({ report: Object.assign({}, R, { theme: S.theme === "dark" ? "dark" : "light", sections: R.sections.map(sec => Object.assign({}, sec, { rows: sec.rows.map(r => r.map(cell)) })) }) }, "report.html?v=1");
+  }
+  /* The interactive HTML: one file that opens in any browser with no add-in, styled as the add-in (style.css inline). Every table
+     sorts by any column and filters as you type; every section folds away; a week on Week by week opens to its starts, consults,
+     projected need and open slots. It has LASFIR codes and MRNs, so it is downloaded, never published. */
+  async function accessHtml() {
+    const R = accessReport(), T = todayS(), D = dmAll(), BK = wkBk(), hasT = S.grids.length > 0;
+    const cell = v => v == null || v === "" ? { t: "" } : typeof v === "object" ? ("d" in v ? { t: C.fmtD(v.d), k: v.d } : { t: `${Math.round(v.p * 100)}%`, k: v.p }) : typeof v === "number" ? { t: String(v), k: v } : { t: String(v) };
+    const line = (x, mid, end) => ({ w: when(x), p: mid, mrn: x.mrn || "", m: end });
+    const weeks = D.weeks.map(w => { const b = BK.weeks[w.w] || {};
+      return { starts: (b.SL || []).map(x => line(x, x.code || "—", `${provLabel(x.provider)}${x.hold ? " · Held: book in NextGen" : ""}`)),
+        consults: BK.any ? (b.CL || []).map(x => line(x, x.code || "—", `${provLabel(x.provider)} · ${x.status || "Expected"}`)) : null,
+        proj: D.rows.filter(r => r.proj[w.w] > 0).sort((a, c) => c.proj[w.w] - a.proj[w.w] || a.code.localeCompare(c.code)).map(r => ({ w: `${r.proj[w.w]} to book`, p: r.code, mrn: r.mrn, m: `${r.freq} · ${r.thru != null ? `booked through ${C.fmtD(r.thru)}` : "nothing booked"}` })),
+        open: hasT ? openSlots(w.start, w.start + 7).map(x => ({ w: when(x), p: provLabel(x.provider), mrn: "", m: x.openIndex ? "Open index start" : "Open" })) : null }; });
+    const data = { title: R.title, asOf: R.asOf, by: R.by, weeks, sections: R.sections.map(sec => ({ title: sec.title, kind: sec.kind || "", note: sec.note || "", head: sec.head, pills: sec.pills || {}, rows: sec.rows.map(r => r.map(cell)) })) };
+    let css = ""; try { const r = await fetch("style.css?v=36", { cache: "force-cache" }); if (r.ok) css = (await r.text()).replace(/@font-face\{[^}]*\}/g, ""); } catch (e) { console.error(e); }
+    const json = JSON.stringify(data).replace(/</g, "\\u003c");
+    const html = `<!doctype html><html lang="en" data-theme="light"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${esc(R.title)}</title>
+<style>${css}
+body{margin:0;background:var(--bg);color:var(--ink);font-family:"IBM Plex Sans",system-ui,"Segoe UI",sans-serif}
+.rpage{max-width:1240px;margin:0 auto;padding:24px 28px 48px}.rhead{margin-bottom:12px}.phi{margin:0 0 16px}
+.dmt .lh{cursor:pointer;user-select:none}.dmt .lh h2::before{content:"\\25BE";display:inline-block;margin-right:8px;color:var(--muted);transition:transform .2s}.dmt.shut .lh h2::before{transform:rotate(-90deg)}.dmt.shut .body{display:none}
+.tools{display:flex;gap:8px;align-items:center;margin:10px 0 4px}.tools input{flex:0 1 260px;min-height:34px;padding:4px 10px;border:1.5px solid var(--surface-2);border-radius:10px;font:inherit;background:var(--surface);color:var(--ink)}.tools span{font-size:12.5px;color:var(--muted)}
+.tt th{cursor:pointer;white-space:nowrap}.tt th:hover{color:var(--ink)}.tt th[aria-sort=ascending]::after{content:" \\2191"}.tt th[aria-sort=descending]::after{content:" \\2193"}
+.tt tr.wk{cursor:pointer}.tt tr.wk:hover,.tt tr.wk.on{background:var(--surface-3)}
+@media print{.tools{display:none}.dmt.shut .body{display:block}body{background:#fff}}
+</style></head><body><main class="rpage">
+<div class="rhead"><h1>${esc(R.title)}</h1><p class="sub">As of ${esc(R.asOf)}${R.by ? `, by ${esc(R.by)}` : ""}. Press a heading to sort, type to filter, a section title to fold it, a week to open it.</p></div>
+<div class="msg warn phi">This file has patient codes and MRNs. Keep it in MHS OneDrive or SharePoint, share it only with invited people, and don’t email it outside MHS or put it on a website.</div>
+<div id="out"></div></main>
+<script type="application/json" id="data">${json}</script>
+<script>
+(function () {
+  "use strict";
+  var D = JSON.parse(document.getElementById("data").textContent), out = document.getElementById("out");
+  var esc = function (s) { return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) { return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]; }); };
+  var TABS = [["starts", "Starts"], ["consults", "Consults"], ["proj", "Projected need"], ["open", "Open slots"]];
+  function tiles(s) { return '<div class="stats">' + s.rows.map(function (r) { return '<div class="stat"><small>' + esc(r[0].t) + "</small><b>" + esc(r[1].t || "\\u2014") + "</b>" + (r[2].t ? "<span>" + esc(r[2].t) + "</span>" : "") + "</div>"; }).join("") + "</div>"; }
+  function td(s, c, j) { var pk = s.pills[s.head[j]]; return "<td>" + (pk && c.t !== "" ? '<span class="wpill ' + pk + (+c.t ? "" : " z") + '">' + esc(c.t) + "</span>" : esc(c.t)) + "</td>"; }
+  function card(s, i) {
+    var wk = s.title === "Week by week";
+    return '<section class="card dmt" data-i="' + i + '"><div class="lh"><h2>' + esc(s.title) + "</h2><span>" + s.rows.length + (s.rows.length === 1 ? " row" : " rows") + '</span></div><div class="body">' +
+      (s.rows.length ? '<div class="tools"><input type="search" placeholder="Filter this table" aria-label="Filter ' + esc(s.title) + '"><span></span></div><div class="tscroll"><table class="tt dm"><thead><tr>' +
+        s.head.map(function (h, j) { return '<th data-j="' + j + '">' + esc(h) + "</th>"; }).join("") + "</tr></thead><tbody>" +
+        s.rows.map(function (r, k) { return '<tr data-k="' + k + '"' + (wk ? ' class="wk" title="Open this week"' : "") + ">" + r.map(function (c, j) { return td(s, c, j); }).join("") + "</tr>"; }).join("") + "</tbody></table></div>" : '<p class="note">None.</p>') +
+      (s.note ? '<p class="note">' + esc(s.note) + "</p>" : "") + "</div></section>";
+  }
+  function detail(k, t) {
+    var W = D.weeks[k] || {}, tabs = TABS.filter(function (x) { return W[x[0]] != null; }), L = W[t] || [];
+    return '<tr class="wkx"><td colspan="99"><div class="wkd"><div class="wtabs">' + tabs.map(function (x) { return '<button type="button" class="wtab" data-t="' + x[0] + '" aria-selected="' + (x[0] === t) + '"><small>' + x[1] + "</small><b>" + W[x[0]].length + "</b></button>"; }).join("") + "</div>" +
+      (L.length ? '<div class="wkits">' + L.map(function (x) { return '<div class="wkit"><span class="d">' + esc(x.w) + '</span><span class="p"><b>' + esc(x.p) + "</b>" + (x.mrn ? ' <small class="pm">' + esc(x.mrn) + "</small>" : "") + '</span><span class="m">' + esc(x.m) + "</span></div>"; }).join("") + "</div>" : '<p class="note">None this week.</p>') + "</div></td></tr>";
+  }
+  out.innerHTML = D.sections.map(function (s, i) { return s.kind === "tiles" ? tiles(s) : card(s, i); }).join("");
+  out.addEventListener("click", function (e) {
+    var lh = e.target.closest(".lh"); if (lh) { lh.parentNode.classList.toggle("shut"); return; }
+    var th = e.target.closest("th[data-j]");
+    if (th) { var sec = D.sections[+th.closest("section").dataset.i], j = +th.dataset.j, dir = th.getAttribute("aria-sort") === "ascending" ? -1 : 1, tb = th.closest("table").tBodies[0];
+      th.parentNode.querySelectorAll("th").forEach(function (h) { h.removeAttribute("aria-sort"); }); th.setAttribute("aria-sort", dir > 0 ? "ascending" : "descending");
+      tb.querySelectorAll("tr.wkx").forEach(function (x) { x.remove(); }); tb.querySelectorAll("tr.on").forEach(function (x) { x.classList.remove("on"); });
+      var key = function (r) { var c = sec.rows[+r.dataset.k][j]; return c.k != null ? c.k : c.t.toLowerCase(); };
+      Array.prototype.slice.call(tb.rows).sort(function (a, b) { var x = key(a), y = key(b); return (x === "" ? 1 : y === "" ? -1 : x > y ? 1 : x < y ? -1 : 0) * (x === "" || y === "" ? 1 : dir); }).forEach(function (r) { tb.appendChild(r); });
+      return; }
+    var tab = e.target.closest(".wtab");
+    if (tab) { var row = tab.closest("tr.wkx").previousElementSibling; tab.closest("tr.wkx").outerHTML = detail(+row.dataset.k, tab.dataset.t); return; }
+    var wk = e.target.closest("tr.wk");
+    if (wk) { var next = wk.nextElementSibling, open = next && next.classList.contains("wkx"); if (open) next.remove(); wk.classList.toggle("on", !open); if (!open) wk.insertAdjacentHTML("afterend", detail(+wk.dataset.k, "starts")); }
+  });
+  out.addEventListener("input", function (e) {
+    if (!e.target.matches(".tools input")) return; var q = e.target.value.trim().toLowerCase(), box = e.target.closest(".body"), n = 0, rows = box.querySelectorAll("tbody tr[data-k]");
+    box.querySelectorAll("tr.wkx").forEach(function (x) { x.remove(); });
+    rows.forEach(function (r) { var hit = !q || r.textContent.toLowerCase().indexOf(q) >= 0; r.hidden = !hit; r.classList.remove("on"); if (hit) n++; });
+    e.target.nextElementSibling.textContent = q ? n + " of " + rows.length : "";
+  });
+})();
+</script></body></html>`;
+    const a = document.createElement("a"); a.href = URL.createObjectURL(new Blob([html], { type: "text/html" })); a.download = repFile("html"); document.body.appendChild(a); a.click(); a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 4000);
+    toast(`${repFile("html")} downloaded. It has MRNs: keep it in MHS OneDrive or SharePoint.`);
   }
   /* a closure in the week starting on this Sunday: its note, else its dates */
   const shutWeek = a => { const e = (S.EX || []).find(x => x.closed && x.from <= a + 6 && x.to >= a); return e ? (e.note || exDates(e)) : ""; };
@@ -1971,7 +2050,7 @@
     accExport() {
       return `<h2 id="mh">Export the Access report</h2><p class="sub">The Demand page’s breakdowns (the tiles, week by week with consults and starts, by protocol and its patients, no-shows and late cancels, post-index step-downs) and the consult pipeline (by stage, then every Consults tab row with its waitlist place).</p>
         <div class="msg warn">It has patient codes and MRNs. Save the file only to MHS OneDrive or SharePoint, print only to a clinic printer, and don’t email it outside MHS.</div>
-        <div class="foot"><button class="btn mute" data-act="close">Cancel</button><button class="btn ghost" data-act="accPrint">Print or PDF</button><button class="btn primary inl" data-act="accXlsx">Excel file</button></div>`;
+        <div class="foot"><button class="btn mute" data-act="close">Cancel</button><button class="btn ghost" data-act="accHtml">Interactive HTML</button><button class="btn ghost" data-act="accPrint">Print or PDF</button><button class="btn primary inl" data-act="accXlsx">Excel file</button></div>`;
     },
     startPreview: () => { const m = S.m, c = S.cfg, subj = C.fill(String(m.subject || ""), { clinic: c.Clinic, patient: "SAMJOR" });
       return `<h2 id="mh">Start email preview</h2><p class="sub muted">A sample patient (SAMJOR, MRN 000000) and sample visits. The real email fills in the patient's own name, schedule and first visit.</p>
@@ -2635,6 +2714,7 @@
     accExport: () => openModal("accExport"),
     accXlsx: () => { closeModal(); accessXlsx(); },
     accPrint: () => { closeModal(); accessPrint(); },
+    accHtml: () => { closeModal(); return accessHtml(); },
     nav: e => { S.view = e.dataset.v === "access" && inAccess(S.view) ? "access" : e.dataset.v === "access" ? (S.acLast || "access") : e.dataset.v; if (inAccess(S.view)) S.acLast = S.view; S.pv = null; render(); },
     async reload() { S.reading = true; render(); try { await refresh(true); toast(S.err ? S.err : `Up to date. Read ${plural(S.list.length, "visit")} today and ${plural(S.P.length, "patient")} at ${hm()}.`, !!S.err); } finally { S.reading = false; render(); } },
     theme: () => { S.theme = S.theme === "dark" ? "light" : "dark"; LS.set("ivkTheme", S.theme); document.documentElement.dataset.theme = S.theme; S.themeSwap = true; render(); S.themeSwap = false; },

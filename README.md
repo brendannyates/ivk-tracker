@@ -38,15 +38,16 @@ sits right of the clinic name at the top left and doesn't move (dev-updates.js, 
     a strip of tiles (Starts, Consults, Projected need, Open slots) and, under the one picked, its lines (day, time, LASFIR, MRN,
     provider), each opening the patient; Booked / slots opens the slots still free. The tiles lead with the share scheduled out 4
     weeks; the clinic decides what share it wants before starting new patients. Every tile can be pressed: the 4-week numbers jump
-    to Week by week; **Open slots** under 10 flips over to list them; **Approved not scheduled** (Consults tab rows whose stage says
+    to Week by week; **Open slots** flips over to list up to 4 of them when 5 or fewer are left (otherwise it doesn't press); **Approved not scheduled** (Consults tab rows whose stage says
     Approved, not "Not Yet Approved", whose patient hasn't started) opens the Index planner; **Consults scheduled** (IVK consults still
     Expected, from today) opens Consults. **By protocol** below keeps the Unscheduled only / Everyone / Scheduled only filter and
     Include paused, and opens any number of protocols (Expand all / Collapse all). **No-shows and late cancels** lists patients by
     count in the last 30, 60 and 90 days (each one, with its exemption, folded away below). **Projected Access Post-Index** lists
     each index patient with the week they step down and the visits a week that frees. **Export report** (on Demand and Consults)
     saves all of this plus the consults scheduled and the consult pipeline (by stage, then every Consults tab row with its waitlist
-    place, waiting on, custom protocol, start booked and next step) as an Excel file, one sheet per section, or opens it laid out as
-    the add-in shows it (report.html) to print or save as a PDF (landscape). It has LASFIR codes and MRNs: MHS OneDrive or
+    place, waiting on, custom protocol, start booked and next step) as an Excel file, one sheet per section; as an interactive HTML file
+    (opens in any browser: sort any column, filter each table, fold sections, open a week to its starts, consults, projected need
+    and open slots); or laid out as the add-in shows it (report.html) to print or save as a PDF (landscape). It has LASFIR codes and MRNs: MHS OneDrive or
     SharePoint only.
   - **Consults**: the stage tiles (each stage on the Consults tab with its count; pressed, the Consults list shows only that stage),
     **Scheduled upcoming** (IVK consults still expected, with day, time, LASFIR, MRN and provider; the wider report keeps the
