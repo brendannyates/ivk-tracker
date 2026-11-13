@@ -297,9 +297,12 @@
       const raw = await X.load(S.raw ? null : bootStep); raw.plan = X.getDoc(MAP_KEY) || null;
       const sig = hash(JSON.stringify(raw));
       S.live = true; S.err = "";
-      if (force || sig !== S.sig) { const first = !S.raw; S.sig = sig; S.raw = raw; derive(); loadWho(); if (first) bootDone(); toChild({ k: "snap", raw, who: S.name }); if (!S.modal && !typing()) render(); if (first) { carryCastro(); maybeAutoFull(); autoElig(); } }
+      if (force || sig !== S.sig) { const first = !S.raw; S.sig = sig; S.raw = raw; S.derived = false; derive(); S.derived = true; loadWho(); if (first) bootDone(); toChild({ k: "snap", raw, who: S.name }); if (!S.modal && !typing()) render(); if (first) { carryCastro(); maybeAutoFull(); autoElig(); } }
       if (C.repliesDue(S.replies).length && !applying) setTimeout(applyReplies, 0);
-    } catch (e) { console.error(e); S.err = "Couldn’t read the workbook. Check you’re still signed in; the tracker tries again in a few seconds."; render(); }
+    } catch (e) {
+      /* the workbook was read but sorting it threw: show what broke, not a frozen loading screen */
+      if (S.raw && !S.derived) return crashed(e);
+      console.error(e); S.err = "Couldn’t read the workbook. Check you’re still signed in; the tracker tries again in a few seconds."; render(); }
   }
 
   /* One-time carry-over for the Castro workbook only. Until this version the start email's address, phone, CC and BCC were built
@@ -356,7 +359,19 @@
     const set = (S.raw?.missing || []).length + (teamsReady("arrival") && teamsReady("protocol") ? 0 : 1); if (set) b.settings = { n: set };
     return b;
   }
-  function render() {
+  /* A page that throws while it's drawn shows what broke, instead of leaving the last screen (often the loading screen) frozen */
+  function render() { try { renderPage(); } catch (e) { crashed(e); } }
+  function crashed(e) {
+    console.error(e);
+    const st = String((e && e.stack) || ""), first = st.split("\n").find(l => /(app|core|template|excel|notify|bayplan)\.js/.test(l)) || "";
+    const at = first.trim().replace(/^at\s+/, "").replace(/https?:\/\/[^\s)]*\/([\w-]+\.js)[^:\s)]*/g, "$1");
+    const what = !S.raw ? "drawing the loading screen" : !S.derived ? "sorting the workbook’s rows" : S.pv ? "drawing the patient view" : S.modal ? "drawing a dialog" : `drawing ${S.view === "access" ? "Access" : S.view[0].toUpperCase() + S.view.slice(1)}`;
+    $("#app").innerHTML = `<div class="boot" role="alert"><div class="bootin"><h1>IVK Tracker</h1>
+      <div class="msg bad"><b>Something broke while ${esc(what)}.</b> The workbook is fine: nothing was saved or changed.
+        Send this line to whoever looks after the tracker:<br><code>${esc(String((e && e.message) || e))}${at ? ` (${esc(at)})` : ""}</code></div>
+      <div class="actions"><button class="btn primary" data-act="crashRetry">Try again</button>${S.raw && (S.view !== "today" || S.pv || S.modal) ? `<button class="btn ghost" data-act="crashToday">Go to Today</button>` : ""}</div></div></div>`;
+  }
+  function renderPage() {
     const page = $(".page"), top = page ? page.scrollTop : 0;
     if (!S.raw) { $("#app").innerHTML = bootHTML(); return; }
     if (mustPick() || S.picking) { $("#app").innerHTML = pickHTML(); const f = $("#whoNew"); if (f && !(S.users || []).length) f.focus(); return; }
@@ -2615,6 +2630,8 @@
     await write("Saving…", () => Store.savePt(p.mrn, ptPatch(p, { [k]: on ? "TRUE" : "FALSE" })), `${p.code}: ${words[on ? 0 : 1].toLowerCase()}.`);
   }
   const ACT = {
+    crashRetry: async () => { S.modal = null; await refresh(true); render(); },
+    crashToday: () => { S.view = "today"; S.pv = null; S.modal = null; render(); },
     accExport: () => openModal("accExport"),
     accXlsx: () => { closeModal(); accessXlsx(); },
     accPrint: () => { closeModal(); accessPrint(); },
