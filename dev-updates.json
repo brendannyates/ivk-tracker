@@ -1,6 +1,15 @@
 {
   "updates": [
     {
+      "id": "2026-11-13-index-start",
+      "date": "2026-11-13",
+      "bullets": [
+        "Changed: Treatment 1 of index is the Start. A start visit shows as Treatment start, not Index 1 of 6; treatments 2 to 6 are the follow-ups (Index 2 of 6 to 6 of 6).",
+        "New: If treatment 1 is booked in NextGen as a follow-up, or a later index visit is booked as a start, the visit and the patient are flagged with what to change.",
+        "Changed: The Index planner labels treatment 1 Start, holds for it show as Start hold on the Schedule, and the planner says to book treatment 1 as an IV Ketamine Start and 2 to 6 as IV Ketamine Follow Up."
+      ]
+    },
+    {
       "id": "2026-11-13-ui-polish",
       "date": "2026-11-13",
       "bullets": [

@@ -233,3 +233,16 @@ test("Access weeks: a start held in the Index planner (treatment 1) counts as a 
   const B = C.weekBookings({ appts: A, others: [], holds: H, listAt: null, today: T, weeks: 3, cfg });
   assert.deepEqual(B.weeks.map(w => [w.starts, w.held]), [[0, 0], [2, 1], [0, 0]], "the held start counts; treatment 2, the one NextGen has and the released one don't");
 });
+
+test("index: treatment 1 is the Start, 2 to 6 the follow-ups; a visit booked as the wrong type is a need", () => {
+  const P = pts([["990601", "IDXPAT", "Induction", "2x per week", "", "", "", "", "", ""]])[0];
+  const x = A => ({ cfg, today: T, appts: A, patients: [P], visits: [], clinic: "Castro" });
+  const A1 = C.appts([AP_H, ap("990601", "IDXPAT", T + 1, 540), ap("990601", "IDXPAT", T + 4, 540), ap("990601", "IDXPAT", T + 7, 540)]);
+  assert.deepEqual(C.indexTypeIssues(P, A1, T, cfg).map(m => m.n), [1], "no Start booked: the first visit is treatment 1");
+  assert.ok(C.needs(P, x(A1)).some(y => y.k === "idxtype" && y.bad && /Treatment 1 .* booked as a follow-up: book it as an IV Ketamine Start/.test(y.t)));
+  const A2 = C.appts([AP_H, ap("990601", "IDXPAT", T + 1, 540, "IV Ketamine Start"), ap("990601", "IDXPAT", T + 4, 540, "IV Ketamine Start")]);
+  assert.deepEqual(C.indexTypeIssues(P, A2, T, cfg).map(m => m.n), [2], "a second Start is treatment 2, a follow-up");
+  const A3 = C.appts([AP_H, ap("990601", "IDXPAT", T + 1, 540, "IV Ketamine Start"), ap("990601", "IDXPAT", T + 4, 540)]);
+  assert.deepEqual(C.indexTypeIssues(P, A3, T, cfg), [], "booked right");
+  assert.deepEqual(C.indexTypeIssues(Object.assign({}, P, { status: "Ongoing" }), A1, T, cfg), [], "only Induction patients");
+});

@@ -274,6 +274,9 @@
     /* a treatment start without the rest of index booked behind it */
     const sv = A ? nextStart(p, x.appts, T) : null, short = sv ? indexShort(p, x.appts, sv, c) : null;
     if (short) add("idxbook", `Index not fully booked: ${short.booked} of ${short.need} visits after the ${fmtD(sv.date)} start`, ["Plan index visits", "pvPlan"]);
+    /* treatment 1 of index is the Start; treatments 2 to N are follow-ups: a visit booked as the wrong type in NextGen */
+    if (A) for (const m of indexTypeIssues(p, x.appts, T, c)) add("idxtype", m.n === 1 ? `Treatment 1 (${fmtD(m.a.date)}) is booked as a follow-up: book it as an IV Ketamine Start in NextGen`
+      : `Treatment ${m.n} (${fmtD(m.a.date)}) is booked as a start: only treatment 1 is the Start, book it as an IV Ketamine Follow Up`, null, { bad: true });
     /* the start checklist: Case Management in NextGen on the day of the start (x.SL, from startList) */
     const cms = (x.SL || []).find(s => s.mrn === p.mrn && s.cmDue);
     if (cms) add("cm", cms.today ? `Treatment start today: update Case Management to ${c.CmStage || DEFAULTS.CmStage}` : `Start kept ${fmtD(cms.date)}: update Case Management to ${c.CmStage || DEFAULTS.CmStage}`, ["Case Management updated", "cmDone"]);
@@ -1252,6 +1255,17 @@
   /* An Induction patient is in index. Their kept visits (not cancelled, not no-shows) are counted from the treatment start; once
      the Nth (IndexPerWeek x IndexWeeks, 6) is kept, index is complete: the desk moves them to Ongoing and confirms the protocol
      (usually 1x per week, set by the provider by acuity). Kept = before today, or today once checked out (keptToday). */
+  /* Index is N treatments (6): treatment 1 is the treatment Start, treatments 2 to N the follow-ups (5). For an Induction patient,
+     the visits from today on that NextGen has as the wrong type: { a, n }. With no Start on the list (and no Tx Start Date) and
+     nothing kept yet, their first visit is treatment 1. */
+  function indexTypeIssues(p, A, today, cfg) {
+    if (!p || !/induction/i.test(p.status || "") || !countable(p, A)) return [];
+    const N = Math.max(1, Math.round(+cfg.IndexPerWeek * +cfg.IndexWeeks));
+    let L = treatments(p, A);
+    if (!L.length) { const live = A.filter(a => a.mrn === p.mrn && !isCancelled(a) && !/no ?show/i.test(a.status)).sort((a, b) => a.date - b.date || (a.time ?? 0) - (b.time ?? 0));
+      if (!live.some(a => a.date < today)) L = live; }
+    return L.slice(0, N).map((a, i) => ({ a, n: i + 1 })).filter(({ a, n }) => a.date >= today && (n === 1 ? !isStartEv(a.event) : isStartEv(a.event)));
+  }
   function indexState(p, A, today, cfg, keptToday) {
     if (!p || !/induction/i.test(p.status || "")) return null;
     const N = Math.max(1, Math.round(+cfg.IndexPerWeek * +cfg.IndexWeeks)), L = treatments(p, A);
@@ -1708,7 +1722,7 @@
   return { DEFAULTS, VISIT_COLS, TEMPLATES, norm, clinicFromName, USER_COLS, userKey, userRows, pickOrder, cleanName, wbKeyOf, whoRec, whoToday, whoPick, AUTO_SHOW, autoFullOf, autoAny, tplImages, withMap, ADMIN_MIN, adminOk, CLINIC_WIDE, lockedCfg, sigFromFile, withSignature, txt, num, serialOf, dateOf, isoOf, fromIso, toSerial, toMin, fmtT, fmtD, fmtDay, weekday, weekStart,
     PT_COLS, ptRows, AV_LEVELS, avName, availGrid, availStr, canCome, prefCells, awayList, awayStr, awayOn, PAY_COLS, REMIND_METHODS, CONSENT_METHODS, consentMethod, consentOf, money, amt, payRows, dueOf, payOf, ledger, toConfirm,
     PARTS, partKey, dueParts, visitAnswered, PROFILE_COLS, COVER_MODES, modeOf, modeParts, isSelf, SOHAR_KEYS, profileRows, coverage, profileGaps, parseSohar, planSoharImport, FEED_COLS, FEED_BY, PROFILE_FEED_COLS, parseCsv, feedText, feedMrn, parseFeed, eligRows, isEligibleVer, pickElig, soharLink, soharVerLink, planEligibility, eligDue, demand,
-    fullPlan, eligibleStarts, memoX, indexState, indexShort, nextStart, XFER_COLS, xferRows, xferState, elsewhere, visitCounts, SOONER_COLS, soonerRows, soonerKey, soonerMatch, soonerLast, soonerKind, parseWants, wantsCell, OFFER_COLS, offerKey, offerRows, offerState, openSlots, freedTimes, ELSE_COLS, elseRows, sameLoc, isOurs, bookedAt, prefCols, indexN: cfg => Math.max(1, Math.round(+cfg.IndexPerWeek * +cfg.IndexWeeks)),
+    fullPlan, eligibleStarts, memoX, indexState, indexTypeIssues, indexShort, nextStart, XFER_COLS, xferRows, xferState, elsewhere, visitCounts, SOONER_COLS, soonerRows, soonerKey, soonerMatch, soonerLast, soonerKind, parseWants, wantsCell, OFFER_COLS, offerKey, offerRows, offerState, openSlots, freedTimes, ELSE_COLS, elseRows, sameLoc, isOurs, bookedAt, prefCols, indexN: cfg => Math.max(1, Math.round(+cfg.IndexPerWeek * +cfg.IndexWeeks)),
     treatments, txNo, isOak, oakState, WAIT_ON, waitlist, waitMove, provFull, fullName, firstName, scheduleOf, START_TPL, longWhen,
     lasfir, provName, mrnKey, pickRow, eventShort, freqDays, byHeader, patients, appts, isCancelled, visitKey, visitRows, phase, isActive, futureOf, asks,
     lastSeen, tagKey, parseTag, tagStr, tagsOf, askProvider, REPLY_COLS, replyRows, replyAction, repliesDue,

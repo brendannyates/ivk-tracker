@@ -550,12 +550,16 @@
     if (v.ph === "booked" && v.st.asked == null) return v.ask.book ? "Book out" : v.ask.proto ? "Confirm protocol" : "";
     return "";
   }
+  /* Index is N treatments: treatment 1 is the Start, 2 to N the follow-ups. txWord(1) is "Start", txWord(3) "Treatment 3". */
+  const txWord = n => n === 1 ? "Start" : `Treatment ${n}`;
+  const BOOK_RULE = () => `Book treatment 1 as an IV Ketamine Start and treatments 2 to ${C.indexN(S.cfg)} as IV Ketamine Follow Up.`;
   /* treatment start (blue tab), index (lavender), follow-up (grey) and "Index 3 of 6" for an Induction patient */
   const kindOf = v => visitKind(v.a) || "fu";
   const KIND_TXT = { st: "Treatment start", ix: "Index", fu: "Follow-up" };
   function kindTxt(v) {
     const ix = v.p ? C.indexState(v.p, S.A, todayS(), S.cfg) : null;
-    return ix && !ix.complete ? `Index ${Math.min(ix.N, ix.done + 1)} of ${ix.N}` : KIND_TXT[kindOf(v)];
+    const n = ix && !ix.complete ? (C.txNo(v.p, S.A, v.a.date, v.a.time) ?? Math.min(ix.N, ix.done + 1)) : null;
+    return n === 1 ? KIND_TXT.st : n ? `Index ${n} of ${ix.N}` : KIND_TXT[kindOf(v)];
   }
   const hasPc = v => !!S.X.needsPost(v.a.mrn, v.a.event || "");
   function rowHTML(v) {
@@ -603,7 +607,10 @@
     const loc = where + (S.plan && v.st.chair && (v.ph === "in" || v.ph === "tx") ? ` · ${chairTxt(v.st.chair)}` : "");
     const meta = [`${C.fmtT(v.a.time)} ${kindTxt(v).toLowerCase()}`, C.provName(v.a.provider), `MRN ${v.a.mrn}`].filter(Boolean).join(" · ");
     const ix = p ? C.indexState(p, S.A, T, S.cfg) : null, kd = kindOf(v), pt = p ? ptOf(p.mrn) : null;
-    const tags = [kd === "st" ? ["st", "Treatment start"] : null, ix && !ix.complete ? ["ix", `Index ${Math.min(ix.N, ix.done + 1)} of ${ix.N}`] : null, pc ? ["ix", "Requires post-check"] : null,
+    /* the visit's own treatment number in index: 1 is the Start (one tag, never "Index 1 of 6"); a wrong NextGen type is flagged */
+    const txn = ix && !ix.complete ? (C.txNo(p, S.A, v.a.date, v.a.time) ?? Math.min(ix.N, ix.done + 1)) : null;
+    const tags = [kd === "st" || txn === 1 ? ["st", "Treatment start"] : null, txn > 1 ? ["ix", `Index ${txn} of ${ix.N}`] : null,
+      txn === 1 && kd !== "st" ? ["bad", "Booked as a follow-up: book it as a Start"] : txn > 1 && kd === "st" ? ["bad", "Booked as a start: book it as a follow-up"] : null, pc ? ["ix", "Requires post-check"] : null,
       pt?.oak ? ["", "Oakland"] : null, p?.freq ? ["", p.freq] : null].filter(Boolean);
     const arr = sentToday("arrival", c), ask = sentToday("protocol", c), post = v.st.seat != null && pc ? v.st.seat + +S.cfg.PostCheckMin : null;
     const st = (cls, t, m, w) => `<li class="step ${cls}"><span class="k">${cls === "done" ? "✓" : ""}</span><span><span class="t">${t}</span>${m ? `<span class="m">${m}</span>` : ""}</span><span class="w">${w || ""}</span></li>`;
@@ -715,7 +722,7 @@
       const label = `${a.code || "No code"}, MRN ${a.mrn}, at ${C.fmtT(a.time)}, ${C.provName(a.provider)}${k ? `, ${KIND_WORD[k]}` : ""}${pc ? ", requires a post-check" : ""}, ${a.status}${miss ? `. ${MISS_TXT}` : ""}`;
       return `<div class="blkw"><button class="blk ${s}${k ? ` k-${k}` : ""}${shutOn(a.date) && s !== "cx" && s !== "lc" ? " shut" : ""}" data-act="schedPick" data-m="${esc(a.mrn)}" data-d="${a.date}" data-t="${a.time}"${pk ? ` data-pc="${esc(pk)}"` : ""} aria-label="${esc(label)}"><span class="br"><b>${esc(a.code || "No code")}</b>${pc ? ` <span class="pcb" title="Requires a post-check">PC</span>` : ""}${S.SO.get(a.mrn)?.status === "waiting" && S.SO.get(a.mrn).booked === a.date ? ` <span class="pcb so" title="On the cancellation waitlist">Waitlist</span>` : ""}<span class="pm">${esc(a.mrn)}</span></span><span class="br sm"><span class="bp">${esc(C.provName(a.provider))}${k === "st" ? ", start" : k === "ix" ? `, index${(() => { const n = p ? C.txNo(p, S.A, a.date, a.time) : null; return n ? ` ${n}` : ""; })()}` : ""}${s === "noshow" ? ", no-show" : s === "lc" ? ", late cancel" : shutOn(a.date) ? ", clinic closed" : flag ? ", last booked" : ""}</span><span class="bt">${C.fmtT(a.time)}</span></span></button>${miss ? missTag() : ""}</div>`; };
     const hblk = b => { const late = C.holdState(b.h, S.A, Date.now(), S.cfg) === "late", pk = `${b.h.date}|${b.postAt}|${b.pkey}`;
-      return `<button class="blk hold k-ix${late ? " late" : ""}" data-act="ipPick" data-m="${esc(b.mrn)}" data-pc="${esc(pk)}" aria-label="${esc(`Hold for ${b.code} at ${C.fmtT(b.time)}${late ? ", not confirmed booked" : ""}`)}">Hold <b>${esc(b.code)}</b> ${C.fmtT(b.time)}<small>${esc(provLabel(b.provider))}${late ? ", not confirmed" : b.h.by ? `, by ${esc(b.h.by)}` : ""}</small></button>`; };
+      return `<button class="blk hold k-ix${late ? " late" : ""}" data-act="ipPick" data-m="${esc(b.mrn)}" data-pc="${esc(pk)}" aria-label="${esc(`${b.h.n === 1 ? "Start hold" : "Hold"} for ${b.code} at ${C.fmtT(b.time)}${late ? ", not confirmed booked" : ""}`)}">${b.h.n === 1 ? "Start hold" : "Hold"} <b>${esc(b.code)}</b> ${C.fmtT(b.time)}<small>${esc(provLabel(b.provider))}${late ? ", not confirmed" : b.h.by ? `, by ${esc(b.h.by)}` : ""}</small></button>`; };
     /* an open slot: pressed, it's held for a patient (or, for an index start, planned from) */
     const oblk = (d, x) => { const ix = x.openIndex && elig.has(slotKey(x));
       return `<button class="blk open" data-act="schedOpen" data-d="${d}" data-t="${x.time}" data-p="${esc(x.provider)}" aria-label="${esc(`${ix ? "Open index start" : "Open follow-up"} ${C.fmtT(x.time)}, ${provLabel(x.provider)}: hold it for a patient`)}">${ix ? "Open index" : "Open follow-up"} ${C.fmtT(x.time)}<small>${esc(provLabel(x.provider))}</small></button>`; };
@@ -935,7 +942,7 @@
     const r = M.res, it = r.items, cfg = S.cfg, N = r.N, ok = C.fullPlan(r);
     const lead = !it.length ? { cls: "soon", t: "No times fit yet" } : ok ? { cls: "ready", t: `${plural(it.length, "visit")}, ${dshort(it[0].date)} to ${dshort(it[it.length - 1].date)}` }
       : { cls: "soon", t: `${plural(it.length, "visit")} of ${N}. Check the notes` };
-    const step = x => `<li class="step ${x.long ? "soon" : "now"}"><span class="k">${x.n}</span><span><span class="t">${dshort(x.date)}, ${C.fmtT(x.time)}</span>
+    const step = x => `<li class="step ${x.long ? "soon" : "now"}"><span class="k">${x.n}</span><span><span class="t">${x.n === 1 ? "Start: " : ""}${dshort(x.date)}, ${C.fmtT(x.time)}</span>
         <span class="m">Week ${x.week}, ${esc(provLabel(x.provider))}, post check ${C.fmtT(x.post)}${x.postUse === "flexpost" ? " (flex)" : ""}${x.gap != null ? `, ${plural(x.gap, "day")} after the last` : ""}</span>
         ${S.ipAlt === x.n - 1 ? altHTML(r, x.n - 1) : ""}</span><span class="w"><button class="btn mute sm" data-act="ipAlt" data-n="${x.n - 1}">${S.ipAlt === x.n - 1 ? "Keep" : "Change"}</button></span></li>`;
     const planned = new Set(ipList().filter(o => o.holds.length).map(o => o.mrn)), seen = new Set();
@@ -949,7 +956,7 @@
         ${S.ipFor === "__new" ? `<div class="two"><label class="fld">LASFIR<input id="ipForCode" maxlength="8" autocomplete="off" spellcheck="false" placeholder="SMIJAN"></label><label class="fld">MRN<input id="ipForMrn" inputmode="numeric" autocomplete="off"></label></div>` : ""}
         <button class="btn primary" data-act="ipHoldDraft"${S.busy ? " disabled" : ""}>Hold ${plural(it.filter(x => !x.fixed).length, "time")}</button>` : ""}
       <div class="actions"><button class="btn ghost" data-act="ipReset" data-m="">Start over</button></div>
-      <p class="note">Nothing is saved until you hold. Book the times in NextGen and confirm here within ${cfg.HoldMin} min.</p></aside>`;
+      <p class="note">Nothing is saved until you hold. Book the times in NextGen and confirm here within ${cfg.HoldMin} min. ${BOOK_RULE()}</p></aside>`;
   }
   const altHTML = (r, n) => { const A = C.altSlots(r, n, +S.cfg.MinGapDays).slice(0, 12);
     return `<div class="alts">${A.length ? A.map((s, i) => `<button data-act="ipUse" data-n="${n}" data-i="${i}">${dshort(s.date)}<small>${C.fmtT(s.time)}, ${esc(provLabel(s.provider))}${s.postUse === "flexpost" ? ", flex post check" : ""}</small></button>`).join("") : `<span class="muted small">No other open index start keeps a day off on each side.</span>`}</div>`; };
@@ -1022,12 +1029,13 @@
       const miss = all.filter(h => h.conf === "missing"), pend = all.filter(h => h.conf === "pending");
       const cls = h => h.conf === "onlist" ? "done" : h.conf === "missing" || h.state === "late" ? "late" : "soon";
       const how = h => h.conf === "onlist" ? ", on the appointment list" : h.conf === "missing" ? `, not on the list uploaded ${listTime()}` : h.conf === "pending" ? ", booked: upload the report to confirm" : "";
-      const st = h => `<li class="step ${cls(h)}"><span class="k">${h.conf === "onlist" ? "" : h.n || ""}</span><span><span class="t">${dshort(h.date)}, ${C.fmtT(h.time)}</span><span class="m">${esc(provLabel(h.provider))}, post check ${C.fmtT(h.time + +cfg.PostCheckMin)}${how(h)}</span></span><span class="w">Treatment ${h.n || ""}</span></li>`;
+      const st = h => `<li class="step ${cls(h)}"><span class="k">${h.conf === "onlist" ? "" : h.n || ""}</span><span><span class="t">${dshort(h.date)}, ${C.fmtT(h.time)}</span><span class="m">${esc(provLabel(h.provider))}, post check ${C.fmtT(h.time + +cfg.PostCheckMin)}${how(h)}</span></span><span class="w">${h.n ? txWord(h.n) : ""}</span></li>`;
       const lead = hl ? hl : miss.length ? { cls: "late", t: `${plural(miss.length, "booked visit")} not on the NextGen list uploaded ${listTime()}. Check NextGen, then upload again` }
         : pend.length ? { cls: "soon", t: `Marked booked in NextGen. Upload a fresh appointment list to confirm ${pend.length === all.length ? "them" : `the other ${pend.length}`}` } : { cls: "ready", t: `All ${plural(all.length, "visit")} on the appointment list` };
       return `<aside class="card detail" aria-label="${esc(o.code)}"><div class="dh"><div><div class="name">${esc(o.code)}${o.mrn ? `<span class="mrn">MRN ${esc(o.mrn)}</span>` : ""}</div><div class="meta">${esc(meta)}</div></div></div>${ipProto(o)}
         <p class="lead ${lead.cls}">${esc(lead.t)}</p>
         <ul class="steps">${all.map(st).join("")}</ul>
+        ${open.some(h => h.n === 1) ? `<p class="note">${BOOK_RULE()}</p>` : ""}
         ${open.length ? `<button class="btn primary" data-act="ipBooked" data-m="${esc(o.mrn)}">Booked in NextGen</button><div class="actions"><button class="btn ghost" data-act="ipRelease" data-m="${esc(o.mrn)}">Release ${open.length === 1 ? "the hold" : "the holds"}</button></div>`
           : miss.length || pend.length ? `${uploadBtn("Upload the NextGen report")}${miss.length ? `<div class="actions"><button class="btn ghost" data-act="ipRelease" data-m="${esc(o.mrn)}">Release the missing ${miss.length === 1 ? "visit" : "visits"}</button></div>` : ""}`
           : `<button class="btn ghost" data-act="ipDone" data-m="${esc(o.mrn)}">Take off the list</button>`}
@@ -1049,7 +1057,7 @@
       : it.length < N || it.some(x => x.long) || r.notes.length ? { cls: "soon", t: `${plural(it.length, "visit")} planned, ${dshort(it[0].date)} to ${dshort(it[it.length - 1].date)}. Check the notes` }
       : { cls: "ready", t: `${plural(it.length, "visit")}, ${dshort(it[0].date)} to ${dshort(it[it.length - 1].date)}` };
     const alt = n => altHTML(r, n);
-    const step = x => `<li class="step ${x.fixed ? "done" : x.long ? "soon" : "now"}"><span class="k">${x.fixed ? "" : x.n}</span><span><span class="t">${dshort(x.date)}, ${C.fmtT(x.time)}</span>
+    const step = x => `<li class="step ${x.fixed ? "done" : x.long ? "soon" : "now"}"><span class="k">${x.fixed ? "" : x.n}</span><span><span class="t">${x.n === 1 ? "Start: " : ""}${dshort(x.date)}, ${C.fmtT(x.time)}</span>
         <span class="m">Week ${x.week}, ${esc(provLabel(x.provider))}, ${x.fixed ? "already booked, " : ""}post check ${C.fmtT(x.post)}${x.postUse === "flexpost" ? " (flex)" : ""}${x.gap != null ? `, ${plural(x.gap, "day")} after the last` : ""}${x.long ? ` (over ${cfg.MaxGapDays})` : ""}</span>
         ${S.ipAlt === x.n - 1 ? alt(x.n - 1) : ""}</span><span class="w">${x.fixed ? "" : `<button class="btn mute sm" data-act="ipAlt" data-n="${x.n - 1}">${S.ipAlt === x.n - 1 ? "Keep" : "Change"}</button>`}</span></li>`;
     const last = it[it.length - 1], afterD = last ? last.date + (C.freqDays(cfg.AfterIndex) || 7) : null;
@@ -1059,7 +1067,7 @@
         ${r.notes.map(n => `<p class="note warn">${esc(n)}</p>`).join("")}${afterD ? `<p class="note">Then ${esc(cfg.AfterIndex)}, from around ${dshort(afterD)}.</p>` : ""}</div>` : r.notes.map(n => `<p class="note warn">${esc(n)}</p>`).join("")}
       ${toHold.length ? `<button class="btn primary" data-act="ipHold" data-m="${esc(o.mrn)}"${S.busy ? " disabled" : ""}>Hold ${toHold.length === 1 ? "this time" : `these ${toHold.length} times`}</button>` : ""}
       <div class="actions">${Object.keys(M.pins).length ? `<button class="btn ghost" data-act="ipReset" data-m="${esc(o.mrn)}">Undo my changes</button>` : ""}${o.pl ? `<button class="btn mute" data-act="ipDone" data-m="${esc(o.mrn)}">Take off the list</button>` : ""}</div>
-      <p class="note">Holding saves the times at once, so the team sees them. Book them in NextGen and confirm here within ${cfg.HoldMin} min.</p></aside>`;
+      <p class="note">Holding saves the times at once, so the team sees them. Book them in NextGen and confirm here within ${cfg.HoldMin} min. ${BOOK_RULE()}</p></aside>`;
   }
 
   /* ---------- template configurator ---------- */
@@ -1533,7 +1541,7 @@ body{margin:0;background:var(--bg);color:var(--ink);font-family:"IBM Plex Sans",
       <dl class="facts"><dt>At ${esc(S.cfg.Clinic)}</dt><dd>${plural(vc.kept + vc.booked, "appointment")}: ${vc.kept} kept, ${vc.booked} booked</dd>${vc.away.map(x => `<dt>${esc(x.loc || "Another clinic")}</dt><dd>${plural(x.n, "appointment")} booked</dd>`).join("")}</dl>
       ${fut.length ? `<ul class="steps">${fut.slice(0, 12).map(row).join("")}</ul>${fut.length > 12 ? `<p class="note">And ${plural(fut.length - 12, "more")}.</p>` : ""}` : `<p class="note${C.isActive(p) && !/prn/i.test(p.freq) ? " warn" : ""}">No IVK visit booked from today.</p>`}
       ${away.length ? `<div class="section"><div class="h"><h2>At other clinics</h2><span>as of ${C.fmtD(S.elseAt)}</span></div><ul class="steps">${away.slice(0, 8).map(a => `<li class="step soon"><span class="k"></span><span><span class="t">${dshort(a.date)}, ${C.fmtT(a.time)}</span><span class="m">${esc(a.loc)}, ${esc(C.provName(a.provider))}${a.status && !/expected/i.test(a.status) ? `, ${esc(a.status)}` : ""}</span></span><span class="w"></span></li>`).join("")}</ul></div>` : ""}
-      ${hs.length ? `<div class="section"><div class="h"><h2>Holds</h2><span>${hs.length}</span></div><ul class="steps">${hs.map(h => `<li class="step soon k-ix"><span class="k">${h.n || ""}</span><span><span class="t">${dshort(h.date)}, ${C.fmtT(h.time)}</span><span class="m">${esc(provLabel(h.provider))}, ${h.status === "booked" ? "booked: upload to confirm" : h.state === "late" ? "not confirmed booked" : "held"}</span></span><span class="w"></span></li>`).join("")}</ul><div class="actions"><button class="btn ghost sm line" data-act="ipPick" data-m="${m}">Open in the Index planner</button></div></div>` : ""}
+      ${hs.length ? `<div class="section"><div class="h"><h2>Holds</h2><span>${hs.length}</span></div><ul class="steps">${hs.map(h => `<li class="step soon k-ix"><span class="k">${h.n || ""}</span><span><span class="t">${h.n === 1 ? "Start: " : ""}${dshort(h.date)}, ${C.fmtT(h.time)}</span><span class="m">${esc(provLabel(h.provider))}, ${h.status === "booked" ? "booked: upload to confirm" : h.state === "late" ? "not confirmed booked" : "held"}</span></span><span class="w"></span></li>`).join("")}</ul><div class="actions"><button class="btn ghost sm line" data-act="ipPick" data-m="${m}">Open in the Index planner</button></div></div>` : ""}
       <div class="actions"><button class="btn ghost sm line" data-act="printSched" data-m="${m}">Print schedule</button>${st ? `<button class="btn mute sm" data-act="startForms" data-m="${m}">Start paperwork</button>` : ""}${st && st.date > T ? `<button class="btn mute sm" data-act="startEmail" data-m="${m}">Start email</button>` : ""}<button class="btn mute sm" data-act="pvPlan" data-m="${m}">Plan index visits</button></div>
       ${past.length ? `<div class="section"><div class="h"><h2>Recent visits</h2></div><dl class="facts">${past.map(a => `<dt>${dshort(a.date)}</dt><dd>${C.fmtT(a.time)}, ${esc(C.provName(a.provider))}${/no ?show/i.test(a.status) ? ", no-show" : ""}</dd>`).join("")}</dl></div>` : ""}
       ${waitHTML(p)}${availHTML(p)}`;
