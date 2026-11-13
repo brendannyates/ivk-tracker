@@ -32,18 +32,33 @@ sits right of the clinic name at the top left and doesn't move (dev-updates.js, 
     protocol, Settings, 1x per week; PRN and blank none), **Booked** (IVK visits and holds on the list) out of the template's IVK
     slots, **Scheduled Through** (the share of active patients with a protocol, not PRN or paused, booked that week or later), and
     **Projected Need** (the visits still to book if each patient keeps their cadence past their last booked visit; index patients
-    weekly after treatment 6). Under each week, small pills count the treatment **starts** (on the list or held in the Index
-    planner; shown on every week, 0 muted) and, once the wider NextGen report has them, the **consults** (IVK consults at this
-    clinic, kept on tblIvkOther with their location), cancelled and no-shows aside. The tiles lead with the share scheduled out 4 weeks; the clinic decides what share it wants before
-    starting new patients. **Approved not scheduled** counts Consults tab rows whose stage says Approved (not "Not Yet Approved")
-    and whose patient hasn't started, noting any that already have a start booked; **Consults scheduled** counts IVK consults
-    from today on. **By protocol** below keeps the Unscheduled only / Everyone / Scheduled only filter and Include paused.
-    **No-shows and late cancels** lists patients by count in the last 30, 60 and 90 days (each one, with its exemption, folded
-    away below). **Projected Access Post-Index** lists each index patient with the week they step down and the visits a week
-    that frees. **Export report** (on Demand and Waitlist) saves all of this plus the consult pipeline (by stage, then every
-    Consults tab row with its waitlist place, waiting on, start booked and next step) as an Excel file, one sheet per section, or
-    opens it to print or save as a PDF (landscape). It has LASFIR codes and MRNs: MHS OneDrive or SharePoint only.
-  - **Waitlist** (below), **Index planner** (below) and **Templates** (the provider grids; the providers are toggled at the top
+    weekly after treatment 6), with **Starts** (treatment starts on the list and starts held in the Index planner, cancelled and
+    no-shows aside) and **Consults** (every IVK consult at this clinic booked that week on the wider NextGen report, cancelled ones
+    aside) as pills between Scheduled Through and Projected Need. Press a week, a pill or a number to open the week under its row:
+    a strip of tiles (Starts, Consults, Projected need, Open slots) and, under the one picked, its lines (day, time, LASFIR, MRN,
+    provider), each opening the patient; Booked / slots opens the slots still free. The tiles lead with the share scheduled out 4
+    weeks; the clinic decides what share it wants before starting new patients. Every tile can be pressed: the 4-week numbers jump
+    to Week by week; **Open slots** under 10 flips over to list them; **Approved not scheduled** (Consults tab rows whose stage says
+    Approved, not "Not Yet Approved", whose patient hasn't started) opens the Index planner; **Consults scheduled** (IVK consults still
+    Expected, from today) opens Consults. **By protocol** below keeps the Unscheduled only / Everyone / Scheduled only filter and
+    Include paused, and opens any number of protocols (Expand all / Collapse all). **No-shows and late cancels** lists patients by
+    count in the last 30, 60 and 90 days (each one, with its exemption, folded away below). **Projected Access Post-Index** lists
+    each index patient with the week they step down and the visits a week that frees. **Export report** (on Demand and Consults)
+    saves all of this plus the consults scheduled and the consult pipeline (by stage, then every Consults tab row with its waitlist
+    place, waiting on, custom protocol, start booked and next step) as an Excel file, one sheet per section, or opens it laid out as
+    the add-in shows it (report.html) to print or save as a PDF (landscape). It has LASFIR codes and MRNs: MHS OneDrive or
+    SharePoint only.
+  - **Consults**: the stage tiles (each stage on the Consults tab with its count; pressed, the Consults list shows only that stage),
+    **Scheduled upcoming** (IVK consults still expected, with day, time, LASFIR, MRN and provider; the wider report keeps the
+    patient on IVK consults only), the **Start Waitlist** (below) and the Consults list. A waitlisted patient can have a **custom
+    protocol**: steps of any number of treatments, every 1 to 8 weeks, for any number of weeks, the last one ongoing if wanted (a
+    one-treatment trial; 2 a week for a week, then weekly, then every other week). It shows as a pill that opens its schedule, and
+    their place in line doesn't change. Saved on tblIvkPatient's Protocol column (added the first time).
+  - **Index planner**: the PA Approved patients not yet scheduled in their place on the Start Waitlist (#1 in line, ...), then
+    patients added here. **Add manually** takes a LASFIR and MRN, or anyone at stages 1 to 3 on the Consults tab (stage 3 first).
+    **Starts** lists every treatment start from today, the ones in NextGen and, set apart in amber (red once late), the holds still
+    to book there.
+  - **Templates** (the provider grids; the providers are toggled at the top
     right of the template card).
 - **Patients**: a table of everyone on the Master Patient Tracker that sorts by any column, ascending or descending (press the
   header again): patient, protocol, status, protocol last confirmed, booked through, needs. Chips: Needs attention, New patients

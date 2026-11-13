@@ -184,16 +184,32 @@ test("no-shows and late cancels by patient over 30, 60 and 90 days", () => {
   assert.deepEqual(W.map(x => [x.code, x.ns, x.lc, x.exempt]), [["AAA", [1, 1, 2], [0, 1, 1], ""], ["BBB", [0, 0, 0], [1, 1, 1], "kpva"]]);
 });
 
-test("Access weeks: IVK consults at this clinic and treatment starts booked each week; cancelled, no-shows and esketamine aside", () => {
+test("Access weeks: every IVK consult at this clinic counts in its week but cancelled ones; the tile counts only those still expected", () => {
   const A = C.appts([AP_H, ap("990301", "ONEPAT", T + 1, 540, "IV Ketamine Start"), ap("990302", "TWOPAT", T + 8, 540, "IV Ketamine Start"), ap("990303", "THRPAT", T + 8, 600),
     ["990304", "", T + 9, 540 / 1440, RIV, "IV Ketamine Start", "Cancelled", "Castro Street", "FOUPAT", ""]]);
-  const O = C.otherRows([C.OTHER_COLS, [C.isoOf(T + 1), "10:00 AM", RIV, "IVK Consult", "Expected", "Castro Street"], [C.isoOf(T + 2), "11:00 AM", RIV, "IV Ketamine Consult", "Expected", ""],
-    [C.isoOf(T + 2), "1:00 PM", RIV, "IV Ketamine Consult", "No Show", "Castro Street"], [C.isoOf(T + 3), "1:00 PM", RIV, "Esketamine Consult", "Expected", "Castro Street"],
-    [C.isoOf(T + 8), "1:00 PM", RIV, "IVK Consult", "Expected", "Oakland"], [C.isoOf(T + 15), "1:00 PM", RIV, "TMS Consult", "Expected", "Castro Street"]]);
+  const O = C.otherRows([C.OTHER_COLS, [C.isoOf(T + 1), "10:00 AM", RIV, "IVK Consult", "Expected", "Castro Street", "990311", "CONONE"], [C.isoOf(T + 2), "11:00 AM", RIV, "IV Ketamine Consult", "Expected", "", "990312", "CONTWO"],
+    [C.isoOf(T + 2), "1:00 PM", RIV, "IV Ketamine Consult", "No Show", "Castro Street", "990313", "CONTRE"], [C.isoOf(T + 2), "2:00 PM", RIV, "IVK Consult", "Cancelled", "Castro Street", "990314", "CONFOU"],
+    [C.isoOf(T + 3), "1:00 PM", RIV, "Esketamine Consult", "Expected", "Castro Street", "", ""],
+    [C.isoOf(T + 8), "1:00 PM", RIV, "IVK Consult", "Expected", "Oakland", "990315", "CONFIV"], [C.isoOf(T + 15), "1:00 PM", RIV, "TMS Consult", "Expected", "Castro Street", "", ""]]);
   const B = C.weekBookings({ appts: A, others: O, today: T, weeks: 4, cfg: Object.assign({}, cfg, { Clinic: "Castro" }) });
-  assert.deepEqual(B.weeks.map(w => [w.consults, w.starts]), [[2, 1], [0, 1], [0, 0], [0, 0]], "Oakland's consult, the no-show, esketamine and TMS left out");
-  assert.equal(B.ahead, 2); assert.equal(B.ahead4, 2); assert.ok(B.any);
+  assert.deepEqual(B.weeks.map(w => [w.consults, w.starts]), [[3, 1], [0, 1], [0, 0], [0, 0]], "the no-show counts; cancelled, Oakland, esketamine and TMS don't");
+  assert.deepEqual(B.weeks[0].CL.map(x => x.code), ["CONONE", "CONTWO", "CONTRE"], "each consult keeps its patient, by day and time");
+  assert.equal(B.ahead, 2, "the tile: only the ones still expected"); assert.equal(B.ahead4, 2); assert.ok(B.any);
+  assert.deepEqual(B.weeks[1].SL.map(x => x.code), ["TWOPAT"], "the week's starts, with who");
   assert.ok(!C.weekBookings({ appts: A, others: [], today: T, weeks: 2, cfg }).any, "no consults on the report");
+});
+
+test("custom protocols: any steps, read back from the cell, as a schedule with the first 4 weeks counted", () => {
+  const P = C.protoParse(C.protoText({ name: "Slow start", note: "", steps: [{ n: 2, every: 1, weeks: 1 }, { n: 1, every: 1, weeks: 4 }, { n: 1, every: 2, weeks: null }] }));
+  assert.equal(P.name, "Slow start"); assert.equal(P.steps.length, 3);
+  const Sc = C.protoSchedule(P, 4);
+  assert.deepEqual(Sc.lines.map(l => [l.from, l.to, l.text]), [[1, 1, "2 treatments in 1 week"], [2, 5, "1 a week for 4 weeks"], [6, null, "1 every 2 weeks, ongoing"]]);
+  assert.equal(Sc.inHorizon, 5); assert.equal(Sc.total, null, "ongoing has no total");
+  const trial = C.protoSchedule(C.protoParse('{"steps":[{"n":1,"every":1,"weeks":1}]}'));
+  assert.deepEqual([trial.lines[0].text, trial.total], ["1 treatment", 1]);
+  assert.equal(C.protoParse("not json"), null); assert.equal(C.protoParse('{"steps":[]}'), null);
+  assert.equal(C.protoParse('{"steps":[{"n":1,"every":1,"weeks":null},{"n":1,"every":1,"weeks":2}]}').steps.length, 1, "only the last step can be ongoing");
+  assert.equal(C.stageNo("3. PA Submitted - Not Yet Approved"), 3); assert.equal(C.stageNo("Unclear"), null);
 });
 
 test("approved not scheduled: Approved on the Consults tab and not started; Not Yet Approved, started and closed aside", () => {

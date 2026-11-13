@@ -1,0 +1,68 @@
+<!doctype html>
+<html lang="en" data-theme="light">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>IVK Access report</title>
+<!--
+  The Access report laid out as the add-in shows it (its own style.css: tiles, cards, tables and pills), to print or save as a PDF.
+  Shown in a frame over the add-in; the sections arrive by postMessage from the add-in (same origin), every cell already worded, and
+  live only in this page's memory. It has LASFIR codes and MRNs: print to a clinic printer, save the PDF only where PHI is allowed.
+-->
+<link rel="stylesheet" href="style.css?v=33">
+<style>
+body{margin:0;background:var(--bg);color:var(--ink)}
+.rbar{position:sticky;top:0;z-index:5;display:flex;align-items:center;gap:8px;padding:10px 16px;background:var(--surface);box-shadow:var(--shadow)}
+.rbar .rmsg{flex:1;font-size:13.5px;color:var(--muted)}
+.rpage{max-width:1200px;margin:0 auto;padding:24px 28px 40px}
+.rhead{display:flex;justify-content:space-between;align-items:flex-end;gap:16px;margin-bottom:18px}
+.rhead img{height:38px;width:auto}
+.rpage .stats{margin-bottom:16px}
+.rpage .tt.dm th{white-space:nowrap}
+@page{size:letter landscape;margin:.4in}
+@media print{
+  .rbar{display:none}
+  html,body{background:#fff}
+  .rpage{max-width:none;padding:0}
+  *{-webkit-print-color-adjust:exact;print-color-adjust:exact}
+  .card,.stat{box-shadow:0 0 0 1px #E3E6E1!important}
+  .stats{break-inside:avoid}
+  .tt tr{break-inside:avoid}.tt thead{display:table-header-group}
+  .dmt .lh{break-after:avoid}
+  .tscroll{overflow:visible}
+}
+</style>
+</head>
+<body>
+<div class="rbar"><span class="rmsg" id="msg" role="status">Waiting for the report from the IVK Tracker…</span>
+  <button class="btn primary sm inl" id="bPrint" disabled>Print or save as PDF</button><button class="btn ghost sm" id="bClose">Close</button></div>
+<main class="rpage" id="out"></main>
+<script>
+(function () {
+  "use strict";
+  const $ = id => document.getElementById(id);
+  const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c]));
+  const plural = (n, a) => `${n} ${n === 1 ? a : a + "s"}`;
+  const tell = m => { try { parent.postMessage(Object.assign({ forms: "" }, m), location.origin); } catch (e) { /* opened on its own */ } };
+  /* R = { title, asOf, by, sections: [{ title, kind ("tiles" for the summary), head, rows, note, pills: { column name: "st" | "co" } }] } */
+  function render(R) {
+    const tiles = s => `<div class="stats">${s.rows.map(r => `<div class="stat"><small>${esc(r[0])}</small><b>${esc(r[1] === "" ? "—" : r[1])}</b>${r[2] ? `<span>${esc(r[2])}</span>` : ""}</div>`).join("")}</div>`;
+    const table = s => { const pk = s.head.map(h => (s.pills || {})[h] || "");
+      const td = (c, j) => `<td>${pk[j] && c !== "" ? `<span class="wpill ${pk[j]}${+c ? "" : " z"}">${esc(c)}</span>` : esc(c)}</td>`;
+      return `<section class="card dmt"><div class="lh"><h2>${esc(s.title)}</h2><span>${s.rows.length ? plural(s.rows.length, "row") : "none"}</span></div>
+        ${s.rows.length ? `<div class="tscroll"><table class="tt dm"><thead><tr>${s.head.map(h => `<th>${esc(h)}</th>`).join("")}</tr></thead><tbody>${s.rows.map(r => `<tr>${r.map(td).join("")}</tr>`).join("")}</tbody></table></div>` : `<p class="note">None.</p>`}
+        ${s.note ? `<p class="note">${esc(s.note)}</p>` : ""}</section>`; };
+    $("out").innerHTML = `<div class="rhead"><div><h1>${esc(R.title)}</h1><p class="sub">As of ${esc(R.asOf)}${R.by ? `, by ${esc(R.by)}` : ""}</p></div><img src="assets/mhs-logo.png" alt="Mindful Health Solutions"></div>
+      ${R.sections.map(s => s.kind === "tiles" ? tiles(s) : table(s)).join("")}`;
+    $("msg").textContent = "The Access report. Patient codes and MRNs: print only to a clinic printer, and save the PDF only to MHS OneDrive or SharePoint.";
+    $("bPrint").disabled = false; $("bPrint").focus();
+  }
+  $("bPrint").onclick = () => window.print();
+  $("bClose").onclick = () => { $("out").innerHTML = ""; tell({ forms: "close" }); };
+  window.addEventListener("message", ev => { if (ev.origin !== location.origin || ev.source !== parent) return; const m = ev.data || {}; if (m.forms === "data" && m.data && m.data.report) render(m.data.report); });
+  if (window.__reportTest) render(window.__reportTest);   // the harness sets invented values here
+  else tell({ forms: "ready" });
+})();
+</script>
+</body>
+</html>
