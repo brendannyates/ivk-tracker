@@ -512,6 +512,7 @@ button.avrow:hover{background:var(--surface-3)}button.avrow + button.avrow{box-s
 .detail .tags{margin-top:12px}
 .tag{font-size:14px;font-weight:500;padding:3px 10px;border-radius:12px;background:var(--surface-2);color:var(--muted)}
 .tag.st{background:var(--start-soft);color:var(--ink)}.tag.ix{background:var(--index-soft);color:var(--ink)}
+.tag.bad{background:var(--danger-soft);color:var(--danger);font-weight:600}
 .vfacts{margin-top:14px;padding-top:14px;border-top:1px solid var(--surface-2)}
 .ktab.fu{background:var(--surface-2)}.row .ktab{margin-right:8px}
 .pvtoday.quiet{background:var(--surface-3)}
