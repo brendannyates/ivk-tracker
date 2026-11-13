@@ -50,8 +50,9 @@ sits right of the clinic name at the top left and doesn't move (dev-updates.js, 
     and open slots); or laid out as the add-in shows it (report.html) to print or save as a PDF (landscape). It has LASFIR codes and MRNs: MHS OneDrive or
     SharePoint only.
   - **Consults**: the stage tiles (each stage on the Consults tab with its count; pressed, the Consults list shows only that stage),
-    **Scheduled upcoming** (IVK consults still expected, with day, time, LASFIR, MRN and provider; the wider report keeps the
-    patient on IVK consults only), the **Start Waitlist** (below) and the Consults list. A waitlisted patient can have a **custom
+    then the **Start Waitlist** (below) with the Consults list under it, beside the waitlisted patient's planning card (kept in view
+    on the right), then **Scheduled upcoming** (IVK consults still expected, with day, time, LASFIR, MRN and provider; the wider
+    report keeps the patient on IVK consults only). A waitlisted patient can have a **custom
     protocol**: steps of any number of treatments, every 1 to 8 weeks, for any number of weeks, the last one ongoing if wanted (a
     one-treatment trial; 2 a week for a week, then weekly, then every other week). It shows as a pill that opens its schedule, and
     their place in line doesn't change. Saved on tblIvkPatient's Protocol column (added the first time).
