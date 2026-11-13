@@ -1,6 +1,18 @@
 {
   "updates": [
     {
+      "id": "2026-11-12-access-drill",
+      "date": "2026-11-12",
+      "bullets": [
+        "New: Week by week has Starts and Consults columns. Press a week, a pill or a number to see what's behind it: the starts, the consults, who still needs visits, and the open slots, each with the patient's code and MRN.",
+        "Changed: Consults counts every IVK consult booked that week except cancelled ones. The Consults scheduled tile counts only those still expected.",
+        "New: Every tile on Demand can be pressed. Open slots under 10 flips over to list them. By protocol has Expand all and Collapse all.",
+        "New: The Waitlist page is now Consults, with stage tiles, Scheduled upcoming and the Start Waitlist. A waitlisted patient can have a custom protocol (any steps), shown as a pill that opens its schedule.",
+        "Changed: The Index planner lists approved patients in their place in line, has Add manually (type a LASFIR and MRN, or pick anyone at stages 1 to 3), and a Starts list with the holds still to book in NextGen set apart.",
+        "Changed: Print or PDF on Export report now looks like the add-in."
+      ]
+    },
+    {
       "id": "2026-11-12-access-report",
       "date": "2026-11-12",
       "bullets": [

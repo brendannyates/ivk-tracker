@@ -333,8 +333,9 @@
 
   /* ---------- frame ---------- */
   const NAV = [["today", "Today"], ["schedule", "Schedule"], ["access", "Access"], ["patients", "Patients"], ["avail", "Availability"]];
-  /* Access holds four pages, picked with the chips at its top: demand by protocol, the waitlist, the index planner, the templates */
-  const ACCESS = [["access", "Demand"], ["consults", "Waitlist"], ["index", "Index planner"], ["template", "Templates"]];
+  /* Access holds four pages, picked with the chips at its top: demand, the consults (with the Start Waitlist), the index planner (the
+     approved patients in line, the starts and holds), the templates */
+  const ACCESS = [["access", "Demand"], ["consults", "Consults"], ["index", "Index planner"], ["template", "Templates"]];
   const inAccess = v => ACCESS.some(a => a[0] === v);
   const navOn = k => k === "access" ? inAccess(S.view) : S.view === k;
   function badges() {
@@ -831,7 +832,9 @@
     const out = new Map();
     for (const c of S.CS) if (c.state === "act" && c.mrn && /treatment start/i.test(c.flag)) out.set(c.mrn, { mrn: c.mrn, code: c.code, c, from: `Consult ${c.consult != null ? C.fmtD(c.consult) : ""}`.trim() });
     for (const [mrn, pl] of S.plans) { if (/^done$/i.test(pl.note)) { out.delete(mrn); continue; } const o = out.get(mrn) || { mrn, code: pl.code || S.PM.get(mrn)?.code || "(no code)", from: "Added here" }; o.pl = pl; out.set(mrn, o); }
-    return [...out.values()].map(o => Object.assign(o, { p: S.PM.get(o.mrn) || null, holds: holdsOf(o.mrn) }));
+    /* PA Approved, not yet scheduled: in their place on the Start Waitlist; patients added here after them */
+    const pos = new Map((S.WL?.list || []).map(w => [w.mrn, w.pos]));
+    return [...out.values()].map(o => Object.assign(o, { p: S.PM.get(o.mrn) || null, holds: holdsOf(o.mrn), pos: pos.get(o.mrn) ?? null })).sort((a, b) => (a.pos ?? 1e9) - (b.pos ?? 1e9));
   }
   /* the plan for one patient: protocol, start, availability, and the proposal (or their holds) */
   function ipModel(o) {
@@ -876,10 +879,14 @@
       const miss = o.holds.some(h => h.conf === "missing"), pend = o.holds.some(h => h.conf === "pending");
       const st = hl ? `<span class="f${hl.cls === "late" ? " bad" : ""}">${hl.cls === "late" ? "Holds not confirmed" : `${plural(o.holds.filter(h => h.state !== "booked").length, "hold")} to book`}</span>`
         : booked ? (miss ? `<span class="f bad">Not on the NextGen list</span>` : pend ? `<span class="f">Booked: upload to confirm</span>` : `<span class="ok">On the appointment list</span>`) : "Not held yet";
-      return `<button class="crow" data-act="ipPick" data-m="${esc(o.mrn)}" aria-pressed="${S.ipSel === o.mrn}"${S.ipSel === o.mrn ? ' title="Press again to plan without a patient"' : ""}><span class="p">${esc(o.code)}${mrnTag(o.mrn)}</span><span class="proto">${esc(o.from)}${o.p ? `<br>${esc(o.p.status || "")}` : ""}</span><span class="thru">${o.pl?.start != null ? `Start ${C.fmtD(o.pl.start)}` : o.c?.start != null && o.c.start > todayS() ? `Start ${C.fmtD(o.c.start)}` : "As soon as possible"}</span><span class="flags">${st}</span></button>`; };
+      return `<button class="crow" data-act="ipPick" data-m="${esc(o.mrn)}" aria-pressed="${S.ipSel === o.mrn}"${S.ipSel === o.mrn ? ' title="Press again to plan without a patient"' : ""}><span class="p">${esc(o.code)}${mrnTag(o.mrn)}${protoOf(o.mrn) ? `<span class="wpill pr">${esc(protoOf(o.mrn).name || "Custom protocol")}</span>` : ""}</span><span class="proto">${o.pos ? `<b>#${o.pos} in line</b> · ` : ""}${esc(o.from)}${o.p ? `<br>${esc(o.p.status || "")}` : ""}</span><span class="thru">${o.pl?.start != null ? `Start ${C.fmtD(o.pl.start)}` : o.c?.start != null && o.c.start > todayS() ? `Start ${C.fmtD(o.c.start)}` : "As soon as possible"}</span><span class="flags">${st}</span></button>`; };
     /* new index patients aren't on the Master Patient Tracker yet: they're planned by LASFIR and MRN. The tracker list is only for
        changing the index visits of a patient already in index. */
     const opts = S.P.filter(p => inIndex(p) && !L.find(o => o.mrn === p.mrn)).sort((a, b) => a.code.localeCompare(b.code)).map(p => `<option value="${esc(p.mrn)}">${esc(p.code)}${p.status ? `, ${esc(p.status)}` : ""}${p.start != null ? `, started ${C.fmtD(p.start)}` : ""}</option>`).join("");
+    /* Add manually can also take anyone at stages 1 to 3 on the Consults tab, stage 3 first, then by consult date */
+    const csPick = S.CS.filter(c => c.mrn && [1, 2, 3].includes(C.stageNo(c.stage)) && !L.find(o => o.mrn === c.mrn) && c.state !== "closed")
+      .sort((a, b) => C.stageNo(b.stage) - C.stageNo(a.stage) || (a.consult ?? 1e9) - (b.consult ?? 1e9) || a.code.localeCompare(b.code))
+      .map(c => `<option value="${esc(c.mrn)}">${esc(c.code || c.mrn)}, ${esc(c.stage)}${c.consult != null ? `, consult ${esc(C.fmtD(c.consult))}` : ""}</option>`).join("");
     const U = unconfirmed(), uMiss = U.filter(h => h.conf === "missing"), uPts = new Set(U.map(h => h.mrn)).size;
     const confirmBanner = U.length ? `<div class="msg ${uMiss.length ? "bad" : "warn"}"><b>${uMiss.length ? `${plural(new Set(uMiss.map(h => h.mrn)).size, "patient")}’s booked visits aren’t on the NextGen list uploaded ${listTime()}.` : `${plural(uPts, "patient")}’s index visits are marked booked, not confirmed yet.`}</b>
       ${uMiss.length ? "Check them in NextGen, then upload the report again." : `Run the NextGen appointment report and upload it to confirm the visits are booked (last upload ${listTime()}).`} <div class="actions">${uploadBtn("Upload the NextGen report", "primary inl")}</div></div>` : "";
@@ -887,9 +894,10 @@
       ${S.grids.length ? "" : `<div class="msg warn"><b>No provider template yet.</b> Plans are made from each provider’s start/index slots and the post checks that line up with them. <button class="btn ghost sm" data-act="nav" data-v="template">Set up the template</button></div>`}
       <div class="cols"><div class="stack"><section class="card plist"><div class="chead"><span>Patient</span><span>From</span><span>Start</span><span>Holds</span></div>
         ${L.map(row).join("") || `<p class="empty" style="padding:10px 14px">Nobody to plan. Add a new patient by LASFIR and MRN below. Approved consults waiting for a treatment start show here too.</p>`}
-        <div class="addpt new"><span class="lbl">New patient</span><input id="ipNewCode" placeholder="LASFIR" aria-label="New patient’s LASFIR code" maxlength="8" autocomplete="off" spellcheck="false"><input id="ipNewMrn" placeholder="MRN" aria-label="New patient’s MRN" inputmode="numeric" autocomplete="off"><button class="btn ghost sm line" data-act="ipNewPt">Plan</button></div>
+        <div class="addpt new"><span class="lbl">Add manually</span><input id="ipNewCode" placeholder="LASFIR" aria-label="New patient’s LASFIR code" maxlength="8" autocomplete="off" spellcheck="false"><input id="ipNewMrn" placeholder="MRN" aria-label="New patient’s MRN" inputmode="numeric" autocomplete="off"><button class="btn ghost sm line" data-act="ipNewPt">Plan</button></div>
+        ${csPick ? `<div class="addpt"><select id="ipCsPick" aria-label="Pick a patient from the Consults tab"><option value="">Or pick from the Consults tab, stage 3 down to 1…</option>${csPick}</select></div>` : ""}
         <div class="addpt"><select id="ipAdd" aria-label="Change a patient in index"><option value="">Change the visits of a patient in index…</option>${opts}</select><button class="btn ghost sm line" data-act="ipAddPt">Change</button></div></section>
-        ${holdsHTML(byPt)}${accessHTML(model)}</div>
+        ${startsHTML(byPt)}${accessHTML(model)}</div>
       <div class="stack">${cur ? ipCardHTML(cur, model) : model ? draftCardHTML(model) : ""}${eligibleHTML(cur)}</div></div>`;
   }
   /* a plan with no patient yet: explored from any start, then held for whoever it's for */
@@ -930,6 +938,16 @@
   }
   const altHTML = (r, n) => { const A = C.altSlots(r, n, +S.cfg.MinGapDays).slice(0, 12);
     return `<div class="alts">${A.length ? A.map((s, i) => `<button data-act="ipUse" data-n="${n}" data-i="${i}">${dshort(s.date)}<small>${C.fmtT(s.time)}, ${esc(provLabel(s.provider))}${s.postUse === "flexpost" ? ", flex post check" : ""}</small></button>`).join("") : `<span class="muted small">No other open index start keeps a day off on each side.</span>`}</div>`; };
+  /* Starts: every treatment start from today, the ones in NextGen and, set apart in amber (red once late), the holds still to book
+     in NextGen, one line per patient at their first held time */
+  function startsHTML(byPt) {
+    const T = todayS(), ng = S.A.filter(a => /start/i.test(a.event) && a.date >= T && !C.isCancelled(a) && !/no ?show/i.test(a.status));
+    const hl = [...byPt.values()].map(hs => { const h0 = hs.slice().sort((a, b) => a.date - b.date || a.time - b.time)[0]; return { date: h0.date, time: h0.time, provider: h0.provider, mrn: h0.mrn, code: h0.code, hs, L: holdLead(hs) }; });
+    const rows = ng.map(a => ({ date: a.date, time: a.time, provider: a.provider, mrn: a.mrn, code: a.code })).concat(hl).sort((a, b) => a.date - b.date || (a.time ?? 0) - (b.time ?? 0));
+    const row = x => x.hs ? `<div class="srow hold${x.L.cls === "late" ? " late" : ""}" role="button" tabindex="0" data-act="ipPick" data-m="${esc(x.mrn)}"><span class="d">${esc(when(x))}</span><span class="p">${esc(x.code || "—")}${mrnTag(x.mrn)}</span><span class="m">${esc(provLabel(x.provider))}</span><span class="s"><b>Hold: ${plural(x.hs.length, "time")} to book in NextGen</b><small>${esc(x.L.t)}</small></span></div>`
+      : `<div class="srow"${ptAct(x.mrn)}><span class="d">${esc(when(x))}</span><span class="p">${esc(x.code || "—")}${mrnTag(x.mrn)}</span><span class="m">${esc(provLabel(x.provider))}</span><span class="s"><span class="ok">In NextGen</span></span></div>`;
+    return `<section class="card list starts"><div class="lh"><h2>Starts</h2><span>${ng.length} in NextGen${hl.length ? `, ${plural(hl.length, "patient")}’s holds to book` : ""}</span></div>${rows.map(row).join("") || `<p class="note">No treatment starts booked or held from today.</p>`}</section>`;
+  }
   /* every hold waiting to be booked, oldest first; past HoldMin they turn red */
   function holdsHTML(byPt) {
     if (!byPt.size) return "";
@@ -979,6 +997,8 @@
       <ul class="key">${sw("start", "Start/index")}${sw("followup", "Follow-up")}${sw("post", "IVK post check")}${sw("flexpost", "Flex post check")}<li><span class="tsw gen"></span>Not IVK</li><li><span class="ktab st"></span>Treatment start</li><li><span class="ktab ix"></span>Index visit</li><li><span class="miss sm">i</span>Not on its template slot</li></ul>
       <p class="note">${model ? (S.ipAlt != null ? `Pick an open index start for treatment ${S.ipAlt + 1}.` : "Pick an open index start to make it treatment 1.") : "Pick an open index start to plan from it, with or without a patient. Hover a start to see its post check."} “Index open” means all ${C.indexN(S.cfg)} index visits still fit from it.</p></section>`;
   }
+  /* the selected patient's custom protocol on their planner card (the row's pill is only a label: the row itself is a button) */
+  const ipProto = o => { const P = protoOf(o.mrn); return P ? `<div class="psub card-in"><b>${esc(P.name || "Custom protocol")}</b>${protoLines(P)}</div>` : ""; };
   function ipCardHTML(o, model) {
     const hs = o.holds, hl = holdLead(hs), p = o.p, cfg = S.cfg;
     const meta = [o.from, o.c?.provider, p?.status, p?.freq].filter(Boolean).join(", ");
@@ -990,7 +1010,7 @@
       const st = h => `<li class="step ${cls(h)}"><span class="k">${h.conf === "onlist" ? "" : h.n || ""}</span><span><span class="t">${dshort(h.date)}, ${C.fmtT(h.time)}</span><span class="m">${esc(provLabel(h.provider))}, post check ${C.fmtT(h.time + +cfg.PostCheckMin)}${how(h)}</span></span><span class="w">Treatment ${h.n || ""}</span></li>`;
       const lead = hl ? hl : miss.length ? { cls: "late", t: `${plural(miss.length, "booked visit")} not on the NextGen list uploaded ${listTime()}. Check NextGen, then upload again` }
         : pend.length ? { cls: "soon", t: `Marked booked in NextGen. Upload a fresh appointment list to confirm ${pend.length === all.length ? "them" : `the other ${pend.length}`}` } : { cls: "ready", t: `All ${plural(all.length, "visit")} on the appointment list` };
-      return `<aside class="card detail" aria-label="${esc(o.code)}"><div class="dh"><div><div class="name">${esc(o.code)}${o.mrn ? `<span class="mrn">MRN ${esc(o.mrn)}</span>` : ""}</div><div class="meta">${esc(meta)}</div></div></div>
+      return `<aside class="card detail" aria-label="${esc(o.code)}"><div class="dh"><div><div class="name">${esc(o.code)}${o.mrn ? `<span class="mrn">MRN ${esc(o.mrn)}</span>` : ""}</div><div class="meta">${esc(meta)}</div></div></div>${ipProto(o)}
         <p class="lead ${lead.cls}">${esc(lead.t)}</p>
         <ul class="steps">${all.map(st).join("")}</ul>
         ${open.length ? `<button class="btn primary" data-act="ipBooked" data-m="${esc(o.mrn)}">Booked in NextGen</button><div class="actions"><button class="btn ghost" data-act="ipRelease" data-m="${esc(o.mrn)}">Release ${open.length === 1 ? "the hold" : "the holds"}</button></div>`
@@ -1018,7 +1038,7 @@
         <span class="m">Week ${x.week}, ${esc(provLabel(x.provider))}, ${x.fixed ? "already booked, " : ""}post check ${C.fmtT(x.post)}${x.postUse === "flexpost" ? " (flex)" : ""}${x.gap != null ? `, ${plural(x.gap, "day")} after the last` : ""}${x.long ? ` (over ${cfg.MaxGapDays})` : ""}</span>
         ${S.ipAlt === x.n - 1 ? alt(x.n - 1) : ""}</span><span class="w">${x.fixed ? "" : `<button class="btn mute sm" data-act="ipAlt" data-n="${x.n - 1}">${S.ipAlt === x.n - 1 ? "Keep" : "Change"}</button>`}</span></li>`;
     const last = it[it.length - 1], afterD = last ? last.date + (C.freqDays(cfg.AfterIndex) || 7) : null;
-    return `<aside class="card detail" aria-label="${esc(o.code)}"><div class="dh"><div><div class="name">${esc(o.code)}${o.mrn ? `<span class="mrn">MRN ${esc(o.mrn)}</span>` : ""}</div><div class="meta">${esc(meta)}</div></div></div>
+    return `<aside class="card detail" aria-label="${esc(o.code)}"><div class="dh"><div><div class="name">${esc(o.code)}${o.mrn ? `<span class="mrn">MRN ${esc(o.mrn)}</span>` : ""}</div><div class="meta">${esc(meta)}</div></div></div>${ipProto(o)}
       <p class="lead ${lead.cls}">${esc(lead.t)}</p>${inputs}
       ${it.length ? `<div class="section"><div class="h"><h2>Index visits</h2><span>week 1 starts ${dshort(it[0].date)}</span></div><ul class="steps">${it.map(step).join("")}</ul>
         ${r.notes.map(n => `<p class="note warn">${esc(n)}</p>`).join("")}${afterD ? `<p class="note">Then ${esc(cfg.AfterIndex)}, from around ${dshort(afterD)}.</p>` : ""}</div>` : r.notes.map(n => `<p class="note warn">${esc(n)}</p>`).join("")}
@@ -1071,6 +1091,21 @@
   /* What the schedule has to hold at everyone's current protocol, against how they're booked and what the templates offer, week by
      week; and when index patients stepping down to once a week (after treatment 6) open access. */
   const n1 = v => { const r = Math.round(v * 10) / 10; return Number.isInteger(r) ? String(r) : r.toFixed(1); };
+  /* where a patient line goes when pressed: the patient view (on the tracker), else their Consults tab row, else nowhere */
+  const ptAct = mrn => mrn && S.PM.get(mrn) ? ` data-act="openPt" data-m="${esc(mrn)}" role="button" tabindex="0"` : mrn && S.CS.some(c => c.mrn === mrn) ? ` data-act="editConsult" data-m="${esc(mrn)}" role="button" tabindex="0"` : "";
+  const when = x => `${dshort(x.date)}${x.time != null ? `, ${C.fmtT(x.time)}` : ""}`;
+  /* the open IVK starts on the templates between two days (weekdays, from today) */
+  const openSlots = (from, to) => { if (!S.grids.length) return []; const X = ipOpts().X, out = [];
+    for (let d = Math.max(from, todayS()); d < to; d++) { const wd = C.weekday(d); if (wd < 1 || wd > 5) continue; for (const sl of C.daySlots(d, X).slots) if (sl.open) out.push(sl); }
+    return out.sort((a, b) => a.date - b.date || a.time - b.time); };
+  /* a custom protocol as its schedule: week ranges and what each step is */
+  const protoLines = (P, cls) => { const Sc = C.protoSchedule(P, 4);
+    return `<ol class="psteps${cls ? ` ${cls}` : ""}">${Sc.lines.map(l => `<li><span class="wk">${l.to == null ? `Week ${l.from} on` : l.from === l.to ? `Week ${l.from}` : `Weeks ${l.from} to ${l.to}`}</span>${esc(l.text)}</li>`).join("")}</ol>
+      <p class="note">${plural(Sc.inHorizon, "treatment")} in the first 4 weeks${Sc.total != null ? `, ${Sc.total} in all` : ""}.${P.note ? ` ${esc(P.note)}` : ""}</p>`; };
+  const protoOf = mrn => S.PT?.get(mrn)?.proto || null;
+  /* the Custom protocol pill: pressed, it opens the schedule under the row */
+  const protoPill = mrn => protoOf(mrn) ? `<button type="button" class="wpill pr" data-act="protoShow" data-m="${esc(mrn)}" aria-expanded="${!!S.protoOpen?.has(mrn)}">${esc(protoOf(mrn).name || "Custom protocol")}</button>` : "";
+  const protoUnder = mrn => protoOf(mrn) && S.protoOpen?.has(mrn) ? `<div class="psub">${protoLines(protoOf(mrn))}</div>` : "";
   const dmBase = () => ({ patients: S.P, appts: S.A, holds: S.holds, listAt: S.raw.apptUpdated, today: todayS(), cfg: S.cfg, weeks: 12 });
   /* the week table, the tiles and the report: every active patient (not paused), whatever the By protocol filter shows */
   const dmAll = () => memo("dmAll", () => C.demand(Object.assign({ paused: false, sched: "all", X: S.grids.length ? ipOpts().X : null }, dmBase())));
@@ -1088,37 +1123,46 @@
     const den = W[0] ? W[0].den : 0, w4 = W[4] || W[W.length - 1];
     const sub = `${plural(den, "active patient")} with a protocol (PRN and paused aside). ${r0(D.perWeek)} visits a week at their protocols.`;
     const seg = (k, l) => `<button data-act="dmSched" data-v="${k}" aria-pressed="${o.sched === k}">${l}</button>`;
-    const bar = `<div class="dmbar"><div class="pick seg" role="group" aria-label="Which patients">${seg("only", "Unscheduled only")}${seg("all", "Everyone")}${seg("exclude", "Scheduled only")}</div>
-      <button class="chip" data-act="dmPaused" aria-pressed="${o.paused}">Include paused</button></div>`;
-    const tile = (l, v, s, cls) => `<div class="stat${cls ? ` ${cls}` : ""}"><small>${l}</small><b>${v}</b>${s ? `<span>${s}</span>` : ""}</div>`;
-    const p4 = D.proj4, open4 = sumW("open", 4);
+    /* every tile can be pressed: the 4-week numbers jump to Week by week; Open slots under 10 flips over to list them */
+    const tile = (l, v, s, cls, act, extra) => `<button type="button" class="stat tap${cls ? ` ${cls}` : ""}" data-act="${act || "dmJump"}"${extra || ""}><small>${l}</small><b>${v}</b>${s ? `<span>${s}</span>` : ""}</button>`;
+    const p4 = D.proj4, open4 = sumW("open", 4), flip = hasT && open4 > 0 && open4 < 10;
+    if (!flip) S.dmFlip = false;
     /* consults and starts by week (the report's IVK consults, the list's starts); the Consults tab's approved patients not started */
     const BK = wkBk(), AW = apprW(), awB = AW.filter(x => x.booked).length;
     const stats = `<div class="stats">${tile("Scheduled out 4 weeks", pct(w4?.thruPct), w4 ? `${w4.thruN} of ${w4.den} booked the week of ${C.fmtD(w4.start)} or later` : "")}
       ${tile("Projected need, next 4 weeks", r0(p4), "visits still to book if everyone keeps their cadence")}
-      ${hasT ? tile("Open slots, next 4 weeks", String(open4), open4 >= p4 ? `${r0(open4 - p4)} left after the projected need` : `${r0(p4 - open4)} short of the projected need`, open4 < p4 ? "warn" : "") : tile("Open slots", "—", "no template yet")}
+      ${!hasT ? tile("Open slots", "—", "no template yet", "", "nav", ' data-v="template"')
+        : S.dmFlip ? `<button type="button" class="stat tap back${S.dmFlipAnim ? " flipin" : ""}" data-act="dmFlip" aria-pressed="true"><small>Open slots, next 4 weeks</small><ul class="slist">${openSlots(T, C.weekStart(T) + 28).map(x => `<li><b>${esc(when(x))}</b> ${esc(provLabel(x.provider))}</li>`).join("")}</ul></button>`
+        : tile("Open slots, next 4 weeks", String(open4), (open4 >= p4 ? `${r0(open4 - p4)} left after the projected need` : `${r0(p4 - open4)} short of the projected need`) + (flip ? ". Press to list them" : ""), `${open4 < p4 ? "warn" : ""}${S.dmFlipAnim ? " flipin" : ""}`, flip ? "dmFlip" : "dmJump", flip ? ' aria-pressed="false"' : "")}
       ${tile("Avg need a week", r0(D.perWeek), `${plural(den, "patient")} at their protocols`)}
-      ${S.raw.tables?.consults ? tile("Approved not scheduled", String(AW.length), `approved on the Consults tab, not started${awB ? `; ${awB} already ${awB === 1 ? "has" : "have"} a start booked` : ""}`) : tile("Approved not scheduled", "—", "no Consults tab")}
-      ${tile("Consults scheduled", BK.any ? String(BK.ahead) : "—", BK.any ? `IVK consults from today, ${BK.ahead4} in the next 4 weeks` : "no IVK consults on the report yet")}</div>`;
-    /* week by week: average need at current protocols, booked against the template, share scheduled through, projected need; the
-       IVK consults and treatment starts booked that week as pills under the week */
-    /* both pills on every week, a zero one muted, so a week with none reads as none rather than missing */
+      ${S.raw.tables?.consults ? tile("Approved not scheduled", String(AW.length), `approved on the Consults tab, not started${awB ? `; ${awB} already ${awB === 1 ? "has" : "have"} a start booked` : ""}`, "", "nav", ' data-v="index"') : tile("Approved not scheduled", "—", "no Consults tab", "", "nav", ' data-v="consults"')}
+      ${tile("Consults scheduled", BK.any ? String(BK.ahead) : "—", BK.any ? `IVK consults still expected from today, ${BK.ahead4} in the next 4 weeks` : "no IVK consults on the report yet", "", "csJump")}</div>`;
+    /* week by week: average need at current protocols, booked against the template, share scheduled through, the starts and IVK
+       consults booked that week, projected need. A row opens to list what's behind its numbers; a pill or a cell opens it there. */
     const pill = (n, cls, one, many, tip) => `<span class="wpill ${cls}${n ? "" : " z"}"${tip ? ` title="${esc(tip)}"` : ""}>${n || 0} ${n === 1 ? one : many}</span>`;
-    const wRow = w => { const sw = shutWeek(w.start), b = BK.weeks[w.w] || {}, pl = (BK.any ? pill(b.consults, "co", "consult", "consults") : "") + pill(b.starts, "st", "start", "starts", b.held ? `${b.held} held in the Index planner, not in NextGen yet` : "");
-      return `<tr><td>${w.w === 0 ? "This week" : C.fmtD(w.start)}${sw ? `<small>Closed ${esc(sw)}</small>` : ""}${pl ? `<span class="wpills">${pl}</span>` : ""}</td><td>${n1(w.expect)}</td>
-        <td>${w.listed}${hasT ? ` / ${w.slots}` : ""}${hasT && w.slots ? `<small>${pct(w.listed / w.slots)} of the template</small>` : ""}</td>
-        <td>${pct(w.thruPct)}<small>${w.thruN} of ${w.den}</small></td><td${w.projNeed ? ' class="flag"' : ""}>${w.projNeed || "—"}</td></tr>`; };
-    const weeks = `<section class="card dmt"><div class="lh"><h2>Week by week</h2><span>Sunday to Saturday, every active patient</span></div><div class="tscroll"><table class="tt dm">
-      <thead><tr><th>Week of</th><th>Avg Need</th><th>Booked${hasT ? " / slots" : ""}</th><th>Scheduled Through</th><th>Projected Need</th></tr></thead>
+    const op = S.wkOpen || {};
+    const cell = (w, t, inner, cls) => `<button type="button" class="wkc${cls ? ` ${cls}` : ""}" data-act="wkOpen" data-w="${w.w}" data-t="${t}" aria-expanded="${op.w === w.w && op.t === t}">${inner}</button>`;
+    const wRow = w => { const sw = shutWeek(w.start), b = BK.weeks[w.w] || {}, on = op.w === w.w;
+      return `<tr class="wk${on ? " on" : ""}" data-act="wkOpen" data-w="${w.w}" data-t=""><td><button type="button" class="dmb" data-act="wkOpen" data-w="${w.w}" data-t="" aria-expanded="${on}"><span class="car" aria-hidden="true"></span>${w.w === 0 ? "This week" : C.fmtD(w.start)}</button>${sw ? `<small>Closed ${esc(sw)}</small>` : ""}</td>
+        <td>${n1(w.expect)}</td>
+        <td>${cell(w, hasT ? "open" : "starts", `${w.listed}${hasT ? ` / ${w.slots}` : ""}${hasT && w.slots ? `<small>${pct(w.listed / w.slots)} of the template</small>` : ""}`)}</td>
+        <td>${pct(w.thruPct)}<small>${w.thruN} of ${w.den}</small></td>
+        <td>${cell(w, "starts", pill(b.starts, "st", "start", "starts", b.held ? `${b.held} held in the Index planner, not in NextGen yet` : ""), "pc")}</td>
+        <td>${BK.any ? cell(w, "consults", pill(b.consults, "co", "consult", "consults"), "pc") : `<span class="muted">—</span>`}</td>
+        <td>${cell(w, "proj", String(w.projNeed || "—"), w.projNeed ? "flag" : "")}</td></tr>${on ? wkDetail(w, b, op.t || "starts", D, hasT) : ""}`; };
+    const weeks = `<section class="card dmt" id="dmWeeks"><div class="lh"><h2>Week by week</h2><span>Sunday to Saturday, every active patient. Press a week, a pill or a number for what’s behind it</span></div><div class="tscroll"><table class="tt dm wkt">
+      <thead><tr><th>Week of</th><th>Avg Need</th><th>Booked${hasT ? " / slots" : ""}</th><th>Scheduled Through</th><th>Starts</th><th>Consults</th><th>Projected Need</th></tr></thead>
       <tbody>${W.map(wRow).join("")}</tbody></table></div>
-      <p class="note"><b>Avg Need</b>: each active patient’s protocol over the week (index ${c.IndexPerWeek} a week to treatment ${D.N}, then ${esc(c.AfterIndex)}; PRN and blank need none). <b>Booked</b>: IVK visits and holds on the list${hasT ? ", out of the template’s IVK slots that week" : ""}. <b>Scheduled Through</b>: active patients with a protocol (not PRN, not paused) booked that week or later. <b>Projected Need</b>: the visits still to book if each patient keeps their cadence past their last booked visit (index patients ${esc(c.AfterIndex)} after treatment ${D.N}). The pills under each week: <b>consults</b>, IVK consults at ${esc(c.Clinic || "this clinic")} on the uploaded report; <b>starts</b>, treatment starts on the list and starts held in the Index planner (the whole week, cancelled and no-shows aside). The consults pill shows once IVK consults are on the report.</p></section>`;
+      <p class="note"><b>Avg Need</b>: each active patient’s protocol over the week (index ${c.IndexPerWeek} a week to treatment ${D.N}, then ${esc(c.AfterIndex)}; PRN and blank need none). <b>Booked</b>: IVK visits and holds on the list${hasT ? ", out of the template’s IVK slots that week; opened, the slots still free" : ""}. <b>Scheduled Through</b>: active patients with a protocol (not PRN, not paused) booked that week or later. <b>Starts</b>: treatment starts on the list and starts held in the Index planner, cancelled and no-shows aside. <b>Consults</b>: every IVK consult at ${esc(c.Clinic || "this clinic")} booked that week on the uploaded report, cancelled ones aside${BK.any ? "" : " (none on the report yet)"}. <b>Projected Need</b>: the visits still to book if each patient keeps their cadence past their last booked visit (index patients ${esc(c.AfterIndex)} after treatment ${D.N}).</p></section>`;
     /* by protocol: one line each; press it for the patients on it */
-    const G = DP.groups, open = S.dmOpen, sum4 = a => a.slice(0, 4).reduce((x, y) => x + y, 0);
+    const G = DP.groups, open = S.dmOpen instanceof Set ? S.dmOpen : (S.dmOpen = new Set()), sum4 = a => a.slice(0, 4).reduce((x, y) => x + y, 0), allOpen = G.length > 0 && G.every(g => open.has(g.freq));
+    const bar = `<div class="dmbar"><div class="pick seg" role="group" aria-label="Which patients">${seg("only", "Unscheduled only")}${seg("all", "Everyone")}${seg("exclude", "Scheduled only")}</div>
+      <button class="chip" data-act="dmPaused" aria-pressed="${o.paused}">Include paused</button><button class="btn ghost sm line dmall" data-act="dmAll" data-v="${allOpen ? "close" : "open"}"${G.length ? "" : " disabled"}>${allOpen ? "Collapse all" : "Expand all"}</button></div>`;
     const pRow = r => `<div class="row"><span class="p">${esc(r.code)}${mrnTag(r.mrn)}</span>
       <span class="i">${r.paused ? "Paused, " : ""}${r.next ? `next ${dshort(r.next.date)}${r.next.hold ? " (hold)" : ""}` : "<b>nothing booked</b>"}, ${r0(sum4(r.expect))} needed in 4 weeks, ${sum4(r.booked)} booked</span>
       <button class="btn ghost sm" data-act="openPt" data-m="${esc(r.mrn)}">Open</button></div>`;
     const pList = g => `<tr class="dmx"><td colspan="4"><div class="dmpl">${g.rows.slice().sort((a, b) => (a.next?.date ?? 1e9) - (b.next?.date ?? 1e9) || a.code.localeCompare(b.code)).map(pRow).join("")}</div></td></tr>`;
-    const gRow = g => `<tr class="dmg${g.freq === "Index" ? " ix" : ""}${open === g.freq ? " on" : ""}"><td><button class="dmb" data-act="dmProto" data-v="${esc(g.freq)}" aria-expanded="${open === g.freq}"><span class="car" aria-hidden="true"></span>${esc(g.freq)}</button></td><td>${g.n}</td><td>${n1(g.perWeek)}</td><td>${g.unsched || ""}</td></tr>${open === g.freq ? pList(g) : ""}`;
+    const gRow = g => `<tr class="dmg${g.freq === "Index" ? " ix" : ""}${open.has(g.freq) ? " on" : ""}"><td><button class="dmb" data-act="dmProto" data-v="${esc(g.freq)}" aria-expanded="${open.has(g.freq)}"><span class="car" aria-hidden="true"></span>${esc(g.freq)}</button></td><td>${g.n}</td><td>${n1(g.perWeek)}</td><td>${g.unsched || ""}</td></tr>${open.has(g.freq) ? pList(g) : ""}`;
     const byProto = `<section class="card dmt"><div class="lh"><h2>By protocol</h2><span>${esc(VIEW[o.sched])}${o.paused ? ", with paused" : ""}: press a protocol for its patients</span></div>${bar}<table class="tt dm dmp">
       <thead><tr><th>Protocol</th><th>Patients</th><th>Visits a week</th><th>Nothing booked</th></tr></thead>
       <tbody>${G.map(gRow).join("") || `<tr><td colspan="4" class="muted">No patients in this view.</td></tr>`}</tbody></table></section>`;
@@ -1128,6 +1172,22 @@
     const steps = `<section class="card dmt"><div class="lh"><h2>Projected Access Post-Index</h2><span>${T2.length ? plural(T2.length, "patient") + " in index" : "nobody in index"}</span></div>
       ${T2.length ? `<p class="note">${firstFree ? `Access starts opening ${firstFree.w === 0 ? "this week" : `the week of ${C.fmtD(firstFree.start)}`}; by the week of ${C.fmtD(W[W.length - 1].start)}, about ${r0(W[W.length - 1].freed)} visits a week are free from index step-downs.` : ""}</p><ul class="steps">${T2.map(tRow).join("")}</ul>` : `<p class="note">Index patients (Induction) show here with the week they step down.</p>`}</section>`;
     return `${setupBanner()}${head("Access", sub, false)}${accessChips()}${stats}${weeks}<div class="cols"><div class="stack">${byProto}${missHTML()}</div><div class="stack">${steps}</div></div>`;
+  }
+  /* A week opened up: a strip of tiles (Starts, Consults, Projected need, and Open slots with a template), the one picked lit; under
+     it, that tile's lines as tiles that only show their edges on hover. A line with a patient opens them. */
+  function wkDetail(w, b, t, D, hasT) {
+    const os = hasT ? openSlots(w.start, w.start + 7) : [], BK = wkBk();
+    const proj = D.rows.filter(r => r.proj[w.w] > 0).sort((x, y) => y.proj[w.w] - x.proj[w.w] || x.code.localeCompare(y.code));
+    const tabs = [["starts", "Starts", b.starts || 0], ["consults", "Consults", BK.any ? b.consults || 0 : "—"], ["proj", "Projected need", w.projNeed || 0]].concat(hasT ? [["open", "Open slots", os.length]] : []);
+    const who = (code, mrn) => `<b>${esc(code || "—")}</b>${mrnTag(mrn)}`;
+    const it = (attrs, top, mid, end, cls) => `<div class="wkit${cls ? ` ${cls}` : ""}"${attrs}><span class="d">${top}</span><span class="p">${mid}</span><span class="m">${end}</span></div>`;
+    const L = { starts: (b.SL || []).map(x => it(ptAct(x.mrn), esc(when(x)), who(x.code, x.mrn), `${esc(provLabel(x.provider))}${x.hold ? ` · <span class="f">Held: book in NextGen</span>` : ""}`, x.hold ? "hold" : "")),
+      consults: (b.CL || []).map(x => it(ptAct(x.mrn), esc(when(x)), who(x.code, x.mrn), `${esc(provLabel(x.provider))} · ${esc(x.status || "Expected")}`)),
+      proj: proj.map(r => it(ptAct(r.mrn), `${r.proj[w.w]} to book`, who(r.code, r.mrn), `${esc(r.freq)} · ${r.thru != null ? `booked through ${esc(C.fmtD(r.thru))}` : "nothing booked"}`)),
+      open: os.map(x => it("", esc(when(x)), esc(provLabel(x.provider)), x.openIndex ? "Open index start" : "Open")) }[t] || [];
+    const EMPTY = { starts: "No treatment starts this week.", consults: BK.any ? "No IVK consults this week." : "No IVK consults on the uploaded report yet. Add them to the NextGen report and upload it.", proj: "Nothing left to book this week at everyone’s cadence.", open: "No open IVK slots left this week." };
+    return `<tr class="wkx"><td colspan="7"><div class="wkd"><div class="wtabs" role="tablist" aria-label="The week of ${esc(C.fmtD(w.start))}">${tabs.map(([k, l, n]) => `<button type="button" class="wtab" role="tab" data-act="wkTab" data-w="${w.w}" data-t="${k}" aria-selected="${t === k}"><small>${l}</small><b>${n}</b></button>`).join("")}</div>
+      ${L.length ? `<div class="wkits">${L.join("")}</div>` : `<p class="note">${EMPTY[t]}</p>`}</div></td></tr>`;
   }
   /* ---------- the Access report (Excel and print): the Demand page's breakdowns and the consult pipeline ---------- */
   /* Sections of { title, head, rows, note }. A cell is text or a number, { d: serial } a date, { p: 0..1 } a share. Patients by
@@ -1139,16 +1199,18 @@
     const w4 = W[4] || W[W.length - 1], open4 = W.slice(0, 4).reduce((a, w) => a + w.open, 0), awSet = new Set(AW.map(x => x.c.mrn));
     const startOf = mrn => C.futureOf(S.A, mrn, T - 1).find(a => /start/i.test(a.event)) || null;
     const hasCs = !!S.raw.tables?.consults;
-    const summary = { title: "Summary", head: ["Measure", "Value", "Detail"], rows: [
+    const summary = { title: "Summary", kind: "tiles", head: ["Measure", "Value", "Detail"], rows: [
       ["Scheduled out 4 weeks", pc(w4?.thruPct), w4 ? `${w4.thruN} of ${w4.den} booked the week of ${C.fmtD(w4.start)} or later` : ""],
       ["Projected need, next 4 weeks", Math.round(D.proj4), "visits still to book if everyone keeps their cadence"],
       ["Open slots, next 4 weeks", hasT ? open4 : "", hasT ? "" : "no template yet"],
       ["Avg need a week", Math.round(D.perWeek), `${plural(W[0] ? W[0].den : 0, "active patient")} at their protocols`],
       ["Approved not scheduled", hasCs ? AW.length : "", hasCs ? (n => `${n} already ${n === 1 ? "has" : "have"} a start booked`)(AW.filter(x => x.booked).length) : "no Consults tab"],
-      ["Consults scheduled", BK.any ? BK.ahead : "", BK.any ? `${BK.ahead4} in the next 4 weeks` : "no IVK consults on the report yet"]] };
-    const weeks = { title: "Week by week", note: "Sunday to Saturday, every active patient. Booked: IVK visits and holds on the list from today. Consults and starts count the whole week; held starts are in the Index planner, not in NextGen yet.",
-      head: ["Week of", "Avg need", "Booked", "Template slots", "Of the template", "Scheduled through", "Patients booked through", "Projected need", "Consults", "Starts", "Held starts", "Closed"],
-      rows: W.map(w => { const b = BK.weeks[w.w] || {}; return [dt(w.start), r1(w.expect), w.listed, hasT ? w.slots : "", hasT && w.slots ? pc(w.listed / w.slots) : "", pc(w.thruPct), `${w.thruN} of ${w.den}`, w.projNeed, BK.any ? b.consults || 0 : "", b.starts || 0, b.held || 0, shutWeek(w.start)]; }) };
+      ["Consults scheduled", BK.any ? BK.ahead : "", BK.any ? `still expected from today, ${BK.ahead4} in the next 4 weeks` : "no IVK consults on the report yet"]] };
+    const weeks = { title: "Week by week", pills: { Starts: "st", Consults: "co" }, note: "Sunday to Saturday, every active patient. Booked: IVK visits and holds on the list from today. Starts (with the held ones in the Index planner, not in NextGen yet) and consults count the whole week; consults leave out only cancelled ones.",
+      head: ["Week of", "Avg need", "Booked", "Template slots", "Of the template", "Scheduled through", "Patients booked through", "Starts", "Held starts", "Consults", "Projected need", "Closed"],
+      rows: W.map(w => { const b = BK.weeks[w.w] || {}; return [dt(w.start), r1(w.expect), w.listed, hasT ? w.slots : "", hasT && w.slots ? pc(w.listed / w.slots) : "", pc(w.thruPct), `${w.thruN} of ${w.den}`, b.starts || 0, b.held || 0, BK.any ? b.consults || 0 : "", w.projNeed, shutWeek(w.start)]; }) };
+    const upc = { title: "Consults scheduled", note: "IVK consults still expected, from today.", head: ["Date", "Time", "Patient", "MRN", "Provider", "Status"],
+      rows: BK.upcoming.map(x => [dt(x.date), x.time != null ? C.fmtT(x.time) : "", x.code || "", x.mrn || "", provLabel(x.provider), x.status || "Expected"]) };
     const protos = { title: "By protocol", note: "Every active patient (not paused).", head: ["Protocol", "Patients", "Visits a week", "Nothing booked"],
       rows: D.groups.map(g => [g.freq, g.n, r1(g.perWeek), g.unsched]) };
     const pts = { title: "Patients by protocol", head: ["Protocol", "Patient", "MRN", "Next visit", "Next is a hold", "Needed, 4 weeks", "Booked, 4 weeks", "Booked through"],
@@ -1164,12 +1226,13 @@
     const stages = { title: "Pipeline by stage", head: ["Stage", "Patients", "Avg days in stage"],
       rows: [...byStage.entries()].sort((a, b) => a[0].localeCompare(b[0], undefined, { numeric: true })).map(([k, g]) => [k, g.n, g.dn ? r1(g.days / g.dn) : ""]) };
     const pipe = { title: "Consult pipeline", note: "Every row on the Consults tab. Waitlist place and Waiting on as the Waitlist page has them.",
-      head: ["Waitlist place", "Patient", "MRN", "Location", "Referral", "Consult", "Provider", "Stage", "Days in stage", "Approved, not started", "Waiting on", "Start booked", "Start kept", "Where it stands", "Next step"],
+      head: ["Waitlist place", "Patient", "MRN", "Location", "Referral", "Consult", "Provider", "Stage", "Days in stage", "Approved, not started", "Waiting on", "Custom protocol", "Start booked", "Start kept", "Where it stands", "Next step"],
       rows: S.CS.slice().sort((a, b) => (WL.get(a.mrn)?.pos ?? 1e9) - (WL.get(b.mrn)?.pos ?? 1e9) || (a.consult ?? 1e9) - (b.consult ?? 1e9) || String(a.code).localeCompare(String(b.code))).map(x => {
         const w = WL.get(x.mrn), st = x.mrn ? startOf(x.mrn) : null;
-        return [w ? w.pos : "", x.code || "", x.mrn || "", x.loc, dt(x.ref), dt(x.consult), x.provider || "", x.stage, x.days ?? "", x.mrn && awSet.has(x.mrn) ? "Yes" : "", w ? WAIT_TXT[w.on] : "", dt(st?.date), dt(x.kept), STATE_TXT[x.state] || "", x.flag || ""]; }) };
+        const pr = x.mrn ? protoOf(x.mrn) : null;
+        return [w ? w.pos : "", x.code || "", x.mrn || "", x.loc, dt(x.ref), dt(x.consult), x.provider || "", x.stage, x.days ?? "", x.mrn && awSet.has(x.mrn) ? "Yes" : "", w ? WAIT_TXT[w.on] : "", pr ? `${pr.name ? `${pr.name}: ` : ""}${pr.steps.map(C.stepText).join("; then ")}` : "", dt(st?.date), dt(x.kept), STATE_TXT[x.state] || "", x.flag || ""]; }) };
     return { title: `${c.Clinic ? `${c.Clinic} ` : ""}IVK Access report`, clinic: c.Clinic || "", asOf: `${C.fmtDay(T)}, ${C.fmtT(nowMin())}`, by: S.name || "",
-      sections: [summary, weeks, protos, pts, miss, post, stages, pipe] };
+      sections: [summary, weeks, upc, protos, pts, miss, post, stages, pipe] };
   }
   const repFile = ext => `${S.cfg.Clinic ? `${S.cfg.Clinic} ` : ""}IVK Access report ${C.isoOf(todayS())}.${ext}`;
   /* one sheet per section: dates as dates, shares as percents, the header row frozen */
@@ -1190,10 +1253,10 @@
     setTimeout(() => URL.revokeObjectURL(a.href), 4000);
     toast(`${repFile("xlsx")} downloaded. It has MRNs: keep it in MHS OneDrive or SharePoint.`);
   }
-  /* the print view: the same sections as tables in the forms frame, every cell already worded */
+  /* the print view: the same sections laid out as the add-in shows them (tiles, cards, pills) in report.html, every cell worded */
   function accessPrint() {
     const R = accessReport(), cell = v => v == null || v === "" ? "" : typeof v === "object" ? ("d" in v ? C.fmtD(v.d) : `${Math.round(v.p * 100)}%`) : String(v);
-    openForms({ parts: { report: true }, report: Object.assign({}, R, { sections: R.sections.map(sec => Object.assign({}, sec, { rows: sec.rows.map(r => r.map(cell)) })) }) });
+    openForms({ report: Object.assign({}, R, { theme: S.theme === "dark" ? "dark" : "light", sections: R.sections.map(sec => Object.assign({}, sec, { rows: sec.rows.map(r => r.map(cell)) })) }) }, "report.html?v=1");
   }
   /* a closure in the week starting on this Sunday: its note, else its dates */
   const shutWeek = a => { const e = (S.EX || []).find(x => x.closed && x.from <= a + 6 && x.to >= a); return e ? (e.note || exDates(e)) : ""; };
@@ -1532,26 +1595,35 @@
   const WAIT_TXT = { ready: "Ready to start", referral: "Waiting on the referral", auth: "Waiting on the authorization" };
   function consultsHTML() {
     const ORD = { cm: 0, act: 1, wait: 2, done: 3, started: 4, closed: 5 };
-    const L = S.CS.slice().sort((a, b) => ORD[a.state] - ORD[b.state] || (b.days ?? 0) - (a.days ?? 0));
+    const stF = S.csStage || "", ALL = S.CS.slice().sort((a, b) => ORD[a.state] - ORD[b.state] || (b.days ?? 0) - (a.days ?? 0)), L = stF ? ALL.filter(c => (c.stage || "(no stage)") === stF) : ALL;
+    const BK = wkBk(), UP = BK.upcoming;
+    /* the stage tiles: each stage on the Consults tab with its count; pressed, the Consults list shows only that stage */
+    const byStage = new Map(); for (const c of S.CS) { const k = c.stage || "(no stage)", g = byStage.get(k) || { n: 0, days: 0, dn: 0 }; g.n++; if (c.days != null) { g.days += c.days; g.dn++; } byStage.set(k, g); }
+    const stTiles = [...byStage.entries()].sort((x, y) => x[0].localeCompare(y[0], undefined, { numeric: true })).map(([k, g]) => `<button type="button" class="stat tap${stF === k ? " on" : ""}" data-act="csStage" data-v="${esc(k)}" aria-pressed="${stF === k}"><small>${esc(k)}</small><b>${g.n}</b><span>${g.dn ? (v => `${v} day${v === "1" ? "" : "s"} in stage on average`)(n1(g.days / g.dn)) : ""}</span></button>`).join("");
+    const upRow = x => `<div class="crow up"${ptAct(x.mrn)}><span class="d">${esc(when(x))}</span><span class="p">${esc(x.code || "—")}${mrnTag(x.mrn)}</span><span class="proto">${esc(provLabel(x.provider))}</span><span class="flags">${esc(x.status || "Expected")}</span></div>`;
     const n = s => L.filter(c => c.state === s).length, W = S.WL, ok = !!S.raw.tables?.own?.tblIvkPatient, planned = new Set(ipList().filter(o => o.pl || o.holds.length).map(o => o.mrn));
     const sub = [plural(W.list.length, "patient") + " on the waitlist", W.next ? `${W.next.code} starts next` : W.list.length ? "nobody ready to start yet" : "",
-      n("done") ? `${n("done")} scheduled` : "", n("cm") ? `${plural(n("cm"), "start")} to update in Case Management` : ""].filter(Boolean).join(", ");
+      UP.length ? `${plural(UP.length, "IVK consult")} scheduled` : "", n("done") ? `${n("done")} scheduled to start` : "", n("cm") ? `${plural(n("cm"), "start")} to update in Case Management` : ""].filter(Boolean).join(", ");
     if (!S.wSel || !W.list.find(w => w.mrn === S.wSel)) S.wSel = W.list[0]?.mrn || null;
     const wrow = (w, i) => { const c = w.c, why = w.next ? `<span class="ok">Starts next</span>` : w.on === "referral" ? `<span class="f">Referral: keeps their place</span>`
         : w.on === "auth" ? `<span class="f">${w.appeal ? "Appeal: the next ready patient starts first" : "Authorization pending"}</span>` : w.ahead ? "" : "Ready";
-      return `<div class="wrow${S.wSel === w.mrn ? " cur" : ""}" role="button" tabindex="0" data-act="wSel" data-m="${esc(w.mrn)}" aria-pressed="${S.wSel === w.mrn}"><span class="pos">${w.pos}</span><span class="p">${esc(w.code || "—")}${mrnTag(w.mrn)}</span>
+      return `<div class="wrow${S.wSel === w.mrn ? " cur" : ""}" role="button" tabindex="0" data-act="wSel" data-m="${esc(w.mrn)}" aria-pressed="${S.wSel === w.mrn}"><span class="pos">${w.pos}</span><span class="p">${esc(w.code || "—")}${mrnTag(w.mrn)}${protoPill(w.mrn)}</span>
         <span class="proto">${c.consult != null ? `Consult ${C.fmtD(c.consult)}` : "No consult date"}<br><span class="muted small">${esc(c.provider || "")}</span></span>
         <span class="thru">${esc(WAIT_TXT[w.on])}<br><span class="muted small">${esc(c.stage || "")}</span></span><span class="flags">${why}${planned.has(w.mrn) ? ` <span class="muted small">planning</span>` : ""}</span>
-        <span class="mv"><button class="btn mute sm" data-act="wMove" data-m="${esc(w.mrn)}" data-v="-1" aria-label="Move ${esc(w.code)} up"${i === 0 || !ok ? " disabled" : ""}>↑</button><button class="btn mute sm" data-act="wMove" data-m="${esc(w.mrn)}" data-v="1" aria-label="Move ${esc(w.code)} down"${i === W.list.length - 1 || !ok ? " disabled" : ""}>↓</button></span></div>`; };
+        <span class="mv"><button class="btn mute sm" data-act="wMove" data-m="${esc(w.mrn)}" data-v="-1" aria-label="Move ${esc(w.code)} up"${i === 0 || !ok ? " disabled" : ""}>↑</button><button class="btn mute sm" data-act="wMove" data-m="${esc(w.mrn)}" data-v="1" aria-label="Move ${esc(w.code)} down"${i === W.list.length - 1 || !ok ? " disabled" : ""}>↓</button></span></div>${protoUnder(w.mrn)}`; };
     const cur = W.list.find(w => w.mrn === S.wSel);
-    const row = c => `<div class="crow" role="button" tabindex="0" data-act="editConsult" data-m="${esc(c.mrn)}"${c.mrn ? "" : ' style="cursor:default"'}><span class="p">${esc(c.code || "—")}</span><span class="proto">${c.consult != null ? `Consult ${C.fmtD(c.consult)}` : "No consult date"}<br>${esc(c.provider || "")}</span><span class="thru">${esc(c.stage || "No stage")}${c.days != null ? `<br><span class="muted small">${plural(c.days, "day")} in stage</span>` : ""}</span>
+    const row = c => `<div class="crow" role="button" tabindex="0" data-act="editConsult" data-m="${esc(c.mrn)}"${c.mrn ? "" : ' style="cursor:default"'}><span class="p">${esc(c.code || "—")}${protoPill(c.mrn)}</span><span class="proto">${c.consult != null ? `Consult ${C.fmtD(c.consult)}` : "No consult date"}<br>${esc(c.provider || "")}</span><span class="thru">${esc(c.stage || "No stage")}${c.days != null ? `<br><span class="muted small">${plural(c.days, "day")} in stage</span>` : ""}</span>
       <span class="flags">${c.flag ? `<span class="f">${esc(c.flag)}</span>` : c.state === "started" ? `<span class="ok">Started ${C.fmtD(c.kept)}</span>` : c.state === "done" ? `<span class="ok">Scheduled</span>` : c.state === "closed" ? "Not proceeding" : "Waiting"}${c.state === "cm" ? ` <button class="btn ghost sm" data-act="cmDone" data-m="${esc(c.mrn)}">Case Management updated</button>` : ""}</span></div>`;
-    return `${setupBanner()}${head("Waitlist", sub, false)}${accessChips()}${!S.raw.tables?.consults ? `<div class="msg warn">There’s no table on a Consults tab in this workbook.</div>` : ""}
+    return `${setupBanner()}${head("Consults", sub, false)}${accessChips()}${!S.raw.tables?.consults ? `<div class="msg warn">There’s no table on a Consults tab in this workbook.</div>` : ""}
+      ${stTiles ? `<div class="stats csst">${stTiles}</div>` : ""}
+      <section class="card plist" id="csUp"><div class="lh pad"><h2>Scheduled upcoming</h2><span>${UP.length ? `IVK consults still expected from today, ${BK.ahead4} in the next 4 weeks` : BK.any ? "none from today" : "no IVK consults on the uploaded report yet"}</span></div>
+        <div class="chead"><span>When</span><span>Patient</span><span>Provider</span><span>Status</span></div>${UP.map(upRow).join("") || `<p class="empty" style="padding:10px 14px">${BK.any ? "No IVK consults still expected from today." : "Add IVK consults to the NextGen report, then upload it."}</p>`}</section>
+      <h2 class="sech">Start Waitlist</h2>
       <div class="cols"><section class="card plist wl"><div class="chead"><span>#</span><span>Patient</span><span>Consult</span><span>Waiting on</span><span></span><span></span></div>
         ${W.list.map(wrow).join("") || `<p class="empty" style="padding:10px 14px">Nobody is waiting for a treatment start.</p>`}
         <p class="note" style="padding:0 14px 12px">In line by consult date until someone is moved. Waiting on a referral keeps their place. Waiting on an authorization that needs an appeal moves them behind the next ready patient.</p></section>
       <div>${cur ? waitCardHTML(cur) : ""}</div></div>
-      <h2 class="sech">Consults</h2>
+      <h2 class="sech">Consults${stF ? `: ${esc(stF)} <button class="btn ghost sm line" data-act="csStage" data-v="">Show every stage</button>` : ""}</h2>
       <section class="card plist"><div class="chead"><span>Patient</span><span>Consult</span><span>Stage</span><span>Next step</span></div>${L.map(row).join("") || `<p class="empty" style="padding:10px 14px">Nothing on the Consults tab.</p>`}</section>`;
   }
   function waitCardHTML(w) {
@@ -1563,6 +1635,8 @@
       <div class="fld">Waiting on<div class="pick">${C.WAIT_ON.map(([k, l]) => `<button data-act="wOn" data-m="${m}" data-v="${k}" aria-pressed="${w.on === k}"${ok ? "" : " disabled"}>${l}</button>`).join("")}</div></div>
       ${w.on === "auth" ? `<label class="opt"><input type="checkbox" data-wappeal="1" data-m="${m}"${w.appeal ? " checked" : ""}${ok ? "" : " disabled"}> An appeal is needed<small>Moves them behind the next ready patient, who usually starts first</small></label>` : ""}
       <label class="fld">Note<textarea id="wNote" rows="2" data-m="${m}">${esc(w.t?.waitNote || "")}</textarea></label>
+      <div class="fld">Protocol${protoOf(w.mrn) ? protoLines(protoOf(w.mrn)) : `<span class="hint">The clinic’s index protocol. Add a custom one for a trial or any other cadence.</span>`}
+        <div class="actions"><button class="btn ghost sm line" data-act="protoEdit" data-m="${m}"${ok ? "" : " disabled"}>${protoOf(w.mrn) ? "Edit the custom protocol" : "Add a custom protocol"}</button></div></div>
       <button class="btn primary" data-act="wPlan" data-m="${m}">Plan index visits</button>
       <div class="actions"><button class="btn ghost" data-act="wMove" data-m="${m}" data-v="top"${w.pos === 1 || !ok ? " disabled" : ""}>Move to the top</button><button class="btn ghost" data-act="editConsult" data-m="${m}">Edit consult</button>${p ? `<button class="btn ghost" data-act="openPt" data-m="${m}">Patient</button>` : ""}</div>
       ${needTable("tblIvkPatient", "Reordering and waiting-on")}
@@ -1860,6 +1934,25 @@
     return `<!doctype html><html><body style="margin:0;padding:18px;background:#fff"><div style="font:12pt/1.4 ${FF};color:#000"><div style="text-align:center;padding:0 0 14px;border-bottom:2px solid #F8902A;margin-bottom:16px"><img src="${logo}" width="200" alt="Mindful Health Solutions" style="max-width:60%;height:auto"></div>${paras.replace("{schedule}", () => sched).replace("{map}", () => mapImg)}</div></body></html>`;
   }
   const MODALS = {
+    /* a custom protocol for a patient waiting to start (the "proto" modal further down confirms a tracker protocol) */
+    cproto() {
+      const m = S.m, P = m.steps, last = P.length - 1, EV = [1, 2, 3, 4, 6, 8];
+      const step = (x, i) => `<div class="pstep"><span class="k">${i + 1}</span>
+        <label class="fld">Treatments<input type="number" id="ps_n${i}" min="1" max="14" value="${x.n}"></label>
+        <label class="fld">Every<select id="ps_e${i}">${EV.map(v => `<option value="${v}"${x.every === v ? " selected" : ""}>${v === 1 ? "week" : `${v} weeks`}</option>`).join("")}</select></label>
+        <label class="fld">For (weeks)<input type="number" id="ps_w${i}" min="1" max="104" value="${x.weeks ?? ""}"${x.weeks == null ? " disabled" : ""}></label>
+        ${i === last ? `<label class="opt"><input type="checkbox" id="ps_on"${x.weeks == null ? " checked" : ""}> Ongoing</label>` : "<span></span>"}
+        <button class="btn mute sm" data-act="protoDel" data-i="${i}"${P.length < 2 ? " disabled" : ""} aria-label="Remove step ${i + 1}">Remove</button></div>`;
+      const ok = P.every((x, i) => x.n >= 1 && x.every >= 1 && (x.weeks >= 1 || (x.weeks == null && i === last)));
+      return `<h2 id="mh">${esc(m.code)}: custom protocol</h2><p class="sub">Every part can change: how many treatments, how often and for how long, step by step. It shows as a pill on the Start Waitlist and the Index planner; their place in line stays as it is.</p>
+        <div class="fld">Start from<div class="pick">${PROTO_PRESETS().map((pr, i) => `<button data-act="protoPreset" data-i="${i}">${esc(pr.name)}</button>`).join("")}</div></div>
+        <label class="fld">Name on the pill<input id="ps_name" value="${esc(m.name)}" maxlength="32" autocomplete="off" placeholder="Custom protocol"></label>
+        ${P.map(step).join("")}
+        <div class="actions"><button class="btn ghost sm line" data-act="protoAdd">Add a step</button></div>
+        <div class="preview"><small>The schedule</small>${ok ? protoLines({ steps: P, note: "" }) : `<p class="note warn">Each step needs treatments and weeks (only the last can be ongoing).</p>`}</div>
+        <label class="fld">Note<input id="ps_note" value="${esc(m.note)}" maxlength="120" autocomplete="off" placeholder="Trial first, then decide with the provider"><span class="hint">Brief, and no clinical detail.</span></label>
+        <div class="foot">${m.had ? `<button class="btn mute" data-act="protoClear">Remove the custom protocol</button>` : ""}<button class="btn mute" data-act="close">Cancel</button><button class="btn primary inl" data-act="protoSave"${ok && !S.busy ? "" : " disabled"}>Save</button></div>`;
+    },
     accExport() {
       return `<h2 id="mh">Export the Access report</h2><p class="sub">The Demand page’s breakdowns (the tiles, week by week with consults and starts, by protocol and its patients, no-shows and late cancels, post-index step-downs) and the consult pipeline (by stage, then every Consults tab row with its waitlist place).</p>
         <div class="msg warn">It has patient codes and MRNs. Save the file only to MHS OneDrive or SharePoint, print only to a clinic printer, and don’t email it outside MHS.</div>
@@ -2159,6 +2252,19 @@
         <div class="foot"><button class="btn mute" data-act="close">Cancel</button><button class="btn primary inl" data-act="doUpload"${sh.flag && !u.ok || !u.rows.length || S.busy ? " disabled" : ""}>Replace list</button></div>`;
     }
   };
+  /* the protocol editor's starting points; any of them can then be changed step by step */
+  const PROTO_PRESETS = () => [
+    { name: "One-treatment trial", steps: [{ n: 1, every: 1, weeks: 1 }] },
+    { name: "The clinic’s index", steps: [{ n: +S.cfg.IndexPerWeek || 2, every: 1, weeks: +S.cfg.IndexWeeks || 3 }, { n: 1, every: 1, weeks: null }] },
+    { name: "Twice a week, weekly, every other week", steps: [{ n: 2, every: 1, weeks: 1 }, { n: 1, every: 1, weeks: 4 }, { n: 1, every: 2, weeks: null }] }];
+  /* the editor's fields back into S.m before it re-renders */
+  function keepProto() {
+    const m = S.m; if (S.modal !== "cproto" || !m) return;
+    const v = id => $(`#${id}`); if (v("ps_name")) m.name = v("ps_name").value; if (v("ps_note")) m.note = v("ps_note").value;
+    m.steps.forEach((x, i) => { const n = C.num(v(`ps_n${i}`)?.value), e = C.num(v(`ps_e${i}`)?.value), w = C.num(v(`ps_w${i}`)?.value);
+      if (n != null) x.n = Math.max(1, Math.round(n)); if (e != null) x.every = Math.max(1, Math.round(e)); if (x.weeks !== null || i !== m.steps.length - 1) x.weeks = w != null && w >= 1 ? Math.round(w) : x.weeks; });
+    const on = v("ps_on"); if (on) { const L = m.steps[m.steps.length - 1]; L.weeks = on.checked ? null : (L.weeks ?? 4); }
+  }
   function openModal(name, m) { S.modal = name; S.m = m || {}; render(); }
   function closeModal() { S.modal = null; S.m = {}; render(); }
 
@@ -2245,10 +2351,10 @@
     m.eff = v("#avEff"); m.exp = v("#avExp"); m.note = v("#avNote"); m.away = m.away.map((w, j) => ({ from: v(`#awF${j}`), to: v(`#awT${j}`), note: v(`#awN${j}`) })); };
   /* the forms window: schedule, consent, availability form, start email. It runs in a frame over the add-in (so it works in full
      screen too); the patient's name and DOB go to it by message and live only in its memory. */
-  function openForms(data) {
+  function openForms(data, src) {
     closeForms();
     const wrap = document.createElement("div"); wrap.className = "formwrap"; wrap.id = "formwrap";
-    wrap.innerHTML = `<iframe title="Forms" src="forms.html?v=9"></iframe>`; document.body.appendChild(wrap);
+    wrap.innerHTML = `<iframe title="${src ? "Access report" : "Forms"}" src="${src || "forms.html?v=9"}"></iframe>`; document.body.appendChild(wrap);
     const fr = wrap.querySelector("iframe");
     const onMsg = ev => { if (ev.source !== fr.contentWindow || ev.origin !== location.origin) return; const d = ev.data || {};
       if (d.forms === "ready") fr.contentWindow.postMessage({ forms: "data", data }, location.origin);
@@ -2539,7 +2645,29 @@
     async missUnEx() { const m = S.ML.find(x => x.key === S.m.key); if (!m) return closeModal();
       if (await write("Saving…", () => Store.saveMissed(m.key, missRow(m, { Kind: m.kind, Exempt: "", Reason: "" })), `${m.code}: exemption removed.`)) closeModal(); },
     missMore: () => { S.missAll = !S.missAll; render(); },
-    dmProto: e => { const k = e.dataset.v; S.dmOpen = S.dmOpen === k ? null : k; render(); },
+    dmProto: e => { const k = e.dataset.v, o = S.dmOpen instanceof Set ? S.dmOpen : (S.dmOpen = new Set()); if (o.has(k)) o.delete(k); else o.add(k); render(); },
+    dmAll: e => { S.dmOpen = new Set(e.dataset.v === "open" ? [...document.querySelectorAll('[data-act="dmProto"]')].map(b => b.dataset.v) : []); render(); },
+    /* the week table: a row, pill or cell opens the week there (pressed again, it closes); the strip's tiles switch what it lists */
+    wkOpen: e => { const w = +e.dataset.w, t = e.dataset.t, o = S.wkOpen; S.wkOpen = o && o.w === w && (!t || o.t === t) ? null : { w, t: t || (o && o.w === w && o.t) || "starts" }; render(); },
+    wkTab: e => { S.wkOpen = { w: +e.dataset.w, t: e.dataset.t }; render(); },
+    dmJump: () => { const el = $("#dmWeeks"); if (!el) return; el.scrollIntoView({ behavior: "smooth", block: "start" }); el.classList.remove("flash"); void el.offsetWidth; el.classList.add("flash"); },
+    dmFlip: () => { S.dmFlip = !S.dmFlip; S.dmFlipAnim = true; render(); S.dmFlipAnim = false; },
+    csJump: () => { S.view = "consults"; S.acLast = "consults"; S.pv = null; render(); setTimeout(() => $("#csUp")?.scrollIntoView({ behavior: "smooth", block: "start" }), 0); },
+    csStage: e => { S.csStage = e.dataset.v && S.csStage !== e.dataset.v ? e.dataset.v : ""; render(); },
+    protoShow: e => { const k = e.dataset.m, o = S.protoOpen || (S.protoOpen = new Set()); if (o.has(k)) o.delete(k); else o.add(k); render(); },
+    protoEdit: e => { const mrn = e.dataset.m, P = protoOf(mrn), code = S.WL.list.find(w => w.mrn === mrn)?.code || S.CS.find(c => c.mrn === mrn)?.code || S.PM.get(mrn)?.code || mrn;
+      const base = P || PROTO_PRESETS()[1];
+      openModal("cproto", { mrn, code, had: !!P, name: P ? P.name : "", note: P ? P.note : "", steps: base.steps.map(x => Object.assign({}, x)) }); },
+    protoPreset: e => { keepProto(); const pr = PROTO_PRESETS()[+e.dataset.i]; if (!pr) return; S.m.steps = pr.steps.map(x => Object.assign({}, x)); if (!C.txt(S.m.name)) S.m.name = pr.name === "The clinic’s index" ? "" : pr.name; render(); },
+    protoAdd: () => { keepProto(); const L = S.m.steps, z = L[L.length - 1]; if (z.weeks == null) z.weeks = 4; L.push({ n: 1, every: z.every, weeks: null }); render(); },
+    protoDel: e => { keepProto(); const L = S.m.steps; if (L.length < 2) return; L.splice(+e.dataset.i, 1); render(); },
+    async protoSave() {
+      keepProto(); const m = S.m, P = C.protoParse(C.protoText({ name: C.txt(m.name), note: C.txt(m.note), steps: m.steps }));
+      if (!P) return toast("Each step needs treatments and weeks (only the last can be ongoing).", true);
+      if (!S.raw.tables?.own?.tblIvkPatient) return toast("Custom protocols need the newer tables. Use Update the workbook in Settings.", true);
+      closeModal(); await write("Saving…", () => Store.savePt(m.mrn, ptPatch({ code: m.code }, { Protocol: C.protoText(P) })), `${m.code}’s custom protocol saved.`);
+    },
+    async protoClear() { const m = S.m; closeModal(); await write("Saving…", () => Store.savePt(m.mrn, ptPatch({ code: m.code }, { Protocol: "" })), `${m.code} is back on the clinic’s index protocol.`); },
     /* a booked visit on the Schedule opens the waitlist form for it (with a button to the patient, or a profile for someone new) */
     schedPick: e => { const mrn = e.dataset.m, d = +e.dataset.d, t = e.dataset.t === "" ? null : +e.dataset.t, a = S.A.find(x => x.mrn === mrn && x.date === d && (t == null || x.time === t)); if (!a) return;
       openSooner(mrn, a); },
@@ -3193,7 +3321,10 @@
     catch (e) { console.error(e); return toast("That file couldn’t be read. Save it from Excel as .xlsx and upload that, or upload the NextGen export unchanged.", true); }
     if (!rows || !rows.length) return toast("This doesn’t look like a NextGen appointment listing (no MRN, Appointment Date and Status columns).", true);
     /* a wider report (the providers' whole schedule) is split: IVK visits for the Appt List tab, the others kept with no patient on them */
-    const ivk = rows.filter(r => C.isIvkVisit(r[5])), other = rows.filter(r => !C.isIvkVisit(r[5])).map(r => [C.isoOf(r[2]), r[3] === "" ? "" : C.fmtT(Math.round(r[3] * 1440)), r[4], r[5], r[6], r[7]]);
+    const ivk = rows.filter(r => C.isIvkVisit(r[5])), other = rows.filter(r => !C.isIvkVisit(r[5])).map(r => { const ic = C.isIvkConsult(r[5]), mrn = ic ? C.mrnKey(r[0]) : "", p = ic ? S.PM.get(mrn) : null;
+      /* IVK consults keep the patient (LASFIR code and MRN, never the name) so Access can list who is booked; other visits stay without one */
+      const code = !ic ? "" : p && p.code !== "(no code)" ? p.code : (S.CS.find(c => c.mrn === mrn)?.code || C.lasfir(r[1]));
+      return [C.isoOf(r[2]), r[3] === "" ? "" : C.fmtT(Math.round(r[3] * 1440)), r[4], r[5], r[6], r[7], mrn, code]; });
     if (!ivk.length) return toast("This report has no IV ketamine visits. Check the NextGen report's filters.", true);
     /* a report with the neighbouring clinics in it: each location is this clinic's (the Locations setting, else the ones naming the
        clinic) or another clinic's. A report with one location is all this clinic's unless Locations says otherwise. */
@@ -3254,6 +3385,8 @@
   }
   document.addEventListener("change", e => {
     const t = e.target;
+    if (/^ps_/.test(t.id) && S.modal === "cproto") { keepProto(); render(); return; }
+    if (t.id === "ipCsPick") { const c = S.CS.find(x => x.mrn === t.value); if (c) { $("#ipNewCode").value = c.code || ""; $("#ipNewMrn").value = c.mrn; } return; }
     if (t.id === "apptFile" && t.files[0]) readAppt(t.files[0]);
     else if (t.id === "startMapFile" && t.files[0]) saveStartMap(t.files[0], t.files[0].name);
     else if (t.id === "sigFile" && t.files[0]) readSig(t.files[0]).catch(err => toast(String(err.message || err), true));

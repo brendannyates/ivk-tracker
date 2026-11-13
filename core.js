@@ -515,11 +515,13 @@
   const dayNum = s => { const i = ["mo", "tu", "we", "th", "fr"].indexOf(norm(s).slice(0, 2)); return i < 0 ? null : i + 1; };
   const sameProv = (a, b) => TM.provKey(a) === TM.provKey(b);
   /* tblIvkOther: the providers' other NextGen visits (telehealth, TMS follow-ups, consults) from the wider report, with no patient
-     on them: Date | Time | Provider | Event | Status | Location. They take the template cell they start in, so a flex post check
-     booked for a tele visit can't be an index post check. Location (added later, blank on older uploads) keeps other clinics' IVK
-     consults out of the Access counts. */
-  const OTHER_COLS = ["Date", "Time", "Provider", "Event", "Status", "Location"];
-  const otherRows = values => byHeader(values).rows.map(x => ({ date: toSerial(x.get("date")), time: toMin(x.get("time")), provider: txt(x.get("provider")), event: txt(x.get("event")), status: txt(x.get("status")), loc: txt(x.get("location")) }))
+     on them: Date | Time | Provider | Event | Status | Location | MRN | Patient. They take the template cell they start in, so a flex
+     post check booked for a tele visit can't be an index post check. Location (added later, blank on older uploads) keeps other
+     clinics' IVK consults out of the Access counts. MRN and Patient (the LASFIR code, never a name) are kept for IVK consults only,
+     so Access can say who is booked; every other visit stays without a patient. */
+  const OTHER_COLS = ["Date", "Time", "Provider", "Event", "Status", "Location", "MRN", "Patient"];
+  const otherRows = values => byHeader(values).rows.map(x => ({ date: toSerial(x.get("date")), time: toMin(x.get("time")), provider: txt(x.get("provider")), event: txt(x.get("event")), status: txt(x.get("status")), loc: txt(x.get("location")),
+    mrn: mrnKey(x.get("mrn")), code: txt(x.get("patient")) }))
     .filter(o => o.date != null && o.time != null);
   /* tblIvkExceptions: a provider's time off (PTO) on their template, by date. Id | Provider | From | To | Coverage | UseTemplate |
      Note | Status | By | Updated. On those days the provider's template slots aren't offered. With Coverage, the covering provider
@@ -799,7 +801,7 @@
   /* MRN | Patient | CardOnFile | OkToCollect | Oakland | OakTasked | Avail | AvailEffective | AvailExpires | AvailNote | Away |
      WaitRank | WaitingOn | Appeal | WaitNote | By | Updated. Blank Oakland = decide from the home clinic. */
   const PT_COLS = ["MRN", "Patient", "CardOnFile", "OkToCollect", "Oakland", "OakTasked", "Avail", "AvailEffective", "AvailExpires", "AvailNote", "Away",
-    "WaitRank", "WaitingOn", "Appeal", "WaitNote", "By", "Updated"];
+    "WaitRank", "WaitingOn", "Appeal", "WaitNote", "Protocol", "By", "Updated"];
   const yes = v => /^(y|yes|true|1|x)$/i.test(txt(v)), no = v => /^(n|no|false|0)$/i.test(txt(v));
   function ptRows(values) {
     const m = new Map();
@@ -807,7 +809,7 @@
       m.set(mrn, { mrn, card: yes(g("cardonfile")), okCollect: yes(g("oktocollect")), oak: yes(g("oakland")) ? true : no(g("oakland")) ? false : null,
         oakTasked: toSerial(g("oaktasked")), avail: availGrid(g("avail")), availEff: toSerial(g("availeffective")), availExp: toSerial(g("availexpires")),
         availNote: txt(g("availnote")), away: awayList(g("away")), rank: num(g("waitrank")), waitOn: txt(g("waitingon")).toLowerCase(), appeal: yes(g("appeal")),
-        waitNote: txt(g("waitnote")), by: txt(g("by")) }); });
+        waitNote: txt(g("waitnote")), proto: protoParse(g("protocol")), by: txt(g("by")) }); });
     return m;
   }
 
@@ -1449,20 +1451,64 @@
   /* An IVK consult on the wider report (it goes to tblIvkOther, since isIvkVisit leaves consults out). Esketamine doesn't match. */
   const isIvkConsult = ev => /consult/i.test(txt(ev)) && /\b(iv ?ketamine|ivk|ketamine)\b/i.test(txt(ev));
   const liveAppt = a => !isCancelled(a) && !/no ?show/i.test(a.status);
-  /* o = { appts, others, holds, listAt, today, weeks, cfg }: per week (Sunday to Saturday, the whole week, this one too) the IVK
-     consults at this clinic (a blank location counts as ours) and the treatment starts on the Appt List or held (held: how many of
-     those are holds), cancelled and no-shows aside; and the
-     consults from today on (ahead), and in the next 4 weeks (ahead4) */
+  const isExpected = a => /expected|scheduled|confirmed|pending/i.test(txt(a.status)) || !txt(a.status);
+  const byWhen = (a, b) => a.date - b.date || (a.time ?? 0) - (b.time ?? 0);
+  /* The IVK consults at this clinic on the wider report (a blank location counts as ours), cancelled and rescheduled ones aside:
+     { date, time, provider, status, mrn, code } by day and time */
+  const ivkConsults = (others, cfg) => (others || []).filter(x => x.date != null && isIvkConsult(x.event) && !isCancelled(x) && isOurs(x.loc, cfg || {})).sort(byWhen);
+  /* o = { appts, others, holds, listAt, today, weeks, cfg }: per week (Sunday to Saturday, the whole week, this one too)
+       consults  every IVK consult booked that week (kept, expected, no-show: everything but cancelled), with the list (CL)
+       starts    the treatment starts on the Appt List (cancelled and no-shows aside) and the starts held in the Index planner
+                 (treatment 1, not in NextGen yet), with the list (SL; held ones have hold: true); held: how many are holds
+     ahead: the consults still Expected from today on (the Consults scheduled tile), ahead4 the ones in the next 4 weeks; any: the
+     report has IVK consults at all */
   function weekBookings(o) {
     const w0 = weekStart(o.today), W = o.weeks || 12, cfg = o.cfg || {};
-    const CO = (o.others || []).filter(x => x.date != null && isIvkConsult(x.event) && liveAppt(x) && isOurs(x.loc, cfg));
-    const ST = (o.appts || []).filter(a => isStartEv(a.event) && liveAppt(a));
+    const CO = ivkConsults(o.others, cfg);
+    const ST = (o.appts || []).filter(a => isStartEv(a.event) && liveAppt(a)).map(a => ({ date: a.date, time: a.time, provider: a.provider, mrn: a.mrn, code: a.code, status: a.status, hold: false }));
     /* a start held in the Index planner (treatment 1) that NextGen doesn't have yet counts too */
-    const HS = (o.holds || []).filter(h => h.n === 1 && holding(h, o.appts || [], o.listAt));
-    const inW = (L, w) => L.filter(x => x.date >= w0 + 7 * w && x.date < w0 + 7 * w + 7).length;
-    return { weeks: Array.from({ length: W }, (_, w) => ({ w, start: w0 + 7 * w, consults: inW(CO, w), starts: inW(ST, w) + inW(HS, w), held: inW(HS, w) })),
-      ahead: CO.filter(x => x.date >= o.today).length, ahead4: CO.filter(x => x.date >= o.today && x.date < w0 + 28).length, any: CO.length > 0 };
+    const HS = (o.holds || []).filter(h => h.n === 1 && holding(h, o.appts || [], o.listAt)).map(h => ({ date: h.date, time: h.time, provider: h.provider, mrn: h.mrn, code: h.code, status: h.status, hold: true }));
+    const SA = ST.concat(HS).sort(byWhen);
+    const inW = (L, w) => L.filter(x => x.date >= w0 + 7 * w && x.date < w0 + 7 * w + 7);
+    const EX = CO.filter(x => x.date >= o.today && isExpected(x));
+    return { weeks: Array.from({ length: W }, (_, w) => { const CL = inW(CO, w), SL = inW(SA, w);
+        return { w, start: w0 + 7 * w, consults: CL.length, starts: SL.length, held: SL.filter(x => x.hold).length, CL, SL }; }),
+      ahead: EX.length, ahead4: EX.filter(x => x.date < w0 + 28).length, upcoming: EX, any: CO.length > 0 };
   }
+  /* the Consults tab stage's number ("3. PA Submitted - ..." is 3), or null */
+  const stageNo = s => { const m = /^\s*(\d+)\b/.exec(txt(s)); return m ? +m[1] : null; };
+
+  /* ---------- custom protocols (a waitlisted patient's planned treatments) ---------- */
+  /* Steps in order, each { n, every, weeks }: n treatments every `every` weeks, for `weeks` weeks (null: ongoing, last step only).
+     A one-treatment trial is [{ n: 1, every: 1, weeks: 1 }]. Kept on tblIvkPatient's Protocol column as JSON { name, steps, note }. */
+  function protoParse(v) {
+    const t = txt(v); if (!t) return null;
+    let o; try { o = JSON.parse(t); } catch (e) { return null; }
+    const steps = (Array.isArray(o.steps) ? o.steps : []).map(x => ({ n: Math.max(1, Math.round(+x.n || 1)), every: Math.max(1, Math.round(+x.every || 1)), weeks: x.weeks == null || x.weeks === "" ? null : Math.max(1, Math.round(+x.weeks || 1)) }))
+      .filter((x, i, a) => x.weeks != null || i === a.length - 1);
+    return steps.length ? { name: txt(o.name), note: txt(o.note), steps } : null;
+  }
+  const protoText = P => P ? JSON.stringify({ name: P.name || "", steps: P.steps.map(x => ({ n: x.n, every: x.every, weeks: x.weeks })), note: P.note || "" }) : "";
+  /* "2 a week for 1 week", "1 every 2 weeks, ongoing", "1 treatment" */
+  function stepText(x) {
+    const rate = x.every === 1 ? `${x.n} a week` : `${x.n} every ${x.every} weeks`;
+    if (x.weeks === 1 && x.every === 1) return x.n === 1 ? "1 treatment" : `${x.n} treatments in 1 week`;
+    return x.weeks == null ? `${rate}, ongoing` : `${rate} for ${x.weeks} week${x.weeks === 1 ? "" : "s"}`;
+  }
+  /* the schedule as lines: { from, to (null ongoing), text, total (null ongoing) }, week numbers from the start, and the
+     treatments in the first `horizon` weeks */
+  function protoSchedule(P, horizon = 4) {
+    const out = []; let wk = 1, inH = 0;
+    for (const x of P.steps) {
+      const to = x.weeks == null ? null : wk + x.weeks - 1, total = x.weeks == null ? null : Math.ceil(x.weeks / x.every) * x.n;
+      out.push({ from: wk, to, text: stepText(x), total });
+      const last = Math.min(horizon, to ?? horizon); for (let k = wk; k <= last; k++) if ((k - wk) % x.every === 0) inH += x.n;
+      if (to == null) break; wk = to + 1;
+    }
+    const total = out.every(l => l.total != null) ? out.reduce((a, l) => a + l.total, 0) : null;
+    return { lines: out, inHorizon: inH, total };
+  }
+
   /* Consults tab rows approved (the stage says Approved, not "Not Yet Approved") whose patient hasn't started: no kept start since
      the consult (consultStarts sets kept), not at stage 6, not closed. booked: a start already on the list, the stage lagging. */
   const isApproved = s => /\bapproved\b/i.test(txt(s)) && !/not (yet )?approved|denied/i.test(txt(s));
@@ -1651,7 +1697,7 @@
     treatments, txNo, isOak, oakState, WAIT_ON, waitlist, waitMove, provFull, fullName, firstName, scheduleOf, START_TPL, longWhen,
     lasfir, provName, mrnKey, pickRow, eventShort, freqDays, byHeader, patients, appts, isCancelled, visitKey, visitRows, phase, isActive, futureOf, asks,
     lastSeen, tagKey, parseTag, tagStr, tagsOf, askProvider, REPLY_COLS, replyRows, replyAction, repliesDue,
-    today, code, chairState, chairStatus, askDue, chairList, chairCount, needs, loud, consults, isStartedStage, isIvkConsult, weekBookings, isApproved, approvedWaiting, keptStartOf, START_COLS, startKey, startRows, consultStarts, startList, fill, protoWords, arrivalText, askText,
+    today, code, chairState, chairStatus, askDue, chairList, chairCount, needs, loud, consults, isStartedStage, isIvkConsult, ivkConsults, isExpected, weekBookings, stageNo, protoParse, protoText, protoSchedule, stepText, isApproved, approvedWaiting, keptStartOf, START_COLS, startKey, startRows, consultStarts, startList, fill, protoWords, arrivalText, askText,
     parseReport, shrink, week, DAYS5, dayNum, sameProv, OTHER_COLS, otherRows, isIvkVisit, FLAG_COLS, flagRows, PLAN_COLS, planRows, HOLD_COLS, holdRows,
     onList, holding, holdState, holdConfirm, EX_COLS, CLOSED, exRows, exFor, closureOn, closureClashes, withExceptions, exClashes, MISS_COLS, missRows, isKpVa, missList, lateKeys, newCancels, missImpact, missByPatient, missWindows, stepDue, daySlots, postCheckSlots, availOf, availText, fits, planIndex, altSlots, capacity, plannerLayout, plannerGrid };
 });

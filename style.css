@@ -656,3 +656,68 @@ html.ivk-busy,html.ivk-busy *{cursor:progress!important}
 .list .lh .pill{font-size:12px;font-weight:600;padding:3px 10px;border-radius:999px;background:var(--surface-2);color:var(--muted);white-space:nowrap}
 .list .lh .pill.open{background:var(--warn-soft);color:var(--warn)}
 @media (max-width:760px){.nrow.startck .ck{grid-column:1 / -1;grid-template-columns:repeat(auto-fit,minmax(120px,1fr))}}
+/* ---------- Access: pressable tiles, the week table's rows and cells, the opened week ---------- */
+.stat.tap{display:block;width:100%;text-align:left;border:0;font:inherit;color:inherit;cursor:pointer;transition:box-shadow .2s,transform .2s}
+.stat.tap:hover{transform:translateY(-2px);box-shadow:var(--shadow),0 10px 24px -12px rgba(16,24,20,.35)}
+.stat.tap:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.stat.tap[aria-pressed="true"],.stat.tap.on{box-shadow:inset 0 0 0 2px var(--accent),var(--shadow)}
+.stat.back .slist{list-style:none;margin:6px 0 0;padding:0;font-size:12.5px;line-height:1.35;color:var(--muted)}
+.stat.back .slist b{font-weight:600;color:var(--ink)}
+.stat.flipin{animation:duFlip .35s ease}
+@keyframes duFlip{from{transform:perspective(600px) rotateY(-90deg)}to{transform:perspective(600px) rotateY(0)}}
+#dmWeeks.flash{animation:dmFlash 1.2s ease}
+@keyframes dmFlash{0%{box-shadow:0 0 0 3px var(--accent),var(--shadow)}100%{box-shadow:var(--shadow)}}
+.wkt tr.wk{cursor:pointer;transition:background .15s}
+.wkt tr.wk:hover,.wkt tr.wk.on{background:var(--surface-3)}
+.wkt .wkc{display:inline-block;min-height:32px;padding:4px 8px;margin:-4px -8px;border:0;border-radius:10px;background:none;font:inherit;color:inherit;text-align:inherit;cursor:pointer;transition:box-shadow .2s,transform .2s,background .2s}
+.wkt .wkc:hover,.wkt .wkc:focus-visible{background:var(--surface);transform:translateY(-1px);box-shadow:0 6px 16px -8px rgba(16,24,20,.4)}
+.wkt .wkc[aria-expanded="true"]{background:var(--surface);box-shadow:inset 0 0 0 2px var(--accent)}
+.wkt .wkc.flag{color:var(--warn);font-weight:600}
+.wkt td.flag{color:inherit;font-weight:400}
+.wkt .wpill{transition:box-shadow .2s}
+.wkt .wkc:hover .wpill{box-shadow:0 2px 8px -3px rgba(16,24,20,.35)}
+.tt.dm .wpill.pr,.wpill.pr{border:0;cursor:pointer;font:inherit;font-size:11px;font-weight:600;line-height:1;padding:3px 8px;border-radius:999px;background:var(--index-soft);color:var(--index);margin-left:6px;vertical-align:1px;transition:box-shadow .2s}
+.wpill.pr:hover{box-shadow:0 2px 8px -3px rgba(16,24,20,.35)}
+.wpill.pr[aria-expanded="true"]{box-shadow:inset 0 0 0 1.5px var(--index)}
+.wkt tr.wkx td{padding:0;background:var(--surface-3)}
+.wkd{padding:10px 12px 14px}
+.wtabs{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:10px}
+/* the strip's tiles and the lines under them: no edge until hovered */
+.wtab{min-width:118px;padding:8px 12px;border:0;border-radius:12px;background:transparent;font:inherit;color:inherit;text-align:left;cursor:pointer;transition:background .2s,box-shadow .2s}
+.wtab small{display:block;font-size:12px;color:var(--muted)}.wtab b{display:block;font-size:18px;font-weight:600}
+.wtab:hover{background:var(--surface);box-shadow:0 6px 16px -8px rgba(16,24,20,.35)}
+.wtab[aria-selected="true"]{background:var(--surface);box-shadow:inset 0 0 0 2px var(--accent)}
+.wkits{display:grid;grid-template-columns:repeat(auto-fill,minmax(230px,1fr));gap:6px}
+.wkit{display:grid;gap:2px;padding:8px 12px;border-radius:12px;background:transparent;font-size:13px;transition:background .2s,box-shadow .2s,transform .2s}
+.wkit .d{font-size:12px;color:var(--muted)}.wkit .m{font-size:12.5px;color:var(--muted)}
+.wkit[role="button"]{cursor:pointer}
+.wkit:hover,.wkit:focus-visible{background:var(--surface);box-shadow:0 8px 20px -10px rgba(16,24,20,.4);transform:translateY(-1px)}
+.wkit.hold{box-shadow:inset 3px 0 0 var(--warn)}
+.wkit.hold:hover{box-shadow:inset 3px 0 0 var(--warn),0 8px 20px -10px rgba(16,24,20,.4)}
+.wkit .f{color:var(--warn);font-weight:600}
+.dmbar .dmall{margin-left:auto}
+/* custom protocols */
+.psteps{list-style:none;margin:6px 0 0;padding:0;font-size:13.5px}
+.psteps li{display:grid;grid-template-columns:110px 1fr;gap:8px;padding:3px 0}
+.psteps .wk{color:var(--muted)}
+.psub{padding:4px 14px 10px 14px;margin:-4px 0 4px;border-radius:0 0 12px 12px;background:var(--index-soft)}
+.psub.card-in{margin:10px 0 4px;padding:10px 14px;border-radius:12px}
+span.wpill.pr{cursor:default;display:inline-block}
+.pstep{display:grid;grid-template-columns:24px 1fr 1fr 1fr auto auto;gap:10px;align-items:end;margin:8px 0}
+.pstep .k{align-self:center;width:24px;height:24px;border-radius:50%;display:grid;place-items:center;background:var(--surface-3);font-size:12.5px;font-weight:600}
+.pstep .fld{margin:0}
+/* Consults: the stage tiles, Scheduled upcoming */
+.csst{grid-template-columns:repeat(auto-fit,minmax(150px,1fr))}
+.lh.pad{display:flex;justify-content:space-between;align-items:baseline;gap:12px;padding:8px 14px 0}.lh.pad span{font-size:13px;color:var(--muted)}
+#csUp .crow,#csUp .chead{grid-template-columns:190px minmax(120px,1fr) minmax(120px,1fr) 120px}
+/* Index planner › Starts: the starts in NextGen, and the holds still to book there set apart */
+.srow{display:grid;grid-template-columns:150px minmax(110px,1fr) minmax(110px,1fr) minmax(180px,1.4fr);gap:12px;align-items:center;min-height:48px;padding:8px 10px;border-radius:10px;border-top:1px solid var(--surface-2);font-size:13.5px;transition:background .15s,box-shadow .2s}
+.srow[role="button"]{cursor:pointer}
+.srow:hover{background:var(--surface-3)}
+.srow .d{color:var(--muted)}.srow .p{font-weight:600}.srow .s small{display:block;font-size:12px;color:var(--muted)}
+.srow.hold{background:var(--warn-soft);border-top-color:transparent;margin-top:2px}
+.srow.hold .s b{color:var(--warn);font-weight:600}
+.srow.hold.late{background:var(--danger-soft)}.srow.hold.late .s b{color:var(--danger)}
+.srow.hold:hover{box-shadow:0 6px 16px -8px rgba(16,24,20,.35)}
+@media (prefers-reduced-motion:reduce){.stat.tap,.wkt .wkc,.wtab,.wkit,.srow{transition:none}.stat.tap:hover,.wkit:hover,.wkt .wkc:hover{transform:none}.stat.flipin,#dmWeeks.flash{animation:none}}
+@media (max-width:640px){.srow,#csUp .crow,#csUp .chead{grid-template-columns:1fr 1fr}.pstep{grid-template-columns:24px 1fr 1fr}}

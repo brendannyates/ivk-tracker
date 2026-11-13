@@ -8,10 +8,11 @@
      tblIvkLog        AB1  Id | Event | Patient | Chair | Message | SentBy | SentAt | Result
      tblIvkPlans      AQ1  MRN | Patient | Start | PerWeek | Weeks | Avail | Note | By | Updated
      tblIvkHolds      BA1  Id | MRN | Patient | Date | Time | Provider | Treatment | Status | PlacedBy | PlacedAt | DoneBy | DoneAt
-     tblIvkOther      BN1  Date | Time | Provider | Event | Status | Location   (the providers' non-IVK visits from the wider report; no patient)
+     tblIvkOther      BN1  Date | Time | Provider | Event | Status | Location | MRN | Patient   (the providers' non-IVK visits from the wider report; no patient)
      tblIvkFlags      BT1  MRN | Patient | RequiresPostCheck | By | Updated
      tblIvkPatient    BZ1  MRN | Patient | CardOnFile | OkToCollect | Oakland | OakTasked | Avail | AvailEffective | AvailExpires | AvailNote | Away |
-                          WaitRank | WaitingOn | Appeal | WaitNote | By | Updated   (per patient: payment flags, Oakland, availability, waitlist)
+                          WaitRank | WaitingOn | Appeal | WaitNote | Protocol | By | Updated   (per patient: payment flags, Oakland, availability, waitlist,
+                          custom protocol)
      tblIvkPay        CR1  Id | Date | MRN | Patient | Key | Kind | Amount | Method | Note | By | At   (payments due, collected, missed, reminders)
      tblIvkExceptions DD1  Id | Provider | From | To | Coverage | UseTemplate | Note | Status | By | Updated   (provider time off and coverage)
      tblIvkProfile    DP1  MRN | Patient | ProvCover | ProvPayer | InfCover | InfPayer | Sohar benefits ... | BidfPrinted | Note | By | Updated
@@ -59,7 +60,8 @@
     { name: "tblIvkLog", anchor: "AB", columns: ["Id", "Event", "Patient", "Chair", "Message", "SentBy", "SentAt", "Result"], rows: [["", "", "", "", "", "", "", ""]] },
     { name: "tblIvkPlans", anchor: "AQ", columns: C.PLAN_COLS, rows: [C.PLAN_COLS.map(() => "")] },
     { name: "tblIvkHolds", anchor: "BA", columns: C.HOLD_COLS, rows: [C.HOLD_COLS.map(() => "")] },
-    { name: "tblIvkOther", anchor: "BN", columns: C.OTHER_COLS, rows: [C.OTHER_COLS.map(() => "")] },
+    /* six columns here so it ends before tblIvkFlags (BT); MRN and Patient are added on the first upload (replaceOther), which shifts the tables after it */
+    { name: "tblIvkOther", anchor: "BN", columns: C.OTHER_COLS.slice(0, 6), rows: [C.OTHER_COLS.slice(0, 6).map(() => "")] },
     { name: "tblIvkFlags", anchor: "BT", columns: C.FLAG_COLS, rows: [C.FLAG_COLS.map(() => "")] },
     { name: "tblIvkPatient", anchor: "BZ", columns: C.PT_COLS, rows: [C.PT_COLS.map(() => "")] },
     { name: "tblIvkPay", anchor: "CR", columns: C.PAY_COLS, rows: [C.PAY_COLS.map(() => "")] },
@@ -557,8 +559,8 @@
   }
   /* one of the add-in's tables replaced whole, as text: the wider report's non-IVK visits (tblIvkOther: Date iso, Time, Provider,
      Event, Status) and the IVK visits at other clinics (tblIvkElsewhere) */
-  /* an older tblIvkOther has no Location column: it goes on the end first */
-  const replaceOther = async rows => { await ensureCols("tblIvkOther", ["Location"]); return replaceRows("tblIvkOther", C.OTHER_COLS.length, rows); };
+  /* an older tblIvkOther has no Location, MRN or Patient column: they go on the end first */
+  const replaceOther = async rows => { await ensureCols("tblIvkOther", ["Location", "MRN", "Patient"]); return replaceRows("tblIvkOther", C.OTHER_COLS.length, rows); };
   const replaceElse = rows => replaceRows("tblIvkElsewhere", C.ELSE_COLS.length, rows);
   async function replaceRows(name, W, rows) {
     return Excel.run(async ctx => {
@@ -573,7 +575,8 @@
   /* one row per patient, by MRN: index plans (tblIvkPlans) and the requires post-check flag (tblIvkFlags) */
   const savePlan = (mrn, patch) => upsertMrn("tblIvkPlans", mrn, patch);
   const saveFlag = (mrn, patch) => upsertMrn("tblIvkFlags", mrn, patch);
-  const savePt = (mrn, patch) => upsertMrn("tblIvkPatient", mrn, patch);
+  /* the Protocol column (custom protocols) came later: added on the end the first time one is saved */
+  const savePt = async (mrn, patch) => { if ("Protocol" in patch) await ensureCols("tblIvkPatient", ["Protocol"]); return upsertMrn("tblIvkPatient", mrn, patch); };
   const saveProfile = (mrn, patch) => upsertMrn("tblIvkProfile", mrn, patch);
   const saveXfer = (mrn, patch) => upsertMrn("tblIvkTransfers", mrn, patch);
   const saveSooner = (mrn, patch) => upsertMrn("tblIvkSooner", mrn, patch);
