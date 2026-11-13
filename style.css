@@ -723,3 +723,7 @@ span.wpill.pr{cursor:default;display:inline-block}
 .srow.hold:hover{box-shadow:0 6px 16px -8px rgba(16,24,20,.35)}
 @media (prefers-reduced-motion:reduce){.stat.tap,.wkt .wkc,.wtab,.wkit,.srow{transition:none}.stat.tap:hover,.wkit:hover,.wkt .wkc:hover{transform:none}.stat.flipin,#dmWeeks.flash{animation:none}}
 @media (max-width:640px){.srow,#csUp .crow,#csUp .chead{grid-template-columns:1fr 1fr}.pstep{grid-template-columns:24px 1fr 1fr}}
+/* Consults: the Start Waitlist and the Consults list on the left, the patient being planned on the right, kept in view */
+.sech.first{margin-top:4px}
+.cside{position:sticky;top:0}
+#csUp{margin-top:24px}

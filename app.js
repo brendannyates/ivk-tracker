@@ -1710,15 +1710,15 @@ body{margin:0;background:var(--bg);color:var(--ink);font-family:"IBM Plex Sans",
       <span class="flags">${c.flag ? `<span class="f">${esc(c.flag)}</span>` : c.state === "started" ? `<span class="ok">Started ${C.fmtD(c.kept)}</span>` : c.state === "done" ? `<span class="ok">Scheduled</span>` : c.state === "closed" ? "Not proceeding" : "Waiting"}${c.state === "cm" ? ` <button class="btn ghost sm" data-act="cmDone" data-m="${esc(c.mrn)}">Case Management updated</button>` : ""}</span></div>`;
     return `${setupBanner()}${head("Consults", sub, false)}${accessChips()}${!S.raw.tables?.consults ? `<div class="msg warn">There’s no table on a Consults tab in this workbook.</div>` : ""}
       ${stTiles ? `<div class="stats csst">${stTiles}</div>` : ""}
-      <section class="card plist" id="csUp"><div class="lh pad"><h2>Scheduled upcoming</h2><span>${UP.length ? `IVK consults still expected from today, ${BK.ahead4} in the next 4 weeks` : BK.any ? "none from today" : "no IVK consults on the uploaded report yet"}</span></div>
-        <div class="chead"><span>When</span><span>Patient</span><span>Provider</span><span>Status</span></div>${UP.map(upRow).join("") || `<p class="empty" style="padding:10px 14px">${BK.any ? "No IVK consults still expected from today." : "Add IVK consults to the NextGen report, then upload it."}</p>`}</section>
-      <h2 class="sech">Start Waitlist</h2>
-      <div class="cols"><section class="card plist wl"><div class="chead"><span>#</span><span>Patient</span><span>Consult</span><span>Waiting on</span><span></span><span></span></div>
+      <div class="cols"><div class="stack"><h2 class="sech first">Start Waitlist</h2>
+        <section class="card plist wl"><div class="chead"><span>#</span><span>Patient</span><span>Consult</span><span>Waiting on</span><span></span><span></span></div>
         ${W.list.map(wrow).join("") || `<p class="empty" style="padding:10px 14px">Nobody is waiting for a treatment start.</p>`}
         <p class="note" style="padding:0 14px 12px">In line by consult date until someone is moved. Waiting on a referral keeps their place. Waiting on an authorization that needs an appeal moves them behind the next ready patient.</p></section>
-      <div>${cur ? waitCardHTML(cur) : ""}</div></div>
-      <h2 class="sech">Consults${stF ? `: ${esc(stF)} <button class="btn ghost sm line" data-act="csStage" data-v="">Show every stage</button>` : ""}</h2>
-      <section class="card plist"><div class="chead"><span>Patient</span><span>Consult</span><span>Stage</span><span>Next step</span></div>${L.map(row).join("") || `<p class="empty" style="padding:10px 14px">Nothing on the Consults tab.</p>`}</section>`;
+        <h2 class="sech">Consults${stF ? `: ${esc(stF)} <button class="btn ghost sm line" data-act="csStage" data-v="">Show every stage</button>` : ""}</h2>
+        <section class="card plist"><div class="chead"><span>Patient</span><span>Consult</span><span>Stage</span><span>Next step</span></div>${L.map(row).join("") || `<p class="empty" style="padding:10px 14px">Nothing on the Consults tab.</p>`}</section></div>
+      <div class="cside">${cur ? waitCardHTML(cur) : ""}</div></div>
+      <section class="card plist" id="csUp"><div class="lh pad"><h2>Scheduled upcoming</h2><span>${UP.length ? `IVK consults still expected from today, ${BK.ahead4} in the next 4 weeks` : BK.any ? "none from today" : "no IVK consults on the uploaded report yet"}</span></div>
+        <div class="chead"><span>When</span><span>Patient</span><span>Provider</span><span>Status</span></div>${UP.map(upRow).join("") || `<p class="empty" style="padding:10px 14px">${BK.any ? "No IVK consults still expected from today." : "Add IVK consults to the NextGen report, then upload it."}</p>`}</section>`;
   }
   function waitCardHTML(w) {
     const c = w.c, m = esc(w.mrn), ok = !!S.raw.tables?.own?.tblIvkPatient, p = S.PM.get(w.mrn);
