@@ -661,8 +661,10 @@ html.ivk-busy,html.ivk-busy *{cursor:progress!important}
 .stat.tap:hover{transform:translateY(-2px);box-shadow:var(--shadow),0 10px 24px -12px rgba(16,24,20,.35)}
 .stat.tap:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
 .stat.tap[aria-pressed="true"],.stat.tap.on{box-shadow:inset 0 0 0 2px var(--accent),var(--shadow)}
-.stat.back .slist{list-style:none;margin:6px 0 0;padding:0;font-size:12.5px;line-height:1.35;color:var(--muted)}
-.stat.back .slist b{font-weight:600;color:var(--ink)}
+/* the back of Open slots: up to 4 even bullets, one line each, so the tile keeps the others' size */
+.stat.back .slist{list-style:disc;margin:6px 0 2px;padding-left:16px;font-size:12.5px;line-height:1.5;color:var(--ink)}
+.stat.back .slist li{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.stat.back .slist li::marker{color:var(--accent)}
 .stat.flipin{animation:duFlip .35s ease}
 @keyframes duFlip{from{transform:perspective(600px) rotateY(-90deg)}to{transform:perspective(600px) rotateY(0)}}
 #dmWeeks.flash{animation:dmFlash 1.2s ease}

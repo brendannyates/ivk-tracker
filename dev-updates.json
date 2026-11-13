@@ -1,6 +1,14 @@
 {
   "updates": [
     {
+      "id": "2026-11-13-slots-html",
+      "date": "2026-11-13",
+      "bullets": [
+        "Changed: The Open slots tile flips over only when 5 or fewer slots are left, and lists up to 4 of them as short bullets the same size as the other tiles.",
+        "New: Export report can download an interactive HTML file: sort any column, filter each table, fold sections and open a week to see its starts, consults and open slots. It has MRNs, so keep it in MHS OneDrive or SharePoint."
+      ]
+    },
+    {
       "id": "2026-11-12-access-drill",
       "date": "2026-11-12",
       "bullets": [
