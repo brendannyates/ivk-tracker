@@ -897,7 +897,7 @@
         <div class="addpt new"><span class="lbl">Add manually</span><input id="ipNewCode" placeholder="LASFIR" aria-label="New patient’s LASFIR code" maxlength="8" autocomplete="off" spellcheck="false"><input id="ipNewMrn" placeholder="MRN" aria-label="New patient’s MRN" inputmode="numeric" autocomplete="off"><button class="btn ghost sm line" data-act="ipNewPt">Plan</button></div>
         ${csPick ? `<div class="addpt"><select id="ipCsPick" aria-label="Pick a patient from the Consults tab"><option value="">Or pick from the Consults tab, stage 3 down to 1…</option>${csPick}</select></div>` : ""}
         <div class="addpt"><select id="ipAdd" aria-label="Change a patient in index"><option value="">Change the visits of a patient in index…</option>${opts}</select><button class="btn ghost sm line" data-act="ipAddPt">Change</button></div></section>
-        ${startsHTML(byPt)}${accessHTML(model)}</div>
+        ${ipStartsHTML(byPt)}${accessHTML(model)}</div>
       <div class="stack">${cur ? ipCardHTML(cur, model) : model ? draftCardHTML(model) : ""}${eligibleHTML(cur)}</div></div>`;
   }
   /* a plan with no patient yet: explored from any start, then held for whoever it's for */
@@ -938,9 +938,9 @@
   }
   const altHTML = (r, n) => { const A = C.altSlots(r, n, +S.cfg.MinGapDays).slice(0, 12);
     return `<div class="alts">${A.length ? A.map((s, i) => `<button data-act="ipUse" data-n="${n}" data-i="${i}">${dshort(s.date)}<small>${C.fmtT(s.time)}, ${esc(provLabel(s.provider))}${s.postUse === "flexpost" ? ", flex post check" : ""}</small></button>`).join("") : `<span class="muted small">No other open index start keeps a day off on each side.</span>`}</div>`; };
-  /* Starts: every treatment start from today, the ones in NextGen and, set apart in amber (red once late), the holds still to book
+  /* Index planner › Starts (not Today's startsHTML): every treatment start from today, the ones in NextGen and, set apart in amber (red once late), the holds still to book
      in NextGen, one line per patient at their first held time */
-  function startsHTML(byPt) {
+  function ipStartsHTML(byPt) {
     const T = todayS(), ng = S.A.filter(a => /start/i.test(a.event) && a.date >= T && !C.isCancelled(a) && !/no ?show/i.test(a.status));
     const hl = [...byPt.values()].map(hs => { const h0 = hs.slice().sort((a, b) => a.date - b.date || a.time - b.time)[0]; return { date: h0.date, time: h0.time, provider: h0.provider, mrn: h0.mrn, code: h0.code, hs, L: holdLead(hs) }; });
     const rows = ng.map(a => ({ date: a.date, time: a.time, provider: a.provider, mrn: a.mrn, code: a.code })).concat(hl).sort((a, b) => a.date - b.date || (a.time ?? 0) - (b.time ?? 0));
