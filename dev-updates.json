@@ -1,6 +1,15 @@
 {
   "updates": [
     {
+      "id": "2026-11-13-ui-polish",
+      "date": "2026-11-13",
+      "bullets": [
+        "Changed: Small text across the tracker is easier to read (about 2 points larger).",
+        "Changed: On Access, the tiles' numbers line up across each row. Open slots, when 5 or fewer are left, flips to a short bulleted list: day, time and the provider's last name.",
+        "Changed: Week by week shows a pill only where there are starts or consults, and the column notes fold away under What the columns mean."
+      ]
+    },
+    {
       "id": "2026-11-13-slots-html",
       "date": "2026-11-13",
       "bullets": [
