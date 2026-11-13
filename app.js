@@ -1117,6 +1117,8 @@
   const protoLines = (P, cls) => { const Sc = C.protoSchedule(P, 4);
     return `<ol class="psteps${cls ? ` ${cls}` : ""}">${Sc.lines.map(l => `<li><span class="wk">${l.to == null ? `Week ${l.from} on` : l.from === l.to ? `Week ${l.from}` : `Weeks ${l.from} to ${l.to}`}</span>${esc(l.text)}</li>`).join("")}</ol>
       <p class="note">${plural(Sc.inHorizon, "treatment")} in the first 4 weeks${Sc.total != null ? `, ${Sc.total} in all` : ""}.${P.note ? ` ${esc(P.note)}` : ""}</p>`; };
+  /* a provider's last name alone ("Rivera MD, Ana Maria" is Rivera), for tight lists */
+  const lastName = n => C.provName(n).replace(/^Dr\.?\s+/i, "").split(/\s+/).pop() || "";
   const protoOf = mrn => S.PT?.get(mrn)?.proto || null;
   /* the Custom protocol pill: pressed, it opens the schedule under the row */
   const protoPill = mrn => protoOf(mrn) ? `<button type="button" class="wpill pr" data-act="protoShow" data-m="${esc(mrn)}" aria-expanded="${!!S.protoOpen?.has(mrn)}">${esc(protoOf(mrn).name || "Custom protocol")}</button>` : "";
@@ -1145,18 +1147,19 @@
     if (!flip) S.dmFlip = false;
     /* consults and starts by week (the report's IVK consults, the list's starts); the Consults tab's approved patients not started */
     const BK = wkBk(), AW = apprW(), awB = AW.filter(x => x.booked).length;
-    const stats = `<div class="stats">${tile("Scheduled out 4 weeks", pct(w4?.thruPct), w4 ? `${w4.thruN} of ${w4.den} booked the week of ${C.fmtD(w4.start)} or later` : "")}
-      ${tile("Projected need, next 4 weeks", r0(p4), "visits still to book if everyone keeps their cadence")}
+    const stats = `<div class="stats s6">${tile("Scheduled out 4 weeks", pct(w4?.thruPct), w4 ? `${w4.thruN} of ${w4.den} booked the week of ${C.fmtD(w4.start)} or later` : "")}
+      ${tile("Projected need, next 4 weeks", r0(p4), "still to book at everyone’s cadence")}
       ${!hasT ? tile("Open slots", "—", "no template yet", "", "nav", ' data-v="template"')
-        : S.dmFlip ? (L => `<button type="button" class="stat tap back${S.dmFlipAnim ? " flipin" : ""}" data-act="dmFlip" aria-pressed="true"><small>Open slots, next 4 weeks</small><ul class="slist">${L.slice(0, 4).map(x => `<li>${esc(dshort(x.date))}, ${esc(C.fmtT(x.time))}${S.X.providers > 1 ? ` · ${esc(provLabel(x.provider))}` : ""}</li>`).join("")}</ul>${L.length > 4 ? `<span>and ${L.length - 4} more</span>` : ""}</button>`)(openSlots(T, C.weekStart(T) + 28))
-        : flip ? tile("Open slots, next 4 weeks", String(open4), `${open4 >= p4 ? `${r0(open4 - p4)} left after the projected need` : `${r0(p4 - open4)} short of the projected need`}. Press to list them`, `${open4 < p4 ? "warn" : ""}${S.dmFlipAnim ? " flipin" : ""}`, "dmFlip", ' aria-pressed="false"')
-        : `<div class="stat${open4 < p4 ? " warn" : ""}"><small>Open slots, next 4 weeks</small><b>${open4}</b><span>${open4 >= p4 ? `${r0(open4 - p4)} left after the projected need` : `${r0(p4 - open4)} short of the projected need`}</span></div>`}
+        : S.dmFlip ? (L => `<button type="button" class="stat tap back${S.dmFlipAnim ? " flipin" : ""}" data-act="dmFlip" aria-pressed="true"><small>Open slots, next 4 weeks</small><ul class="slist">${L.slice(0, 4).map(x => `<li>${esc(dshort(x.date))} · ${esc(C.fmtT(x.time))} · ${esc(lastName(x.provider))}</li>`).join("")}${L.length > 4 ? `<li class="more">and ${L.length - 4} more</li>` : ""}</ul></button>`)(openSlots(T, C.weekStart(T) + 28))
+        : flip ? tile("Open slots, next 4 weeks", String(open4), `${open4 >= p4 ? `${r0(open4 - p4)} left after the need` : `${r0(p4 - open4)} short of the need`}. Press to list`, `${open4 < p4 ? "warn" : ""}${S.dmFlipAnim ? " flipin" : ""}`, "dmFlip", ' aria-pressed="false"')
+        : `<div class="stat${open4 < p4 ? " warn" : ""}"><small>Open slots, next 4 weeks</small><b>${open4}</b><span>${open4 >= p4 ? `${r0(open4 - p4)} left after the need` : `${r0(p4 - open4)} short of the need`}</span></div>`}
       ${tile("Avg need a week", r0(D.perWeek), `${plural(den, "patient")} at their protocols`)}
-      ${S.raw.tables?.consults ? tile("Approved not scheduled", String(AW.length), `approved on the Consults tab, not started${awB ? `; ${awB} already ${awB === 1 ? "has" : "have"} a start booked` : ""}`, "", "nav", ' data-v="index"') : tile("Approved not scheduled", "—", "no Consults tab", "", "nav", ' data-v="consults"')}
-      ${tile("Consults scheduled", BK.any ? String(BK.ahead) : "—", BK.any ? `IVK consults still expected from today, ${BK.ahead4} in the next 4 weeks` : "no IVK consults on the report yet", "", "csJump")}</div>`;
+      ${S.raw.tables?.consults ? tile("Approved not scheduled", String(AW.length), `approved, not started${awB ? `; ${awB} ${awB === 1 ? "has" : "have"} a start booked` : ""}`, "", "nav", ' data-v="index"') : tile("Approved not scheduled", "—", "no Consults tab", "", "nav", ' data-v="consults"')}
+      ${tile("Consults scheduled", BK.any ? String(BK.ahead) : "—", BK.any ? `still expected; ${BK.ahead4} in the next 4 weeks` : "no IVK consults on the report yet", "", "csJump")}</div>`;
     /* week by week: average need at current protocols, booked against the template, share scheduled through, the starts and IVK
        consults booked that week, projected need. A row opens to list what's behind its numbers; a pill or a cell opens it there. */
-    const pill = (n, cls, one, many, tip) => `<span class="wpill ${cls}${n ? "" : " z"}"${tip ? ` title="${esc(tip)}"` : ""}>${n || 0} ${n === 1 ? one : many}</span>`;
+    /* a pill only where there is something; an empty week shows a plain, muted 0 (the column heading names it) */
+    const pill = (n, cls, one, many, tip) => n ? `<span class="wpill ${cls}"${tip ? ` title="${esc(tip)}"` : ""}>${n} ${n === 1 ? one : many}</span>` : `<span class="muted">0</span>`;
     const op = S.wkOpen || {};
     const cell = (w, t, inner, cls) => `<button type="button" class="wkc${cls ? ` ${cls}` : ""}" data-act="wkOpen" data-w="${w.w}" data-t="${t}" aria-expanded="${op.w === w.w && op.t === t}">${inner}</button>`;
     const wRow = w => { const sw = shutWeek(w.start), b = BK.weeks[w.w] || {}, on = op.w === w.w;
@@ -1167,10 +1170,10 @@
         <td>${cell(w, "starts", pill(b.starts, "st", "start", "starts", b.held ? `${b.held} held in the Index planner, not in NextGen yet` : ""), "pc")}</td>
         <td>${BK.any ? cell(w, "consults", pill(b.consults, "co", "consult", "consults"), "pc") : `<span class="muted">—</span>`}</td>
         <td>${cell(w, "proj", String(w.projNeed || "—"), w.projNeed ? "flag" : "")}</td></tr>${on ? wkDetail(w, b, op.t || "starts", D, hasT) : ""}`; };
-    const weeks = `<section class="card dmt" id="dmWeeks"><div class="lh"><h2>Week by week</h2><span>Sunday to Saturday, every active patient. Press a week, a pill or a number for what’s behind it</span></div><div class="tscroll"><table class="tt dm wkt">
+    const weeks = `<section class="card dmt" id="dmWeeks"><div class="lh"><h2>Week by week</h2><span>Sunday to Saturday. Press a week or a number for the detail</span></div><div class="tscroll"><table class="tt dm wkt">
       <thead><tr><th>Week of</th><th>Avg Need</th><th>Booked${hasT ? " / slots" : ""}</th><th>Scheduled Through</th><th>Starts</th><th>Consults</th><th>Projected Need</th></tr></thead>
       <tbody>${W.map(wRow).join("")}</tbody></table></div>
-      <p class="note"><b>Avg Need</b>: each active patient’s protocol over the week (index ${c.IndexPerWeek} a week to treatment ${D.N}, then ${esc(c.AfterIndex)}; PRN and blank need none). <b>Booked</b>: IVK visits and holds on the list${hasT ? ", out of the template’s IVK slots that week; opened, the slots still free" : ""}. <b>Scheduled Through</b>: active patients with a protocol (not PRN, not paused) booked that week or later. <b>Starts</b>: treatment starts on the list and starts held in the Index planner, cancelled and no-shows aside. <b>Consults</b>: every IVK consult at ${esc(c.Clinic || "this clinic")} booked that week on the uploaded report, cancelled ones aside${BK.any ? "" : " (none on the report yet)"}. <b>Projected Need</b>: the visits still to book if each patient keeps their cadence past their last booked visit (index patients ${esc(c.AfterIndex)} after treatment ${D.N}).</p></section>`;
+      <details class="fold"><summary>What the columns mean</summary><p class="note"><b>Avg Need</b>: each active patient’s protocol over the week (index ${c.IndexPerWeek} a week to treatment ${D.N}, then ${esc(c.AfterIndex)}; PRN and blank need none). <b>Booked</b>: IVK visits and holds on the list${hasT ? ", out of the template’s IVK slots that week; opened, the slots still free" : ""}. <b>Scheduled Through</b>: active patients with a protocol (not PRN, not paused) booked that week or later. <b>Starts</b>: treatment starts on the list and starts held in the Index planner, cancelled and no-shows aside. <b>Consults</b>: every IVK consult at ${esc(c.Clinic || "this clinic")} booked that week on the uploaded report, cancelled ones aside${BK.any ? "" : " (none on the report yet)"}. <b>Projected Need</b>: the visits still to book if each patient keeps their cadence past their last booked visit (index patients ${esc(c.AfterIndex)} after treatment ${D.N}).</p></details></section>`;
     /* by protocol: one line each; press it for the patients on it */
     const G = DP.groups, open = S.dmOpen instanceof Set ? S.dmOpen : (S.dmOpen = new Set()), sum4 = a => a.slice(0, 4).reduce((x, y) => x + y, 0), allOpen = G.length > 0 && G.every(g => open.has(g.freq));
     const bar = `<div class="dmbar"><div class="pick seg" role="group" aria-label="Which patients">${seg("only", "Unscheduled only")}${seg("all", "Everyone")}${seg("exclude", "Scheduled only")}</div>
@@ -1288,14 +1291,14 @@
         proj: D.rows.filter(r => r.proj[w.w] > 0).sort((a, c) => c.proj[w.w] - a.proj[w.w] || a.code.localeCompare(c.code)).map(r => ({ w: `${r.proj[w.w]} to book`, p: r.code, mrn: r.mrn, m: `${r.freq} · ${r.thru != null ? `booked through ${C.fmtD(r.thru)}` : "nothing booked"}` })),
         open: hasT ? openSlots(w.start, w.start + 7).map(x => ({ w: when(x), p: provLabel(x.provider), mrn: "", m: x.openIndex ? "Open index start" : "Open" })) : null }; });
     const data = { title: R.title, asOf: R.asOf, by: R.by, weeks, sections: R.sections.map(sec => ({ title: sec.title, kind: sec.kind || "", note: sec.note || "", head: sec.head, pills: sec.pills || {}, rows: sec.rows.map(r => r.map(cell)) })) };
-    let css = ""; try { const r = await fetch("style.css?v=36", { cache: "force-cache" }); if (r.ok) css = (await r.text()).replace(/@font-face\{[^}]*\}/g, ""); } catch (e) { console.error(e); }
+    let css = ""; try { const r = await fetch("style.css?v=38", { cache: "force-cache" }); if (r.ok) css = (await r.text()).replace(/@font-face\{[^}]*\}/g, ""); } catch (e) { console.error(e); }
     const json = JSON.stringify(data).replace(/</g, "\\u003c");
     const html = `<!doctype html><html lang="en" data-theme="light"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>${esc(R.title)}</title>
 <style>${css}
 body{margin:0;background:var(--bg);color:var(--ink);font-family:"IBM Plex Sans",system-ui,"Segoe UI",sans-serif}
 .rpage{max-width:1240px;margin:0 auto;padding:24px 28px 48px}.rhead{margin-bottom:12px}.phi{margin:0 0 16px}
 .dmt .lh{cursor:pointer;user-select:none}.dmt .lh h2::before{content:"\\25BE";display:inline-block;margin-right:8px;color:var(--muted);transition:transform .2s}.dmt.shut .lh h2::before{transform:rotate(-90deg)}.dmt.shut .body{display:none}
-.tools{display:flex;gap:8px;align-items:center;margin:10px 0 4px}.tools input{flex:0 1 260px;min-height:34px;padding:4px 10px;border:1.5px solid var(--surface-2);border-radius:10px;font:inherit;background:var(--surface);color:var(--ink)}.tools span{font-size:12.5px;color:var(--muted)}
+.tools{display:flex;gap:8px;align-items:center;margin:10px 0 4px}.tools input{flex:0 1 260px;min-height:34px;padding:4px 10px;border:1.5px solid var(--surface-2);border-radius:10px;font:inherit;background:var(--surface);color:var(--ink)}.tools span{font-size:14px;color:var(--muted)}
 .tt th{cursor:pointer;white-space:nowrap}.tt th:hover{color:var(--ink)}.tt th[aria-sort=ascending]::after{content:" \\2191"}.tt th[aria-sort=descending]::after{content:" \\2193"}
 .tt tr.wk{cursor:pointer}.tt tr.wk:hover,.tt tr.wk.on{background:var(--surface-3)}
 @media print{.tools{display:none}.dmt.shut .body{display:block}body{background:#fff}}
