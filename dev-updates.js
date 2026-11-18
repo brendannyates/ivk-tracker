@@ -115,3 +115,11 @@
     dialogUrl(url) { const u = new URL(url, location.href); if (S.seen.size) u.searchParams.set("devseen", [...S.seen].slice(-MAX_SEEN).join(",")); return u.href; }
   };
 })();
+
+/* Optional shared showcase navigation; only on ?showcase=1. */
+if (new URLSearchParams(location.search).has("showcase")) {
+  const showcaseNav = document.createElement("script");
+  showcaseNav.src = "https://brendannyates.github.io/projects-app/showcase/demo-nav.js";
+  showcaseNav.defer = true;
+  document.head.appendChild(showcaseNav);
+}
